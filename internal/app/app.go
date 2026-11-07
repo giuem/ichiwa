@@ -27,6 +27,7 @@ const (
 	pageLive      = "真人剧"
 	pageComic     = "漫剧"
 	pageRank      = "rank"
+	pageFilter    = "filter"
 	pageSearch    = "search"
 	pageHistory   = "history"
 	pageFollows   = "follows"
@@ -45,8 +46,12 @@ type App struct {
 	feeds map[string]*Feed
 
 	rank   rankState
+	filter filterState
 	search searchState
 	shelf  ui.ScrollState
+
+	// person is an actor's page, over the sidebar's page while it is open.
+	person *personState
 
 	// watch is the player page, over the rest while it is open.
 	watch *Watching
@@ -67,6 +72,7 @@ func async[T any](app *App, work func() (T, error), done func(T, error)) {
 // go2 shows a page of the sidebar.
 func (app *App) go2(page string) {
 	app.page = page
+	app.person = nil
 	app.lib.Page = page
 	app.lib.MarkDirty()
 	if app.watch != nil {
@@ -123,6 +129,7 @@ func (app *App) sidebar(c *ui.Context) {
 		app.navItem(c, iconFilm, "真人剧", pageLive, 0)
 		app.navItem(c, iconSparkles, "漫剧", pageComic, 0)
 		app.navItem(c, iconTrophy, "排行榜", pageRank, 0)
+		app.navItem(c, iconSliders, "筛选", pageFilter, 0)
 		app.navItem(c, iconSearch, "搜索", pageSearch, 0)
 		app.navSection(c, "我的")
 		app.navItem(c, iconClock, "继续观看", pageHistory, len(app.lib.History))
@@ -140,7 +147,7 @@ func (app *App) navSection(c *ui.Context, title string) {
 
 func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count int) {
 	p := app.pal
-	selected := app.page == page
+	selected := app.page == page && app.person == nil
 	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(label)
 	bg := ui.Transparent
 	switch {
@@ -174,9 +181,15 @@ func (app *App) content(c *ui.Context) {
 		app.centered(c, iconX, "启动失败", app.initErr, nil)
 		return
 	}
+	if app.person != nil {
+		app.personPage(c)
+		return
+	}
 	switch app.page {
 	case pageRank:
 		app.rankPage(c)
+	case pageFilter:
+		app.filterPage(c)
 	case pageSearch:
 		app.searchPage(c)
 	case pageHistory:
@@ -196,7 +209,7 @@ func Run() {
 		cacheDir, _ := mygo.App.Path(mygo.PathCache)
 		app.lib = library.Load(dataDir)
 		switch app.lib.Page {
-		case pageRecommend, pageLive, pageComic, pageRank, pageSearch, pageHistory, pageFollows:
+		case pageRecommend, pageLive, pageComic, pageRank, pageFilter, pageSearch, pageHistory, pageFollows:
 			app.page = app.lib.Page
 		}
 		be, err := catalog.New(dataDir, cacheDir)
