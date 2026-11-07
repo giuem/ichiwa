@@ -38,20 +38,11 @@ func TestWorkShow(t *testing.T) {
 	}
 }
 
-// Rows left at "all" are not sent, and a choice has one name whatever the
-// order of its rows.
+// Rows left at "all" are not sent.
 func TestSelections(t *testing.T) {
 	got := selections(map[string]string{"genre": "comic_series", "sort": "", "category_dim_theme": "cate_5876"})
 	want := map[string][]string{"genre": {"comic_series"}, "category_dim_theme": {"cate_5876"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("selections = %v", got)
-	}
-	a := FilterKey(map[string]string{"genre": "ai_series", "sort": "hot", "gender": ""})
-	b := FilterKey(map[string]string{"sort": "hot", "genre": "ai_series"})
-	if a != b || a != "genre=ai_series&sort=hot" {
-		t.Errorf("FilterKey = %q, %q", a, b)
-	}
-	if FilterKey(nil) != "" {
-		t.Error("no choice should have an empty key")
 	}
 }

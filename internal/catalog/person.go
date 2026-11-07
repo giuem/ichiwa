@@ -62,7 +62,6 @@ func (b *Backend) Works(id, cursor string) ([]Show, string, bool, error) {
 			out = append(out, workShow(w))
 		}
 	}
-	b.fillCovers(ctx, out)
 	return out, page.Cursor, page.HasMore && page.Cursor != "", nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -56,7 +57,11 @@ type fetchJob struct {
 // New makes a backend keeping its anonymous device in dataDir and the
 // episodes it fetched in cacheDir.
 func New(dataDir, cacheDir string) (*Backend, error) {
-	client, err := adapters.NewClient(filepath.Join(dataDir, "anonymous.json"), sdk.Options{RetryAttempts: 3, DeviceResets: sdk.Int(3)})
+	opts := sdk.Options{RetryAttempts: 3, DeviceResets: sdk.Int(3)}
+	if l := openLog(filepath.Join(dataDir, "sdk.log")); l != nil {
+		opts.Logger = l
+	}
+	client, err := adapters.NewClient(filepath.Join(dataDir, "anonymous.json"), opts)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +76,20 @@ func New(dataDir, cacheDir string) (*Backend, error) {
 	}
 	go b.trimCache(2 << 30)
 	return b, nil
+}
+
+// openLog opens the log the SDK writes device resets and failures to,
+// starting it afresh once it passes 1 MB.
+func openLog(path string) *log.Logger {
+	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	if fi, err := os.Stat(path); err == nil && fi.Size() > 1<<20 {
+		flags |= os.O_TRUNC
+	}
+	f, err := os.OpenFile(path, flags, 0o644)
+	if err != nil {
+		return nil
+	}
+	return log.New(f, "", log.LstdFlags)
 }
 
 func ctxTimeout(d time.Duration) (context.Context, context.CancelFunc) {
@@ -89,7 +108,6 @@ func (b *Backend) Discover(channel, cursor string) ([]Show, string, bool, error)
 	for _, s := range page.Items {
 		out = append(out, showOf(s))
 	}
-	b.fillCovers(ctx, out)
 	return out, page.Cursor, page.HasMore && page.Cursor != "", nil
 }
 
@@ -108,15 +126,29 @@ func (b *Backend) Search(query, cursor string) ([]Show, string, bool, error) {
 	for _, s := range page.Items {
 		out = append(out, showOf(s))
 	}
-	b.fillCovers(ctx, out)
 	return out, page.Cursor, page.HasMore && page.Cursor != "", nil
+}
+
+// Lacking reports whether a show still lacks its cover or episode count,
+// which Discover, Search and Rank leave for Fill.
+func Lacking(s Show) bool { return s.Cover == "" || s.Episodes == 0 }
+
+// Fill returns shows with the covers and counts they lack looked up. Pages
+// come back without that lookup, a round trip of its own, so they show
+// sooner; this fills them in after.
+func (b *Backend) Fill(shows []Show) []Show {
+	ctx, cancel := ctxTimeout(30 * time.Second)
+	defer cancel()
+	out := append([]Show(nil), shows...)
+	b.fillCovers(ctx, out)
+	return out
 }
 
 // fillCovers looks up the covers (and counts) search results lack.
 func (b *Backend) fillCovers(ctx context.Context, shows []Show) {
 	var ids []string
 	for _, s := range shows {
-		if s.Cover == "" || s.Episodes == 0 {
+		if Lacking(s) {
 			ids = append(ids, s.ID)
 		}
 	}
@@ -200,7 +232,6 @@ func (b *Backend) Rank(content, board, cursor string) (*RankPage, error) {
 	}
 	p := &RankPage{Contents: r.Contents, Content: r.Content, Board: r.Board, Cursor: r.Cursor, HasMore: r.HasMore && r.Cursor != ""}
 	p.Items, p.Actors = rankRows(r.Items)
-	b.fillCovers(ctx, p.Items)
 	return p, nil
 }
 
@@ -391,22 +422,49 @@ func (b *Backend) download(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// userError is a message for the interface that keeps the error behind it,
+// so callers can still tell what happened with errors.Is.
+type userError struct {
+	msg string
+	err error
+}
+
+func (e *userError) Error() string { return e.msg }
+func (e *userError) Unwrap() error { return e.err }
+
 func friendly(err error) error {
+	msg := ""
 	switch {
 	case err == nil:
 		return errors.New("没有拿到播放地址")
 	case errors.Is(err, sdk.ErrAuthenticationRequired):
-		return errors.New("该集需要登录才能观看")
+		msg = "该集需要登录才能观看"
 	case errors.Is(err, sdk.ErrAnonymousLimited):
-		return errors.New("服务端暂时限制了匿名播放，请稍后再试")
+		msg = "服务端暂时限制了匿名播放，请稍后再试"
 	case errors.Is(err, sdk.ErrRateLimited):
-		return errors.New("请求太频繁，请稍后再试")
+		msg = "请求太频繁，请稍后再试"
 	case errors.Is(err, sdk.ErrContentUnavailable):
-		return errors.New("该内容已下架")
+		msg = "该内容已下架"
 	case errors.Is(err, sdk.ErrTransport):
-		return errors.New("网络连接失败")
+		msg = "网络连接失败"
+	default:
+		return err
 	}
-	return err
+	return &userError{msg, err}
+}
+
+// Unavailable reports an episode the anonymous device cannot play: the
+// server returned nothing even on fresh devices, or wants a login.
+// Autoplay skips such episodes.
+func Unavailable(err error) bool {
+	return errors.Is(err, sdk.ErrAnonymousLimited) || errors.Is(err, sdk.ErrAuthenticationRequired)
+}
+
+// Limited reports a failure that retrying at once will not fix: the SDK
+// already registered fresh devices and all came back empty, so each retry
+// only registers more. Wait a while first.
+func Limited(err error) bool {
+	return errors.Is(err, sdk.ErrAnonymousLimited) || errors.Is(err, sdk.ErrRateLimited)
 }
 
 // ErrText turns an error into a short message for the interface.

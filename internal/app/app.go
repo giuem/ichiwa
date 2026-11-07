@@ -56,33 +56,8 @@ type App struct {
 	// watch is the player page, over the rest while it is open.
 	watch *Watching
 	toast string
-}
 
-// Feed is a list of dramas loaded page by page.
-type Feed struct {
-	items   []Show
-	seen    map[string]bool
-	cursor  string
-	more    bool
-	loading bool
-	err     string
-	scroll  ui.ScrollState
-	loaded  bool
-}
-
-func (f *Feed) reset() { *f = Feed{} }
-
-func (f *Feed) add(items []Show) {
-	if f.seen == nil {
-		f.seen = map[string]bool{}
-	}
-	for _, s := range items {
-		if s.ID == "" || f.seen[s.ID] {
-			continue
-		}
-		f.seen[s.ID] = true
-		f.items = append(f.items, s)
-	}
+	warmed bool // the first pages of the other pages were asked for
 }
 
 // async runs work on a goroutine and then done with its result on the main
@@ -92,47 +67,6 @@ func async[T any](app *App, work func() (T, error), done func(T, error)) {
 		v, err := work()
 		app.win.Update(func() { done(v, err) })
 	}()
-}
-
-func (app *App) feed(channel string) *Feed {
-	f := app.feeds[channel]
-	if f == nil {
-		f = &Feed{more: true}
-		app.feeds[channel] = f
-	}
-	return f
-}
-
-// loadFeed loads the next page of a channel.
-func (app *App) loadFeed(channel string) {
-	f := app.feed(channel)
-	if f.loading || (f.loaded && !f.more) {
-		return
-	}
-	f.loading, f.err = true, ""
-	cursor := f.cursor
-	type page struct {
-		items  []Show
-		cursor string
-		more   bool
-	}
-	async(app, func() (page, error) {
-		items, next, more, err := app.be.Discover(channel, cursor)
-		return page{items, next, more}, err
-	}, func(p page, err error) {
-		f.loading, f.loaded = false, true
-		if err != nil {
-			f.err = errText(err)
-			return
-		}
-		before := len(f.items)
-		f.add(p.items)
-		f.cursor, f.more = p.cursor, p.more
-		// A page of nothing new ends the feed, so it doesn't loop.
-		if len(f.items) == before && cursor != "" {
-			f.more = false
-		}
-	})
 }
 
 // go2 shows a page of the sidebar.

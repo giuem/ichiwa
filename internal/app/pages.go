@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -204,15 +205,10 @@ func (app *App) feedFooter(c *ui.Context, loading bool, err string, more bool, r
 	})
 }
 
-// nearEnd reports whether a scroll container is within a screen of its end.
-func nearEnd(s *ui.ScrollState) bool {
-	return s.MaxY > 0 && s.Y > s.MaxY-800
-}
-
 func (app *App) feedPage(c *ui.Context, channel string) {
 	f := app.feed(channel)
-	if !f.loaded && !f.loading && f.err == "" {
-		app.loadFeed(channel)
+	if !f.loaded && f.err == "" {
+		app.loadMore(f)
 	}
 	subtitle := map[string]string{
 		pageRecommend: "为你精选的热门短剧",
@@ -222,96 +218,88 @@ func (app *App) feedPage(c *ui.Context, channel string) {
 	app.header(c, channel, subtitle, func() {
 		if iconButton(c, iconRefresh, 16, app.pal.muted, "刷新").Clicked() {
 			f.reset()
-			app.loadFeed(channel)
+			app.loadMore(f)
 		}
 	})
+	retry := func() { f.err = ""; app.loadMore(f) }
 	switch {
 	case len(f.items) == 0 && f.err != "":
-		app.centered(c, iconX, "加载失败", f.err, func() { f.err = ""; app.loadFeed(channel) })
+		app.centered(c, iconX, "加载失败", f.err, retry)
 		return
 	case len(f.items) == 0:
 		app.skeletonGrid(c, 3)
 		return
 	}
+	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("feed-"+channel)).TrackScroll(&f.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
-		app.grid(c, f.items, func(_ int, s Show) string { return episodesBadge(s) }, nil)
-		app.feedFooter(c, f.loading, f.err, f.more, func() { f.err = ""; app.loadFeed(channel) })
+		app.grid(c, visible(f, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+		app.feedFooter(c, f.loading, f.err, f.more, retry)
 	})
-	if f.more && !f.loading && f.err == "" && nearEnd(&f.scroll) {
-		app.loadFeed(channel)
-	}
+	app.pump(c, f)
 }
 
 // ---- Ranking ----
 
 type rankState struct {
-	page    *RankPage
-	items   []Show
-	actors  []Actor // on the actors' boards, in place of items
-	seen    map[string]bool
-	loading bool
-	err     string
-	scroll  ui.ScrollState
+	page    *RankPage // the last page loaded: the boards, and which is shown
+	list    Feed
+	actors  []Actor // on the actors' boards, which list no dramas
 	content int
 	board   int
 }
 
-func (app *App) loadRank(content, board string, more bool) {
+// loadRank loads a ranking from its start: content and board are IDs, empty
+// for the default.
+func (app *App) loadRank(content, board string) {
 	r := &app.rank
-	if r.loading {
-		return
-	}
-	cursor := ""
-	if more && r.page != nil {
-		cursor = r.page.Cursor
-	}
-	r.loading, r.err = true, ""
-	if !more {
-		r.items, r.actors, r.seen = nil, nil, map[string]bool{}
-		r.scroll = ui.ScrollState{}
-	}
-	async(app, func() (*RankPage, error) { return app.be.Rank(content, board, cursor) }, func(p *RankPage, err error) {
-		r.loading = false
+	r.list.reset()
+	r.actors = nil
+	r.list.fetch = func(cursor string) (feedPage, error) {
+		p, err := app.be.Rank(content, board, cursor)
 		if err != nil {
-			r.err = errText(err)
-			return
+			return feedPage{}, err
 		}
-		r.page = p
-		for _, s := range p.Items {
-			if !r.seen[s.ID] {
-				r.seen[s.ID] = true
-				r.items = append(r.items, s)
-			}
-		}
-		for _, a := range p.Actors {
-			if !r.seen["actor:"+a.ID] {
-				r.seen["actor:"+a.ID] = true
-				r.actors = append(r.actors, a)
-			}
-		}
-		for i, ct := range p.Contents {
-			if ct.ID == p.Content {
-				r.content = i
-				for j, b := range ct.Boards {
-					if b.ID == p.Board {
-						r.board = j
-					}
+		return feedPage{items: p.Items, cursor: p.Cursor, more: p.HasMore, extra: p}, nil
+	}
+	r.list.onPage = r.loaded
+	app.loadMore(&r.list)
+}
+
+// loaded takes in a page of the ranking: its boards, and its actors.
+func (r *rankState) loaded(fp feedPage) {
+	p := fp.extra.(*RankPage)
+	r.page = p
+	if len(p.Actors) > 0 {
+		before := len(r.actors)
+		r.addActors(p.Actors)
+		// The feed holds dramas and took a page of only actors for its
+		// end; it ends when a page brings no new actors.
+		r.list.more = p.HasMore && len(r.actors) > before
+	}
+	for i, ct := range p.Contents {
+		if ct.ID == p.Content {
+			r.content = i
+			for j, b := range ct.Boards {
+				if b.ID == p.Board {
+					r.board = j
 				}
 			}
 		}
-	})
+	}
 }
 
 func (app *App) rankPage(c *ui.Context) {
 	r := &app.rank
+	l := &r.list
 	p := app.pal
-	if r.page == nil && !r.loading && r.err == "" {
-		app.loadRank("", "", false)
+	if l.fetch == nil {
+		app.loadRank("", "")
 	}
+	retry := func() { l.err = ""; app.loadMore(l) }
 	app.header(c, "排行榜", "看看大家都在追什么", nil)
 	if r.page == nil {
-		if r.err != "" {
-			app.centered(c, iconX, "加载失败", r.err, func() { r.err = ""; app.loadRank("", "", false) })
+		if l.err != "" {
+			app.centered(c, iconX, "加载失败", l.err, retry)
 		} else {
 			app.skeletonGrid(c, 3)
 		}
@@ -323,7 +311,7 @@ func (app *App) rankPage(c *ui.Context) {
 			for i, ct := range contents {
 				if app.tab(c.Key("tab-"+ct.ID), ct.Name, i == r.content).Clicked() && i != r.content {
 					r.content, r.board = i, 0
-					app.loadRank(ct.ID, "", false)
+					app.loadRank(ct.ID, "")
 				}
 			}
 		})
@@ -333,33 +321,31 @@ func (app *App) rankPage(c *ui.Context) {
 				for j, b := range boards {
 					if app.chip(c.Key(b.ID), b.Name, j == r.board).Clicked() && j != r.board {
 						r.board = j
-						app.loadRank(contents[r.content].ID, b.ID, false)
+						app.loadRank(contents[r.content].ID, b.ID)
 					}
 				}
 			})
 		}
 	})
-	if len(r.items) == 0 && len(r.actors) == 0 {
-		if r.err != "" {
-			app.centered(c, iconX, "加载失败", r.err, func() { r.err = ""; app.loadRank(r.page.Content, r.page.Board, false) })
+	if len(r.actors) > 0 {
+		ui.Scroll(c.Key("rank-actors")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
+			app.actorGrid(c, r.actors)
+			app.feedFooter(c, l.loading, l.err, l.more, retry)
+		})
+		app.pump(c, l)
+		return
+	}
+	if len(l.items) == 0 {
+		if l.err != "" {
+			app.centered(c, iconX, "加载失败", l.err, retry)
 		} else {
 			app.skeletonGrid(c, 2)
 		}
 		return
 	}
-	content, board := r.page.Content, r.page.Board
-	if len(r.actors) > 0 {
-		ui.Scroll(c.Key("rank-actors")).TrackScroll(&r.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
-			app.actorGrid(c, r.actors)
-			app.feedFooter(c, r.loading, r.err, r.page.HasMore, func() { app.loadRank(content, board, true) })
-		})
-		if r.page.HasMore && !r.loading && r.err == "" && nearEnd(&r.scroll) {
-			app.loadRank(content, board, true)
-		}
-		return
-	}
-	ui.Scroll(c.Key("rank")).TrackScroll(&r.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
-		app.grid(c, r.items, func(i int, s Show) string { return "" }, func(i int, s Show) func() {
+	n, _ := columns(app.contentWidth(c))
+	ui.Scroll(c.Key("rank")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
+		app.grid(c, visible(l, n), func(i int, s Show) string { return "" }, func(i int, s Show) func() {
 			return func() {
 				ui.Row(c).Gap(6).Children(func() {
 					n := ui.Text(c, "TOP "+itoa(i+1)).FontSize(11).Bold()
@@ -374,10 +360,17 @@ func (app *App) rankPage(c *ui.Context) {
 				})
 			}
 		})
-		app.feedFooter(c, r.loading, r.err, r.page.HasMore, func() { app.loadRank(content, board, true) })
+		app.feedFooter(c, l.loading, l.err, l.more, retry)
 	})
-	if r.page.HasMore && !r.loading && r.err == "" && nearEnd(&r.scroll) {
-		app.loadRank(content, board, true)
+	app.pump(c, l)
+}
+
+// addActors adds the actors not listed yet.
+func (r *rankState) addActors(actors []Actor) {
+	for _, a := range actors {
+		if !slices.ContainsFunc(r.actors, func(b Actor) bool { return b.ID == a.ID }) {
+			r.actors = append(r.actors, a)
+		}
 	}
 }
 
@@ -392,51 +385,42 @@ type searchState struct {
 	hotBusy bool
 	focus   bool
 	field   ui.Handle
-	scroll  ui.ScrollState
 }
 
-func (app *App) runSearch(q string, more bool) {
+// runSearch shows the results of q, or the hot boards when q is empty.
+func (app *App) runSearch(q string) {
 	s := &app.search
 	q = strings.TrimSpace(q)
-	if q == "" {
-		s.shown = ""
-		s.results.reset()
-		return
-	}
-	if !more {
-		s.results.reset()
-		s.results.more = true
-		s.shown = q
-		s.scroll = ui.ScrollState{}
-	}
 	f := &s.results
-	if f.loading {
+	f.reset()
+	s.shown = q
+	if q == "" {
+		f.fetch = nil
 		return
 	}
-	f.loading, f.err = true, ""
-	cursor := f.cursor
-	type page struct {
-		items  []Show
-		cursor string
-		more   bool
-	}
-	async(app, func() (page, error) {
+	f.fetch = func(cursor string) (feedPage, error) {
 		items, next, more, err := app.be.Search(q, cursor)
-		return page{items, next, more}, err
-	}, func(p page, err error) {
-		if s.shown != q {
-			return
-		}
-		f.loading, f.loaded = false, true
+		return feedPage{items: items, cursor: next, more: more}, err
+	}
+	app.loadMore(f)
+}
+
+// loadHot loads the hot-search boards, once.
+func (app *App) loadHot() {
+	s := &app.search
+	if s.hot != nil || s.hotBusy || s.hotErr != "" {
+		return
+	}
+	s.hotBusy = true
+	async(app, app.be.Hot, func(h []HotBoard, err error) {
+		s.hotBusy = false
 		if err != nil {
-			f.err = errText(err)
+			s.hotErr = errText(err)
 			return
 		}
-		before := len(f.items)
-		f.add(p.items)
-		f.cursor, f.more = p.cursor, p.more
-		if len(f.items) == before && cursor != "" {
-			f.more = false
+		s.hot = h
+		if s.hot == nil {
+			s.hot = []HotBoard{}
 		}
 	})
 }
@@ -444,20 +428,7 @@ func (app *App) runSearch(q string, more bool) {
 func (app *App) searchPage(c *ui.Context) {
 	s := &app.search
 	p := app.pal
-	if s.hot == nil && !s.hotBusy && s.hotErr == "" {
-		s.hotBusy = true
-		async(app, app.be.Hot, func(h []HotBoard, err error) {
-			s.hotBusy = false
-			if err != nil {
-				s.hotErr = errText(err)
-				return
-			}
-			s.hot = h
-			if s.hot == nil {
-				s.hot = []HotBoard{}
-			}
-		})
-	}
+	app.loadHot()
 	app.header(c, "搜索", "", nil)
 	ui.Row(c).Padding(0, pagePad, 22).Children(func() {
 		f := ui.SearchField(c.Key("search"), &s.query).Placeholder("搜索剧名、演员、题材，回车搜索").Bind(&s.field).
@@ -467,10 +438,10 @@ func (app *App) searchPage(c *ui.Context) {
 			s.focus = false
 		}
 		if f.Submitted() {
-			app.runSearch(s.query, false)
+			app.runSearch(s.query)
 		}
 		if f.Changed() && strings.TrimSpace(s.query) == "" {
-			app.runSearch("", false)
+			app.runSearch("")
 		}
 	})
 	if s.shown == "" {
@@ -478,26 +449,26 @@ func (app *App) searchPage(c *ui.Context) {
 		return
 	}
 	r := &s.results
+	retry := func() { r.err = ""; app.loadMore(r) }
 	if len(r.items) == 0 {
 		switch {
 		case r.loading:
 			app.skeletonGrid(c, 2)
 		case r.err != "":
-			app.centered(c, iconX, "搜索失败", r.err, func() { app.runSearch(s.shown, false) })
+			app.centered(c, iconX, "搜索失败", r.err, retry)
 		default:
 			app.centered(c, iconSearch, "没有找到“"+s.shown+"”", "换个关键词试试", nil)
 		}
 		return
 	}
 	q := s.shown
-	ui.Scroll(c.Key("results-"+q)).TrackScroll(&s.scroll).Grow(1).Padding(0, pagePad, 0).Children(func() {
+	n, _ := columns(app.contentWidth(c))
+	ui.Scroll(c.Key("results-"+q)).TrackScroll(&r.scroll).Grow(1).Padding(0, pagePad, 0).Children(func() {
 		ui.Text(c, fmt.Sprintf("“%s”的搜索结果", q)).FontSize(13).TextColor(p.muted).Margin(0, 0, 16)
-		app.grid(c, r.items, func(_ int, s Show) string { return episodesBadge(s) }, nil)
-		app.feedFooter(c, r.loading, r.err, r.more, func() { app.runSearch(q, true) })
+		app.grid(c, visible(r, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+		app.feedFooter(c, r.loading, r.err, r.more, retry)
 	})
-	if r.more && !r.loading && r.err == "" && nearEnd(&s.scroll) {
-		app.runSearch(q, true)
-	}
+	app.pump(c, r)
 }
 
 func (app *App) hotBoards(c *ui.Context) {

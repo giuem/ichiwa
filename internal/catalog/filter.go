@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
@@ -41,7 +40,6 @@ func (b *Backend) Filter(chosen map[string]string, cursor string) ([]Show, strin
 	for _, s := range page.Items {
 		out = append(out, showOf(s))
 	}
-	b.fillCovers(ctx, out)
 	return out, page.Cursor, page.HasMore && page.Cursor != "", nil
 }
 
@@ -55,16 +53,4 @@ func selections(chosen map[string]string) map[string][]string {
 		}
 	}
 	return out
-}
-
-// FilterKey names a choice, the same for the same options in any order.
-func FilterKey(chosen map[string]string) string {
-	var parts []string
-	for k, v := range chosen {
-		if v != "" {
-			parts = append(parts, k+"="+v)
-		}
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, "&")
 }

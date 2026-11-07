@@ -9,39 +9,12 @@ import (
 	"hongguo/internal/catalog"
 )
 
-// loadPage loads the next page of f with fetch. The result is dropped when
-// live reports, by then, that f now shows something else.
-func (app *App) loadPage(f *Feed, fetch func(cursor string) ([]Show, string, bool, error), live func() bool) {
-	if f.loading || (f.loaded && !f.more) {
-		return
-	}
-	f.loading, f.err = true, ""
-	cursor := f.cursor
-	type page struct {
-		items  []Show
-		cursor string
-		more   bool
-	}
-	async(app, func() (page, error) {
+// pages adapts a catalog call returning a page of shows to a feed's fetch.
+func pages(fetch func(cursor string) ([]Show, string, bool, error)) func(string) (feedPage, error) {
+	return func(cursor string) (feedPage, error) {
 		items, next, more, err := fetch(cursor)
-		return page{items, next, more}, err
-	}, func(p page, err error) {
-		if !live() {
-			return
-		}
-		f.loading, f.loaded = false, true
-		if err != nil {
-			f.err = errText(err)
-			return
-		}
-		before := len(f.items)
-		f.add(p.items)
-		f.cursor, f.more = p.cursor, p.more
-		// A page of nothing new ends the feed, so it doesn't loop.
-		if len(f.items) == before && cursor != "" {
-			f.more = false
-		}
-	})
+		return feedPage{items: items, cursor: next, more: more}, err
+	}
 }
 
 // avatar draws a round portrait, fading it in over the first letter of
@@ -98,8 +71,7 @@ type filterState struct {
 	panelErr  string
 
 	chosen  map[string]string // a value per row key, none for all
-	shown   string            // the choice the results are for
-	results Feed
+	results Feed              // for chosen; without a fetch until shown
 }
 
 // choose picks value in the row key, "" for all, and reports whether the
@@ -117,16 +89,21 @@ func (fs *filterState) choose(key, value string) bool {
 	} else {
 		fs.chosen[key] = value
 	}
-	fs.results.reset()
-	fs.shown = catalog.FilterKey(fs.chosen)
+	fs.restart()
 	return true
 }
 
 // clear goes back to all dramas.
 func (fs *filterState) clear() {
 	fs.chosen = nil
+	fs.restart()
+}
+
+// restart drops the results, and loads in flight, for a new choice. The
+// view gives the feed a fetch for it.
+func (fs *filterState) restart() {
 	fs.results.reset()
-	fs.shown = ""
+	fs.results.fetch = nil
 }
 
 func (app *App) loadFilterPanel() {
@@ -146,15 +123,6 @@ func (app *App) loadFilterPanel() {
 	})
 }
 
-func (app *App) loadFilter() {
-	fs := &app.filter
-	key := fs.shown
-	chosen := maps.Clone(fs.chosen)
-	app.loadPage(&fs.results, func(cursor string) ([]Show, string, bool, error) {
-		return app.be.Filter(chosen, cursor)
-	}, func() bool { return fs.shown == key })
-}
-
 func (app *App) filterPage(c *ui.Context) {
 	fs := &app.filter
 	p := app.pal
@@ -163,30 +131,32 @@ func (app *App) filterPage(c *ui.Context) {
 		app.loadFilterPanel()
 	}
 	r := &fs.results
-	if !r.loaded && !r.loading && r.err == "" {
-		app.loadFilter()
+	if r.fetch == nil {
+		chosen := maps.Clone(fs.chosen) // the fetch runs off the main thread
+		r.fetch = pages(func(cursor string) ([]Show, string, bool, error) { return app.be.Filter(chosen, cursor) })
+		r.more = !r.loaded
 	}
+	retry := func() { r.err = ""; app.loadMore(r) }
 	app.header(c, "筛选", "按题材、设定找到想看的剧", func() {
 		if len(fs.chosen) > 0 {
 			app.secondary(c, iconRefresh, "重置").OnClick(fs.clear)
 		}
 	})
+	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("filter")).TrackScroll(&r.scroll).Grow(1).Padding(0, pagePad, 0).Children(func() {
 		app.filterPanel(c)
 		ui.Box(c).Height(1).Background(p.hairline).Margin(14, 0, 22)
 		switch {
 		case len(r.items) > 0:
-			app.grid(c, r.items, func(_ int, s Show) string { return episodesBadge(s) }, nil)
-			app.feedFooter(c, r.loading, r.err, r.more, app.loadFilter)
-		case r.loading || r.err != "":
-			app.feedFooter(c, r.loading, r.err, true, app.loadFilter)
-		case r.loaded:
+			app.grid(c, visible(r, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+			app.feedFooter(c, r.loading, r.err, r.more, retry)
+		case r.loaded && !r.more && r.err == "":
 			ui.Text(c, "没有符合条件的短剧，换个条件试试").FontSize(13).TextColor(p.muted).Padding(40, 0).AlignSelf(ui.Center)
+		default:
+			app.feedFooter(c, r.err == "", r.err, true, retry)
 		}
 	})
-	if r.more && !r.loading && r.err == "" && nearEnd(&r.scroll) {
-		app.loadFilter()
-	}
+	app.pump(c, r)
 }
 
 // filterPanel draws a row of options for each of the panel's rows.
@@ -277,7 +247,9 @@ type personState struct {
 }
 
 func (app *App) openPerson(a Actor) {
-	app.person = &personState{actor: a}
+	ps := &personState{actor: a}
+	ps.works = *newFeed(pages(func(cursor string) ([]Show, string, bool, error) { return app.be.Works(a.ID, cursor) }))
+	app.person = ps
 }
 
 func (app *App) loadPerson(ps *personState) {
@@ -292,12 +264,6 @@ func (app *App) loadPerson(ps *personState) {
 	})
 }
 
-func (app *App) loadWorks(ps *personState) {
-	app.loadPage(&ps.works, func(cursor string) ([]Show, string, bool, error) {
-		return app.be.Works(ps.actor.ID, cursor)
-	}, func() bool { return app.person == ps })
-}
-
 func (app *App) personPage(c *ui.Context) {
 	ps := app.person
 	p := app.pal
@@ -305,9 +271,7 @@ func (app *App) personPage(c *ui.Context) {
 		app.loadPerson(ps)
 	}
 	f := &ps.works
-	if !f.loaded && !f.loading && f.err == "" {
-		app.loadWorks(ps)
-	}
+	retry := func() { f.err = ""; app.loadMore(f) }
 	back := func() { app.person = nil }
 	c.OnShortcut(0, ui.KeyEscape, back)
 
@@ -322,6 +286,7 @@ func (app *App) personPage(c *ui.Context) {
 	ui.Row(c).Padding(max(bar.Height, 28)+4, pagePad-8, 6).DragWindow().Children(func() {
 		iconButton(c, iconChevronLeft, 18, p.muted, "返回").OnClick(back)
 	})
+	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("person-"+ps.actor.ID)).TrackScroll(&f.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
 		ui.Row(c).Gap(22).AlignItems(ui.Center).Children(func() {
 			app.avatar(c, avatar, name, 96)
@@ -333,17 +298,15 @@ func (app *App) personPage(c *ui.Context) {
 		ui.Text(c, "作品").FontSize(17).Bold().TextColor(p.text).Margin(30, 0, 16)
 		switch {
 		case len(f.items) > 0:
-			app.grid(c, f.items, func(_ int, s Show) string { return episodesBadge(s) }, nil)
-			app.feedFooter(c, f.loading, f.err, f.more, func() { app.loadWorks(ps) })
-		case f.loading || f.err != "":
-			app.feedFooter(c, f.loading, f.err, true, func() { app.loadWorks(ps) })
-		case f.loaded:
+			app.grid(c, visible(f, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+			app.feedFooter(c, f.loading, f.err, f.more, retry)
+		case f.loaded && !f.more && f.err == "":
 			ui.Text(c, "暂无作品").FontSize(13).TextColor(p.muted).Padding(24, 0)
+		default:
+			app.feedFooter(c, f.err == "", f.err, true, retry)
 		}
 	})
-	if f.more && !f.loading && f.err == "" && nearEnd(&f.scroll) {
-		app.loadWorks(ps)
-	}
+	app.pump(c, f)
 }
 
 // personFacts shows what the profile says under the name.
