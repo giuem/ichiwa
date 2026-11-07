@@ -11,10 +11,20 @@ import (
 	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 
+	"hongguo/internal/catalog"
 	"hongguo/internal/mac"
 )
 
 var speeds = []float64{1, 1.25, 1.5, 2, 0.75}
+
+// maxSkips is how many episodes in a row autoplay skips because the
+// anonymous device cannot play them before it gives up and says so.
+const maxSkips = 3
+
+// retryCooldown is how long the retry button waits after the server
+// limited anonymous playback: the SDK already tried fresh devices, and
+// retrying at once only registers more of them.
+const retryCooldown = 30 * time.Second
 
 // episodesPerRange is how many episodes the episode grid shows at once.
 const episodesPerRange = 50
@@ -39,6 +49,9 @@ type Watching struct {
 	err       string
 	ended     bool
 	paused    bool // the user paused
+	auto      bool // the next play call comes from autoplay
+	skipped   int  // episodes autoplay skipped in a row
+	retryAt   time.Time
 
 	seek     float64
 	dragging bool
@@ -130,11 +143,22 @@ func (w *Watching) play(i int, at float64) {
 	w.stopPlayer()
 	w.gen++
 	gen := w.gen
+	auto := w.auto
+	w.auto = false
+	if !auto {
+		w.skipped = 0
+	}
 	w.index, w.err, w.ended, w.paused, w.loading = i, "", false, false, true
+	w.retryAt = time.Time{}
 	w.epRange = i / episodesPerRange
 	w.bitmap = nil
 	ep := w.detail.Episodes[i]
 	if !ep.Playable {
+		if auto && i+1 < len(w.detail.Episodes) {
+			w.auto = true
+			w.play(i+1, 0)
+			return
+		}
 		w.loading, w.err = false, "该集暂不可播放"
 		return
 	}
@@ -154,9 +178,10 @@ func (w *Watching) play(i int, at float64) {
 			}
 			w.loading = false
 			if err != nil {
-				w.err = errText(err)
+				w.failed(i, auto, err)
 				return
 			}
+			w.skipped = 0
 			w.player = p
 			p.SetVolume(app.lib.Volume)
 			if at > 1 {
@@ -240,11 +265,50 @@ func (w *Watching) pump(gen int, p *mac.Player, stop chan struct{}) {
 	}
 }
 
+// failed shows why episode i did not play. Autoplay skips an episode the
+// anonymous device cannot play, up to maxSkips in a row, as the
+// openhongguo CLI does.
+func (w *Watching) failed(i int, auto bool, err error) {
+	app := w.app
+	if auto && catalog.Unavailable(err) && i+1 < len(w.detail.Episodes) {
+		w.skipped++
+		if w.skipped < maxSkips {
+			app.toast = fmt.Sprintf("第%d集暂时无法播放，已跳过", i+1)
+			w.auto = true
+			w.play(i+1, 0)
+			return
+		}
+	}
+	w.err = errText(err)
+	if w.skipped >= maxSkips {
+		w.err = fmt.Sprintf("连续%d集无法播放：%s", w.skipped, w.err)
+	}
+	if catalog.Limited(err) {
+		w.retryAt = time.Now().Add(retryCooldown)
+		until := w.retryAt
+		go func() { // redraw the countdown each second
+			for time.Now().Before(until) {
+				time.Sleep(time.Second)
+				app.win.Invalidate()
+			}
+		}()
+	}
+}
+
+// retryWait is how many seconds the retry button still waits.
+func (w *Watching) retryWait() int {
+	if d := time.Until(w.retryAt); d > 0 {
+		return int(d.Seconds()) + 1
+	}
+	return 0
+}
+
 func (w *Watching) onEnded() {
 	if w.player != nil {
 		w.saveProgress()
 	}
 	if w.index+1 < len(w.detail.Episodes) {
+		w.auto = true
 		w.play(w.index+1, 0)
 		return
 	}
@@ -469,7 +533,16 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 		sfsymbols.Symbol(c, "exclamationmark.triangle").Size(30).Color(dim)
 		ui.Text(c, w.err).FontSize(15).TextColor(white)
 		ui.Row(c).Gap(10).Margin(6, 0, 0).Children(func() {
-			app.secondary(c, iconRefresh, "重试").OnClick(func() { w.play(w.index, 0) })
+			label := "重试"
+			wait := w.retryWait()
+			if wait > 0 {
+				label = fmt.Sprintf("重试 (%ds)", wait)
+			}
+			app.secondary(c, iconRefresh, label).Disabled(wait > 0).OnClick(func() {
+				if w.retryWait() == 0 {
+					w.play(w.index, 0)
+				}
+			})
 			if w.detail != nil && w.index+1 < len(w.detail.Episodes) {
 				app.primary(c, nil, "下一集").OnClick(func() { w.step(1) })
 			}
