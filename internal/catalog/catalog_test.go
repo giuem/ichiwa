@@ -1,10 +1,30 @@
 package catalog
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 )
+
+// friendly messages keep their cause, so autoplay can tell an episode the
+// anonymous device cannot play from a network failure.
+func TestFriendlyKeepsCause(t *testing.T) {
+	err := friendly(fmt.Errorf("resolve: %w", sdk.ErrAnonymousLimited))
+	if got := ErrText(err); got != "服务端暂时限制了匿名播放，请稍后再试" {
+		t.Fatalf("text = %q", got)
+	}
+	if !Unavailable(err) || !Limited(err) {
+		t.Fatalf("lost the cause: %v", err)
+	}
+	if err := friendly(sdk.ErrTransport); Unavailable(err) || Limited(err) {
+		t.Fatal("a transport error counted as limited")
+	}
+	if err := friendly(sdk.ErrAuthenticationRequired); !Unavailable(err) || Limited(err) {
+		t.Fatal("a login-only episode misjudged")
+	}
+}
 
 // Playback prefers the sharpest stream up to 1080p, and a larger one only
 // when nothing else is offered.
