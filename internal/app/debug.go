@@ -35,7 +35,7 @@ func (app *App) tour() {
 		shot("3-rank", 6*time.Second)
 		goTo(pageSearch)
 		shot("4-search", 5*time.Second)
-		app.win.Update(func() { app.search.query = "总裁"; app.runSearch("总裁", false) })
+		app.win.Update(func() { app.search.query = "总裁"; app.runSearch("总裁") })
 		shot("5-results", 6*time.Second)
 		app.win.Update(func() {
 			if f := app.feeds[pageRecommend]; f != nil && len(f.items) > 0 {
