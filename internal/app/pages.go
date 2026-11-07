@@ -12,6 +12,9 @@ const (
 	pagePad  = 32
 	cardMinW = 156
 	cardGap  = 20
+	// titleLine is the line height of a card's title. Titles always take
+	// two lines of room so cards in a row line up whatever their length.
+	titleLine = 18
 )
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -120,7 +123,8 @@ func (app *App) card(c *ui.Context, s Show, width float32, badge string, under f
 			}
 		})
 		ui.Column(c).Gap(3).Children(func() {
-			ui.Text(c, s.Title).FontSize(13.5).FontWeight(600).MaxLines(2).
+			ui.Text(c, s.Title).FontSize(13.5).FontWeight(600).
+				FixedLineHeight(titleLine).MaxLines(2).MinHeight(2 * titleLine).
 				TextColor(col.AnimateColor("title", ternary(hover, p.accent, p.text), quick))
 			if under != nil {
 				under()
@@ -174,10 +178,14 @@ func (app *App) skeletonGrid(c *ui.Context, rows int) {
 		for r := range rows {
 			ui.Row(c.Key(r)).Gap(cardGap).Children(func() {
 				for i := range n {
-					ui.Column(c.Key(i)).Width(w).Gap(10).Children(func() {
+					ui.Column(c.Key(i)).Width(w).Gap(9).Children(func() {
 						s.bone(c, 10).AspectRatio(3.0 / 4)
-						s.bone(c, 4).Height(13).WidthPercent(float32(60 + (r*n+i)*17%35))
-						s.bone(c, 4).Height(10).WidthPercent(36)
+						// Two title lines, as tall as a card's title.
+						ui.Column(c).Height(2*titleLine).Gap(5).Padding(2, 0).Children(func() {
+							s.bone(c, 4).Height(13).WidthPercent(92)
+							s.bone(c, 4).Height(13).WidthPercent(float32(40 + (r*n+i)*17%35))
+						})
+						s.bone(c, 4).Height(10).WidthPercent(36).Margin(5, 0, 0)
 					})
 				}
 			})
