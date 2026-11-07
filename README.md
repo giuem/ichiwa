@@ -1,0 +1,80 @@
+# 红果短剧 for Mac
+
+一个原生的红果短剧 macOS 客户端。界面用 [MyGo](https://mygo.egoist.dev/) 的 Native UI 写成（纯 Go，GPU 绘制，没有 WebView），数据来自 [openhongguo](https://github.com/beilunyang/openhongguo)。
+
+> **免责声明**：本项目仅供学习和研究，禁止用于商业用途。所有内容的版权归原平台和版权方所有。使用本项目即表示你同意 [openhongguo 的免责声明](https://github.com/beilunyang/openhongguo#免责声明)。
+
+## 功能
+
+- 推荐、真人剧、漫剧频道，排行榜，搜索与热搜榜
+- 原生播放器：倍速、音量、全屏、自动连播、断点续播、下一集预加载
+- 选集面板（长剧按 50 集分段）、相关推荐
+- 继续观看、追剧
+- 菜单栏、媒体键与控制中心“正在播放”
+- 跟随系统的浅色/深色外观，侧栏毛玻璃
+- 自动更新
+
+## 安装
+
+从 [Releases](https://github.com/giuem/hongguo-mygo/releases) 下载 `.dmg`。目前没有用 Developer ID 签名，第一次打开前执行：
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Hongguo.app
+```
+
+需要 macOS 13 或更高版本。
+
+## 开发
+
+需要 Go 1.27+。
+
+```sh
+go tool mygo dev     # 开发，改动后自动重启
+go test ./...        # 测试
+go tool mygo build   # 打包到 build/darwin-<arch>/
+```
+
+`HONGGUO_TOUR=<目录>` 会让应用自动浏览各页面、截图到该目录后退出，用来检查界面。
+
+### 结构
+
+| 文件 | 内容 |
+|---|---|
+| `main.go` | 窗口、侧栏、页面切换 |
+| `pages.go` | 频道、排行榜、搜索、继续观看、追剧 |
+| `watch.go` | 播放页：画面、控制条、选集、相关推荐 |
+| `kit.go` | 调色板、按钮、标签、骨架屏等界面组件 |
+| `system.go` | 菜单栏、媒体键、自动更新 |
+| `backend.go` | openhongguo 封装；剧集下载、解密、磁盘缓存（2 GB，按最近使用淘汰） |
+| `images.go` | 封面异步加载与缓存 |
+| `library.go` | 观看进度、追剧、设置（`library.json`） |
+| `internal/cenc` | 纯 Go 的 CENC（AES-CTR）MP4 原地解密 |
+| `internal/mac` | 经 purego 调用 AVFoundation（播放、取帧）和 ImageIO（HEIC 解码），无 cgo |
+
+### 播放是怎么工作的
+
+1. openhongguo 取得分集的播放地址和内容密钥；
+2. 下载 MP4，用 `internal/cenc` 原地解密（box 大小不变，只解密样本、恢复原始格式）；
+3. AVPlayer 播放解密后的文件，负责声音、时钟和跳转；
+4. `AVPlayerItemVideoOutput` 逐帧取出像素，交给 MyGo 的 `ui.Bitmap` 绘制。
+
+## 快捷键
+
+| 按键 | 作用 |
+|---|---|
+| 空格 | 播放/暂停 |
+| ← / → | 快退/快进 5 秒 |
+| ⌘← / ⌘→ | 快退/快进 10 秒 |
+| ↑ / ↓、⌘↑ / ⌘↓ | 上一集/下一集 |
+| F | 全屏 |
+| Esc、⌘[ | 退出全屏/返回 |
+| ⌘D | 追剧/取消追剧 |
+| ⌘F | 搜索 |
+
+## 发布
+
+见 [RELEASING.md](RELEASING.md)。
+
+## 许可
+
+[MIT](LICENSE)

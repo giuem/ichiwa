@@ -1,0 +1,20 @@
+{
+  "name": "Hongguo",
+  "slug": "hongguo",
+  "identifier": "dev.giuem.hongguo",
+  "version": "0.1.0",
+  "copyright": "© 2026 giuem",
+  "license": "MIT",
+  "out": "build",
+  "updates": {
+    "publicKey": "+xPSkQXzHcJ9dSxuMzHRdmb8rPJx40gLl4uJ9X9TlUU=",
+    "github": "giuem/hongguo-mygo"
+  },
+  "macos": {
+    "minimumSystemVersion": "13.0",
+    "infoPlist": {
+      "CFBundleDisplayName": "红果短剧",
+      "LSApplicationCategoryType": "public.app-category.entertainment"
+    }
+  }
+}
