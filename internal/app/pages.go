@@ -274,7 +274,11 @@ func (r *rankState) loaded(fp feedPage) {
 		r.addActors(p.Actors)
 		// The feed holds dramas and took a page of only actors for its
 		// end; it ends when a page brings no new actors.
-		r.list.more = p.HasMore && len(r.actors) > before
+		fresh := len(r.actors) > before
+		r.list.more = fresh && p.HasMore && p.Cursor != ""
+		if fresh {
+			r.list.stalls = 0
+		}
 	}
 	for i, ct := range p.Contents {
 		if ct.ID == p.Content {
