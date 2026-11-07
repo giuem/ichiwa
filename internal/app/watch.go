@@ -59,16 +59,44 @@ type Watching struct {
 	descOpen bool
 	epRange  int
 	side     ui.ScrollState
+
+	// seasons are the drama's seasons when it has more than one, the one
+	// showing among them; switchSeason opens another at an episode, -1
+	// for where the user left it.
+	seasons      []Season
+	switchSeason func(s Season, ep int)
 }
 
 // open shows the player page for a drama, at episode ep, or where the
 // user left it when ep is -1.
-func (app *App) open(s Show, ep int) {
+func (app *App) open(s Show, ep int) { app.openIn(s, ep, nil) }
+
+// openIn opens a drama among seasons already known, which the page keeps
+// rather than asks for again.
+func (app *App) openIn(s Show, ep int, seasons []Season) {
 	if app.watch != nil {
 		app.watch.close()
 	}
 	w := &Watching{app: app, show: s, index: max(ep, 0), loading: true, panel: true}
+	w.switchSeason = func(next Season, ep int) { app.openIn(next.Show, ep, w.seasons) }
 	app.watch = w
+	if seasonOf(seasons, s.ID) >= 0 {
+		w.seasons = seasons
+	} else {
+		async(app, func() ([]Season, error) { return app.be.Seasons(s.ID) }, func(ss []Season, err error) {
+			if app.watch != w || err != nil || seasonOf(ss, s.ID) < 0 {
+				return
+			}
+			w.seasons = ss
+			// Then what the 上新 calendar says of the seasons to come, for
+			// whichever season of them shows by then.
+			async(app, func() ([]Season, error) { return app.be.Announce(ss), nil }, func(ss []Season, _ error) {
+				if cur := app.watch; cur != nil && len(cur.seasons) == len(ss) && seasonOf(cur.seasons, ss[0].ID) == 0 {
+					cur.seasons = ss
+				}
+			})
+		})
+	}
 	async(app, func() (*Detail, error) { return app.be.Series(s.ID) }, func(d *Detail, err error) {
 		if app.watch != w {
 			return
@@ -303,6 +331,41 @@ func (w *Watching) retryWait() int {
 	return 0
 }
 
+func seasonOf(seasons []Season, id string) int {
+	for i, s := range seasons {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// nextSeason is the season after the one showing, if there is one.
+func (w *Watching) nextSeason() (Season, bool) {
+	i := seasonOf(w.seasons, w.show.ID)
+	if i < 0 || i+1 >= len(w.seasons) {
+		return Season{}, false
+	}
+	return w.seasons[i+1], true
+}
+
+// lastEpisode tells whether the episode playing is the season's last.
+func (w *Watching) lastEpisode() bool {
+	return w.detail != nil && w.index+1 >= len(w.detail.Episodes)
+}
+
+// toNextSeason starts the next season from its first episode, if it is
+// out, and tells whether it did.
+func (w *Watching) toNextSeason() bool {
+	next, ok := w.nextSeason()
+	if !ok || !next.Online {
+		return false
+	}
+	w.app.toast = fmt.Sprintf("接着看第%d季", next.Index)
+	w.switchSeason(next, 0)
+	return true
+}
+
 func (w *Watching) onEnded() {
 	if w.player != nil {
 		w.saveProgress()
@@ -310,6 +373,9 @@ func (w *Watching) onEnded() {
 	if w.index+1 < len(w.detail.Episodes) {
 		w.auto = true
 		w.play(w.index+1, 0)
+		return
+	}
+	if w.toNextSeason() {
 		return
 	}
 	w.ended = true
@@ -345,6 +411,8 @@ func (w *Watching) step(d int) {
 	i := w.index + d
 	if i >= 0 && i < len(w.detail.Episodes) {
 		w.play(i, 0)
+	} else if d > 0 {
+		w.toNextSeason()
 	}
 }
 
@@ -491,7 +559,9 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 			app.progress(c, w)
 			ui.Row(c).Gap(2).Children(func() {
 				hasPrev := w.detail != nil && w.index > 0
-				hasNext := w.detail != nil && w.index+1 < len(w.detail.Episodes)
+				next, hasNextSeason := w.nextSeason()
+				hasNextSeason = hasNextSeason && next.Online && w.lastEpisode()
+				hasNext := w.detail != nil && w.index+1 < len(w.detail.Episodes) || hasNextSeason
 				if symbolButton(c, "backward.end.fill", 15, white, "上一集 (↑)").Disabled(!hasPrev).Clicked() {
 					w.step(-1)
 				}
@@ -500,7 +570,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				if pb.Clicked() {
 					w.togglePlay()
 				}
-				if symbolButton(c, "forward.end.fill", 15, white, "下一集 (↓)").Disabled(!hasNext).Clicked() {
+				if symbolButton(c, "forward.end.fill", 15, white, ternary(hasNextSeason, "下一季 (↓)", "下一集 (↓)")).Disabled(!hasNext).Clicked() {
 					w.step(1)
 				}
 				if pl := w.player; pl != nil {
@@ -545,6 +615,8 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 			})
 			if w.detail != nil && w.index+1 < len(w.detail.Episodes) {
 				app.primary(c, nil, "下一集").OnClick(func() { w.step(1) })
+			} else if next, ok := w.nextSeason(); ok && next.Online {
+				app.primary(c, nil, "下一季").OnClick(func() { w.step(1) })
 			}
 		})
 	case w.loading:
@@ -555,9 +627,27 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 		}
 		ui.Text(c, label).FontSize(13).TextColor(dim)
 	case w.ended:
-		ui.Text(c, "全剧终").FontSize(24).Bold().TextColor(white)
-		ui.Text(c, "已看完全部剧集").FontSize(13).TextColor(dim)
-		app.primary(c, iconRefresh, "从头再看").Margin(8, 0, 0).OnClick(func() { w.play(0, 0) })
+		next, more := w.nextSeason()
+		if !more {
+			ui.Text(c, "全剧终").FontSize(24).Bold().TextColor(white)
+			ui.Text(c, "已看完全部剧集").FontSize(13).TextColor(dim)
+			app.primary(c, iconRefresh, "从头再看").Margin(8, 0, 0).OnClick(func() { w.play(0, 0) })
+			return
+		}
+		cur := w.seasons[seasonOf(w.seasons, w.show.ID)]
+		ui.Text(c, fmt.Sprintf("第%d季完", cur.Index)).FontSize(24).Bold().TextColor(white)
+		ui.Text(c, seasonLine(next)).FontSize(13).TextColor(dim)
+		ui.Row(c).Gap(10).Margin(8, 0, 0).Children(func() {
+			app.secondary(c, iconRefresh, "从头再看").OnClick(func() { w.play(0, 0) })
+			switch {
+			case next.Online:
+				app.primary(c, nil, fmt.Sprintf("看第%d季", next.Index)).OnClick(func() { w.switchSeason(next, -1) })
+			case app.lib.Following(next.ID):
+				app.secondary(c, nil, fmt.Sprintf("已追第%d季", next.Index)).OnClick(func() { app.toggleFollow(next.Show) })
+			default:
+				app.primary(c, iconHeart, fmt.Sprintf("追第%d季", next.Index)).OnClick(func() { app.toggleFollow(next.Show) })
+			}
+		})
 	case w.paused && w.player != nil:
 		ui.Box(c).Size(76, 76).Radius(999).Background(ui.RGBA(0, 0, 0, 0.45)).Center().
 			Border(1, white.Alpha(0.15)).Children(func() {
@@ -662,6 +752,7 @@ func (app *App) sidePanel(c *ui.Context, w *Watching) {
 		ui.Box(c).Height(max(c.TitleBar().Height, 28) + 12).DragWindow()
 		ui.Scroll(c.Key("side")).TrackScroll(&w.side).Grow(1).Padding(0, 20, 28).Gap(24).Children(func() {
 			app.about(c, w)
+			app.seasonRow(c, w)
 			if w.detail != nil {
 				app.episodes(c, w)
 			} else if w.detailErr == "" {
@@ -820,6 +911,60 @@ func (app *App) related(c *ui.Context, w *Watching) {
 			if row.Clicked() {
 				app.open(s, -1)
 			}
+		}
+	})
+}
+
+// seasonLine says where a season stands: when it comes out, that it is
+// new, how many wait for it.
+func seasonLine(s Season) string {
+	parts := []string{fmt.Sprintf("第%d季", s.Index)}
+	switch {
+	case !s.Online:
+		parts = append(parts, ternary(s.Note != "", s.Note, "即将上线"))
+	case s.New:
+		parts = append(parts, ternary(s.Note != "", s.Note, "新上线"))
+	}
+	if s.Heat != "" {
+		parts = append(parts, s.Heat)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// seasonRow switches between the seasons of a drama that has several.
+func (app *App) seasonRow(c *ui.Context, w *Watching) {
+	p := app.pal
+	if seasonOf(w.seasons, w.show.ID) < 0 {
+		return
+	}
+	latest := w.seasons[len(w.seasons)-1]
+	ui.Column(c).Gap(12).Children(func() {
+		ui.Row(c).Children(func() {
+			ui.Text(c, "系列").FontSize(15).Bold().TextColor(p.text).Grow(1)
+			ui.Text(c, fmt.Sprintf("共%d季", len(w.seasons))).FontSize(12).TextColor(p.muted)
+		})
+		ui.ScrollHorizontal(c.Key("seasons")).Gap(6).Children(func() {
+			for _, s := range w.seasons {
+				label := fmt.Sprintf("第%d季", s.Index)
+				switch {
+				case !s.Online:
+					label += " · 预告"
+				case s.New:
+					label += " · 新"
+				}
+				current := s.ID == w.show.ID
+				if !app.chip(c.Key("season-"+s.ID), label, current).Shrink(0).Label(label).Clicked() || current {
+					continue
+				}
+				if s.Online {
+					w.switchSeason(s, -1)
+				} else {
+					app.toast = seasonLine(s)
+				}
+			}
+		})
+		if latest.New || !latest.Online {
+			ui.Text(c, seasonLine(latest)).FontSize(12).TextColor(p.muted)
 		}
 	})
 }

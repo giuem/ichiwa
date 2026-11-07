@@ -46,6 +46,7 @@ type Backend struct {
 
 	mu       sync.Mutex
 	inflight map[string]*fetchJob
+	days     map[string]calDay // the 上新 calendar's days read lately
 }
 
 type fetchJob struct {

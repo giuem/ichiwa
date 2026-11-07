@@ -91,3 +91,64 @@ func TestStageButtonsTakeClicks(t *testing.T) {
 		t.Fatal("the click went to the picture")
 	}
 }
+
+// seasonsWatching is the last episode of the first of two seasons, noting
+// the season it switches to.
+func seasonsWatching(t *testing.T, secondOnline bool) (*Watching, *[]Season, *[]int) {
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	w := &Watching{app: app, panel: true, index: 2, show: Show{ID: "s1"},
+		detail: &Detail{Episodes: make([]model.Episode, 3)},
+		seasons: []Season{
+			{Show: Show{ID: "s1", Title: "剧 第1季"}, Index: 1, Online: true},
+			{Show: Show{ID: "s2", Title: "剧 第2季"}, Index: 2, Online: secondOnline, Note: "预计11月10日上线"},
+		}}
+	var to []Season
+	var eps []int
+	w.switchSeason = func(s Season, ep int) { to, eps = append(to, s), append(eps, ep) }
+	return w, &to, &eps
+}
+
+// The last episode of a season goes on to the next season's first, when
+// it is out.
+func TestEndedGoesToNextSeason(t *testing.T) {
+	w, to, eps := seasonsWatching(t, true)
+	w.onEnded()
+	if len(*to) != 1 || (*to)[0].ID != "s2" || (*eps)[0] != 0 {
+		t.Fatalf("switched to %v at %v", *to, *eps)
+	}
+	if w.ended {
+		t.Error("ended although the next season is out")
+	}
+	w, to, _ = seasonsWatching(t, true)
+	w.step(1)
+	if len(*to) != 1 {
+		t.Error("the next button didn't go to the next season")
+	}
+}
+
+// A season not out yet is not switched to; the page ends and says when it
+// comes out.
+func TestEndedWaitsForAnnouncedSeason(t *testing.T) {
+	w, to, _ := seasonsWatching(t, false)
+	w.onEnded()
+	if len(*to) != 0 || !w.ended {
+		t.Fatalf("switched to %v, ended %v", *to, w.ended)
+	}
+	if got := seasonLine(w.seasons[1]); got != "第2季 · 预计11月10日上线" {
+		t.Errorf("seasonLine = %q", got)
+	}
+}
+
+// The season row switches to a season where the user left it.
+func TestSeasonRowSwitches(t *testing.T) {
+	w, to, eps := seasonsWatching(t, true)
+	tt := ui.NewTester(func(c *ui.Context) { w.app.seasonRow(c, w) }, 368, 200)
+	tt.Frame()
+	if err := tt.Click("第2季"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if len(*to) != 1 || (*to)[0].ID != "s2" || (*eps)[0] != -1 {
+		t.Fatalf("switched to %v at %v", *to, *eps)
+	}
+}
