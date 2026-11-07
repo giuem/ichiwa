@@ -292,6 +292,7 @@ func Run() {
 			}
 			app.lib.Flush()
 		})
+		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.lib.Close() })
 		// Saves progress now and then, in case the app is killed.
 		go func() {
 			for range time.Tick(10 * time.Second) {

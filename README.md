@@ -49,7 +49,7 @@ internal/
     system.go           菜单栏、媒体键、自动更新
     images.go           封面异步加载与缓存
   catalog/              openhongguo 封装；剧集下载、解密、磁盘缓存（2 GB LRU）
-  library/              观看进度、追剧、设置（library.json）
+  library/              观看进度、追剧、设置（SQLite：library.db）
   cenc/                 纯 Go 的 CENC（AES-CTR）MP4 原地解密
   mac/                  经 purego 调用 AVFoundation（播放、取帧）和 ImageIO（HEIC），无 cgo
 resources/icon.png      应用图标，由 scripts/icon.swift 绘制

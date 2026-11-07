@@ -577,6 +577,21 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## SQLite 3.53.4
+
+License: Public domain
+
+Bundled as `libmygo-sqlite3.dylib`, built by the MyGo SQLite plugin (covered by the MyGo license above).
+
+```
+The author disclaims copyright to this source code. In place of
+a legal notice, here is a blessing:
+
+   May you do good and not evil.
+   May you find forgiveness for yourself and forgive others.
+   May you share freely, never taking more than you give.
+```
+
 ## Go standard library
 
 License: BSD-3-Clause

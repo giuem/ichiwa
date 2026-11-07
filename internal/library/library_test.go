@@ -1,6 +1,9 @@
 package library
 
 import (
+	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"hongguo/internal/catalog"
@@ -9,8 +12,10 @@ import (
 // Following a drama and following it again leaves it unfollowed, and the
 // latest followed comes first.
 func TestFollow(t *testing.T) {
-	l := Load(t.TempDir())
-	a, b := catalog.Show{ID: "a"}, catalog.Show{ID: "b"}
+	dir := t.TempDir()
+	l := Load(dir)
+	defer l.Close()
+	a, b, c := catalog.Show{ID: "a"}, catalog.Show{ID: "b"}, catalog.Show{ID: "c", Title: "丙"}
 	l.ToggleFollow(a)
 	l.ToggleFollow(b)
 	if got := l.Followed(); len(got) != 2 || got[0].ID != "b" {
@@ -20,8 +25,66 @@ func TestFollow(t *testing.T) {
 	if l.Following("a") || len(l.Followed()) != 1 {
 		t.Fatal("following again should stop following")
 	}
-	again := Load(l.path[:len(l.path)-len("/library.json")])
-	if !again.Following("b") {
-		t.Fatal("follows are not saved")
+	l.ToggleFollow(c)
+	again := Load(dir)
+	defer again.Close()
+	if got := again.Followed(); len(got) != 2 || got[0] != c || got[1].ID != "b" {
+		t.Fatalf("follows are not saved in order: %v", got)
+	}
+}
+
+// Progress and settings are saved by Flush, and a forgotten drama is gone.
+func TestProgress(t *testing.T) {
+	dir := t.TempDir()
+	l := Load(dir)
+	l.Progress(catalog.Show{ID: "a", Title: "甲"}, 3, 42.5, math.NaN())
+	l.Progress(catalog.Show{ID: "b"}, 0, 1, 60)
+	l.Volume, l.Speed, l.Page = 0.5, 1.5, "rank"
+	l.MarkDirty()
+	l.Close()
+
+	l = Load(dir)
+	r := l.History["a"]
+	if r == nil || r.Show.Title != "甲" || r.Episode != 3 || r.Position != 42.5 || r.Duration != 0 {
+		t.Fatalf("History[a] = %+v", r)
+	}
+	if l.Volume != 0.5 || l.Speed != 1.5 || l.Page != "rank" {
+		t.Fatalf("settings = %v %v %q", l.Volume, l.Speed, l.Page)
+	}
+	l.Forget("a")
+	l.Close()
+
+	l = Load(dir)
+	defer l.Close()
+	if _, ok := l.History["a"]; ok || len(l.History) != 1 {
+		t.Fatalf("History = %v", l.History)
+	}
+}
+
+// A library.json from earlier versions is imported once, then set aside.
+func TestImportJSON(t *testing.T) {
+	dir := t.TempDir()
+	old := `{
+  "history": {"a": {"show": {"ID": "a", "Title": "甲"}, "episode": 2, "position": 10, "duration": 80, "updated": "2026-11-07T23:53:00+08:00"}},
+  "follows": {"a": {"ID": "a"}, "b": {"ID": "b"}},
+  "followOrder": ["b", "a"],
+  "volume": 0.3, "speed": 2, "page": "comic"
+}`
+	if err := os.WriteFile(filepath.Join(dir, "library.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := Load(dir)
+	defer l.Close()
+	if r := l.History["a"]; r == nil || r.Episode != 2 || r.Updated.IsZero() {
+		t.Fatalf("History[a] = %+v", r)
+	}
+	if got := l.Followed(); len(got) != 2 || got[0].ID != "b" {
+		t.Fatalf("Followed = %v", got)
+	}
+	if l.Volume != 0.3 || l.Speed != 2 || l.Page != "comic" {
+		t.Fatalf("settings = %v %v %q", l.Volume, l.Speed, l.Page)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "library.json.bak")); err != nil {
+		t.Fatal("library.json was not set aside")
 	}
 }
