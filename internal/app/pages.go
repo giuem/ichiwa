@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,9 @@ const (
 	pagePad  = 32
 	cardMinW = 156
 	cardGap  = 20
+	// titleLine is the line height of a card's title. Titles always take
+	// two lines of room so cards in a row line up whatever their length.
+	titleLine = 18
 )
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -120,7 +124,8 @@ func (app *App) card(c *ui.Context, s Show, width float32, badge string, under f
 			}
 		})
 		ui.Column(c).Gap(3).Children(func() {
-			ui.Text(c, s.Title).FontSize(13.5).FontWeight(600).MaxLines(2).
+			ui.Text(c, s.Title).FontSize(13.5).FontWeight(600).
+				FixedLineHeight(titleLine).MaxLines(2).MinHeight(2 * titleLine).
 				TextColor(col.AnimateColor("title", ternary(hover, p.accent, p.text), quick))
 			if under != nil {
 				under()
@@ -174,10 +179,14 @@ func (app *App) skeletonGrid(c *ui.Context, rows int) {
 		for r := range rows {
 			ui.Row(c.Key(r)).Gap(cardGap).Children(func() {
 				for i := range n {
-					ui.Column(c.Key(i)).Width(w).Gap(10).Children(func() {
+					ui.Column(c.Key(i)).Width(w).Gap(9).Children(func() {
 						s.bone(c, 10).AspectRatio(3.0 / 4)
-						s.bone(c, 4).Height(13).WidthPercent(float32(60 + (r*n+i)*17%35))
-						s.bone(c, 4).Height(10).WidthPercent(36)
+						// Two title lines, as tall as a card's title.
+						ui.Column(c).Height(2*titleLine).Gap(5).Padding(2, 0).Children(func() {
+							s.bone(c, 4).Height(13).WidthPercent(92)
+							s.bone(c, 4).Height(13).WidthPercent(float32(40 + (r*n+i)*17%35))
+						})
+						s.bone(c, 4).Height(10).WidthPercent(36).Margin(5, 0, 0)
 					})
 				}
 			})
@@ -242,6 +251,7 @@ func (app *App) feedPage(c *ui.Context, channel string) {
 type rankState struct {
 	page    *RankPage // the last page loaded: the boards, and which is shown
 	list    Feed
+	actors  []Actor // on the actors' boards, which list no dramas
 	content int
 	board   int
 }
@@ -251,6 +261,7 @@ type rankState struct {
 func (app *App) loadRank(content, board string) {
 	r := &app.rank
 	r.list.reset()
+	r.actors = nil
 	r.list.fetch = func(cursor string) (feedPage, error) {
 		p, err := app.be.Rank(content, board, cursor)
 		if err != nil {
@@ -258,21 +269,35 @@ func (app *App) loadRank(content, board string) {
 		}
 		return feedPage{items: p.Items, cursor: p.Cursor, more: p.HasMore, extra: p}, nil
 	}
-	r.list.onPage = func(fp feedPage) {
-		p := fp.extra.(*RankPage)
-		r.page = p
-		for i, ct := range p.Contents {
-			if ct.ID == p.Content {
-				r.content = i
-				for j, b := range ct.Boards {
-					if b.ID == p.Board {
-						r.board = j
-					}
+	r.list.onPage = r.loaded
+	app.loadMore(&r.list)
+}
+
+// loaded takes in a page of the ranking: its boards, and its actors.
+func (r *rankState) loaded(fp feedPage) {
+	p := fp.extra.(*RankPage)
+	r.page = p
+	if len(p.Actors) > 0 {
+		before := len(r.actors)
+		r.addActors(p.Actors)
+		// The feed holds dramas and took a page of only actors for its
+		// end; it ends when a page brings no new actors.
+		fresh := len(r.actors) > before
+		r.list.more = fresh && p.HasMore && p.Cursor != ""
+		if fresh {
+			r.list.stalls = 0
+		}
+	}
+	for i, ct := range p.Contents {
+		if ct.ID == p.Content {
+			r.content = i
+			for j, b := range ct.Boards {
+				if b.ID == p.Board {
+					r.board = j
 				}
 			}
 		}
 	}
-	app.loadMore(&r.list)
 }
 
 func (app *App) rankPage(c *ui.Context) {
@@ -296,9 +321,6 @@ func (app *App) rankPage(c *ui.Context) {
 	ui.Column(c).Padding(0, pagePad, 18).Gap(14).Children(func() {
 		ui.Row(c).Gap(22).Children(func() {
 			for i, ct := range contents {
-				if ct.Name == "演员" { // the actors' board lists people, not dramas
-					continue
-				}
 				if app.tab(c.Key("tab-"+ct.ID), ct.Name, i == r.content).Clicked() && i != r.content {
 					r.content, r.board = i, 0
 					app.loadRank(ct.ID, "")
@@ -317,6 +339,14 @@ func (app *App) rankPage(c *ui.Context) {
 			})
 		}
 	})
+	if len(r.actors) > 0 {
+		ui.Scroll(c.Key("rank-actors")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
+			app.actorGrid(c, r.actors)
+			app.feedFooter(c, l.loading, l.err, l.more, retry)
+		})
+		app.pump(c, l)
+		return
+	}
 	if len(l.items) == 0 {
 		if l.err != "" {
 			app.centered(c, iconX, "加载失败", l.err, retry)
@@ -345,6 +375,15 @@ func (app *App) rankPage(c *ui.Context) {
 		app.feedFooter(c, l.loading, l.err, l.more, retry)
 	})
 	app.pump(c, l)
+}
+
+// addActors adds the actors not listed yet.
+func (r *rankState) addActors(actors []Actor) {
+	for _, a := range actors {
+		if !slices.ContainsFunc(r.actors, func(b Actor) bool { return b.ID == a.ID }) {
+			r.actors = append(r.actors, a)
+		}
+	}
 }
 
 // ---- Search ----

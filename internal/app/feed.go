@@ -1,6 +1,8 @@
 package app
 
 import (
+	"time"
+
 	"github.com/egoist/mygo/ui"
 
 	"hongguo/internal/catalog"
@@ -31,6 +33,7 @@ type Feed struct {
 	err     string
 	scroll  ui.ScrollState
 	gen     int // bumped by reset, so results of earlier loads are dropped
+	stalls  int // pages in a row that brought nothing new
 }
 
 func newFeed(fetch func(cursor string) (feedPage, error)) *Feed {
@@ -62,7 +65,11 @@ func (app *App) loadMore(f *Feed) {
 	}
 	f.loading, f.err = true, ""
 	fetch, cursor, gen := f.fetch, f.cursor, f.gen
-	async(app, func() (feedPage, error) { return fetch(cursor) }, func(p feedPage, err error) {
+	wait := time.Duration(f.stalls) * stallWait
+	async(app, func() (feedPage, error) {
+		time.Sleep(wait)
+		return fetch(cursor)
+	}, func(p feedPage, err error) {
 		if f.gen != gen {
 			return
 		}
@@ -73,17 +80,40 @@ func (app *App) loadMore(f *Feed) {
 		}
 		before := len(f.items)
 		f.add(p.items)
-		f.cursor, f.more = p.cursor, p.more
-		// A page of nothing new ends the feed, so it doesn't loop.
-		if len(f.items) == before && cursor != "" {
-			f.more = false
-		}
+		f.more = f.step(p, len(f.items) > before)
 		if f.onPage != nil {
 			f.onPage(p)
 		}
 		app.fill(f, f.items[before:])
 		app.warm()
 	})
+}
+
+// A source ends a list early now and then: Hongguo's feeds answer a page
+// with no way on, or with only repeats, while asking again goes on. So a
+// feed takes an end for real only after maxStalls pages in a row bring
+// nothing new, asking each time a little later.
+const (
+	maxStalls = 3
+	stallWait = 700 * time.Millisecond
+)
+
+// step takes in where page p leaves f, which it added to if fresh, and
+// reports whether more may come.
+func (f *Feed) step(p feedPage, fresh bool) bool {
+	end := !p.more || p.cursor == ""
+	if !end {
+		f.cursor = p.cursor // a page of repeats still moves on
+	}
+	switch {
+	case fresh && !end:
+		f.stalls = 0
+		return true
+	case len(f.items) == 0:
+		return false // nothing to show: an empty search, say, ends at once
+	}
+	f.stalls++
+	return f.stalls < maxStalls
 }
 
 // fill looks up the covers and counts that new items of f lack, and puts
