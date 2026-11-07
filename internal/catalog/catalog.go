@@ -185,6 +185,7 @@ type RankPage struct {
 	Content  string
 	Board    string
 	Items    []Show
+	Actors   []Actor // on the actors' boards, in place of Items
 	Cursor   string
 	HasMore  bool
 }
@@ -198,16 +199,7 @@ func (b *Backend) Rank(content, board, cursor string) (*RankPage, error) {
 		return nil, err
 	}
 	p := &RankPage{Contents: r.Contents, Content: r.Content, Board: r.Board, Cursor: r.Cursor, HasMore: r.HasMore && r.Cursor != ""}
-	for _, it := range r.Items {
-		if it.SeriesID == "" || it.Promoted {
-			continue
-		}
-		tag := it.Score
-		if tag == "" && it.Votes > 0 {
-			tag = heat(it.Votes)
-		}
-		p.Items = append(p.Items, Show{ID: it.SeriesID, Title: it.Title, Cover: it.CoverURL, Episodes: it.EpisodeCount, Tag: tag})
-	}
+	p.Items, p.Actors = rankRows(r.Items)
 	b.fillCovers(ctx, p.Items)
 	return p, nil
 }

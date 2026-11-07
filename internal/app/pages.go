@@ -247,6 +247,7 @@ func (app *App) feedPage(c *ui.Context, channel string) {
 type rankState struct {
 	page    *RankPage
 	items   []Show
+	actors  []Actor // on the actors' boards, in place of items
 	seen    map[string]bool
 	loading bool
 	err     string
@@ -266,7 +267,7 @@ func (app *App) loadRank(content, board string, more bool) {
 	}
 	r.loading, r.err = true, ""
 	if !more {
-		r.items, r.seen = nil, map[string]bool{}
+		r.items, r.actors, r.seen = nil, nil, map[string]bool{}
 		r.scroll = ui.ScrollState{}
 	}
 	async(app, func() (*RankPage, error) { return app.be.Rank(content, board, cursor) }, func(p *RankPage, err error) {
@@ -280,6 +281,12 @@ func (app *App) loadRank(content, board string, more bool) {
 			if !r.seen[s.ID] {
 				r.seen[s.ID] = true
 				r.items = append(r.items, s)
+			}
+		}
+		for _, a := range p.Actors {
+			if !r.seen["actor:"+a.ID] {
+				r.seen["actor:"+a.ID] = true
+				r.actors = append(r.actors, a)
 			}
 		}
 		for i, ct := range p.Contents {
@@ -314,9 +321,6 @@ func (app *App) rankPage(c *ui.Context) {
 	ui.Column(c).Padding(0, pagePad, 18).Gap(14).Children(func() {
 		ui.Row(c).Gap(22).Children(func() {
 			for i, ct := range contents {
-				if ct.Name == "演员" { // the actors' board lists people, not dramas
-					continue
-				}
 				if app.tab(c.Key("tab-"+ct.ID), ct.Name, i == r.content).Clicked() && i != r.content {
 					r.content, r.board = i, 0
 					app.loadRank(ct.ID, "", false)
@@ -335,7 +339,7 @@ func (app *App) rankPage(c *ui.Context) {
 			})
 		}
 	})
-	if len(r.items) == 0 {
+	if len(r.items) == 0 && len(r.actors) == 0 {
 		if r.err != "" {
 			app.centered(c, iconX, "加载失败", r.err, func() { r.err = ""; app.loadRank(r.page.Content, r.page.Board, false) })
 		} else {
@@ -344,6 +348,16 @@ func (app *App) rankPage(c *ui.Context) {
 		return
 	}
 	content, board := r.page.Content, r.page.Board
+	if len(r.actors) > 0 {
+		ui.Scroll(c.Key("rank-actors")).TrackScroll(&r.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
+			app.actorGrid(c, r.actors)
+			app.feedFooter(c, r.loading, r.err, r.page.HasMore, func() { app.loadRank(content, board, true) })
+		})
+		if r.page.HasMore && !r.loading && r.err == "" && nearEnd(&r.scroll) {
+			app.loadRank(content, board, true)
+		}
+		return
+	}
 	ui.Scroll(c.Key("rank")).TrackScroll(&r.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
 		app.grid(c, r.items, func(i int, s Show) string { return "" }, func(i int, s Show) func() {
 			return func() {

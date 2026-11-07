@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+
+	"hongguo/internal/catalog"
 )
 
 // tour walks the pages and saves a screenshot of each into the directory
@@ -43,10 +45,26 @@ func (app *App) tour() {
 			}
 		})
 		shot("6-player", 15*time.Second)
-		app.win.Update(func() { app.watch.togglePlay() })
+		app.win.Update(func() {
+			if app.watch != nil {
+				app.watch.togglePlay()
+			}
+		})
 		shot("7-player-paused", 2*time.Second)
 		app.win.Update(func() { app.closeWatch(); app.page = pageHistory })
 		shot("8-history", 2*time.Second)
+		goTo(pageFilter)
+		shot("9-filter", 6*time.Second)
+		app.win.Update(func() { app.filter.choose(catalog.GenreKey, "comic_series") })
+		shot("10-filter-comic", 6*time.Second)
+		app.win.Update(func() { app.page = pageRank; app.loadRank("ranklist_celebrity", "", false) })
+		shot("11-actors", 6*time.Second)
+		app.win.Update(func() {
+			if len(app.rank.actors) > 0 {
+				app.openPerson(app.rank.actors[0])
+			}
+		})
+		shot("12-person", 6*time.Second)
 		mygo.RunOnMain(func() { mygo.App.Quit() })
 	}()
 }
