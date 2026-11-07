@@ -81,4 +81,8 @@ resources/icon.png      应用图标，由 scripts/icon.swift 绘制
 
 ## 许可
 
-[MIT](LICENSE)
+Copyright © 2026 giuem
+
+本项目以 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）发布。你可以使用、修改和分发它，但分发修改后的版本时，必须以同样的许可证公开完整源码。
+
+本项目使用的第三方软件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
