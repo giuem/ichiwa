@@ -89,7 +89,6 @@ func (b *Backend) Discover(channel, cursor string) ([]Show, string, bool, error)
 	for _, s := range page.Items {
 		out = append(out, showOf(s))
 	}
-	b.fillCovers(ctx, out)
 	return out, page.Cursor, page.HasMore && page.Cursor != "", nil
 }
 
@@ -108,15 +107,29 @@ func (b *Backend) Search(query, cursor string) ([]Show, string, bool, error) {
 	for _, s := range page.Items {
 		out = append(out, showOf(s))
 	}
-	b.fillCovers(ctx, out)
 	return out, page.Cursor, page.HasMore && page.Cursor != "", nil
+}
+
+// Lacking reports whether a show still lacks its cover or episode count,
+// which Discover, Search and Rank leave for Fill.
+func Lacking(s Show) bool { return s.Cover == "" || s.Episodes == 0 }
+
+// Fill returns shows with the covers and counts they lack looked up. Pages
+// come back without that lookup, a round trip of its own, so they show
+// sooner; this fills them in after.
+func (b *Backend) Fill(shows []Show) []Show {
+	ctx, cancel := ctxTimeout(30 * time.Second)
+	defer cancel()
+	out := append([]Show(nil), shows...)
+	b.fillCovers(ctx, out)
+	return out
 }
 
 // fillCovers looks up the covers (and counts) search results lack.
 func (b *Backend) fillCovers(ctx context.Context, shows []Show) {
 	var ids []string
 	for _, s := range shows {
-		if s.Cover == "" || s.Episodes == 0 {
+		if Lacking(s) {
 			ids = append(ids, s.ID)
 		}
 	}
@@ -208,7 +221,6 @@ func (b *Backend) Rank(content, board, cursor string) (*RankPage, error) {
 		}
 		p.Items = append(p.Items, Show{ID: it.SeriesID, Title: it.Title, Cover: it.CoverURL, Episodes: it.EpisodeCount, Tag: tag})
 	}
-	b.fillCovers(ctx, p.Items)
 	return p, nil
 }
 

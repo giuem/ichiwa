@@ -32,6 +32,46 @@ func TestColumns(t *testing.T) {
 	}
 }
 
+// While more pages come, the grid shows whole rows only; the last page
+// shows what is left, and so does a feed shorter than a row.
+func TestVisibleWholeRows(t *testing.T) {
+	f := &Feed{more: true}
+	for i := range 13 {
+		f.add([]Show{{ID: itoa(i)}})
+	}
+	if got := len(visible(f, 5)); got != 10 {
+		t.Errorf("more: shows %d, want 10", got)
+	}
+	f.err = "boom"
+	if got := len(visible(f, 5)); got != 13 {
+		t.Errorf("failed: shows %d, want 13", got)
+	}
+	f.err, f.more = "", false
+	if got := len(visible(f, 5)); got != 13 {
+		t.Errorf("ended: shows %d, want 13", got)
+	}
+	short := &Feed{more: true, items: make([]Show, 3)}
+	if got := len(visible(short, 5)); got != 3 {
+		t.Errorf("short: shows %d, want 3", got)
+	}
+}
+
+// A reset feed keeps its source, starts over, and tells loads under way
+// apart from new ones.
+func TestFeedReset(t *testing.T) {
+	f := newFeed(func(string) (feedPage, error) { return feedPage{}, nil })
+	f.add([]Show{{ID: "a"}})
+	f.cursor, f.more, f.loading = "c", false, true
+	f.reset()
+	if f.fetch == nil || !f.more || f.loading || len(f.items) != 0 || f.cursor != "" || f.gen != 1 {
+		t.Fatalf("reset = %+v", f)
+	}
+	f.add([]Show{{ID: "a"}})
+	if len(f.items) != 1 {
+		t.Fatal("seen survived the reset")
+	}
+}
+
 // The player's buttons take their clicks: the picture, laid over the whole
 // stage, once covered them and took every click as play/pause.
 func TestStageButtonsTakeClicks(t *testing.T) {
