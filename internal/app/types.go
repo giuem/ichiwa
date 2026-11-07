@@ -1,0 +1,17 @@
+package app
+
+import (
+	"hongguo/internal/catalog"
+	"hongguo/internal/library"
+)
+
+// The catalog's and the library's types, by the names the views use.
+type (
+	Show     = catalog.Show
+	Detail   = catalog.Detail
+	HotBoard = catalog.HotBoard
+	RankPage = catalog.RankPage
+	Record   = library.Record
+)
+
+var errText = catalog.ErrText

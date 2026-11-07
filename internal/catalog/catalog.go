@@ -1,4 +1,6 @@
-package main
+// Package catalog reaches Hongguo through openhongguo: the catalog, and
+// episodes downloaded and decrypted into a cache on disk.
+package catalog
 
 import (
 	"context"
@@ -51,7 +53,9 @@ type fetchJob struct {
 	err  error
 }
 
-func newBackend(dataDir, cacheDir string) (*Backend, error) {
+// New makes a backend keeping its anonymous device in dataDir and the
+// episodes it fetched in cacheDir.
+func New(dataDir, cacheDir string) (*Backend, error) {
 	client, err := adapters.NewClient(filepath.Join(dataDir, "anonymous.json"), sdk.Options{RetryAttempts: 3, DeviceResets: sdk.Int(3)})
 	if err != nil {
 		return nil, err
@@ -413,8 +417,8 @@ func friendly(err error) error {
 	return err
 }
 
-// errText turns an error into a short message for the interface.
-func errText(err error) string {
+// ErrText turns an error into a short message for the interface.
+func ErrText(err error) string {
 	if err == nil {
 		return ""
 	}

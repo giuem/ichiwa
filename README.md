@@ -38,18 +38,22 @@ go tool mygo build   # 打包到 build/darwin-<arch>/
 
 ### 结构
 
-| 文件 | 内容 |
-|---|---|
-| `main.go` | 窗口、侧栏、页面切换 |
-| `pages.go` | 频道、排行榜、搜索、继续观看、追剧 |
-| `watch.go` | 播放页：画面、控制条、选集、相关推荐 |
-| `kit.go` | 调色板、按钮、标签、骨架屏等界面组件 |
-| `system.go` | 菜单栏、媒体键、自动更新 |
-| `backend.go` | openhongguo 封装；剧集下载、解密、磁盘缓存（2 GB，按最近使用淘汰） |
-| `images.go` | 封面异步加载与缓存 |
-| `library.go` | 观看进度、追剧、设置（`library.json`） |
-| `internal/cenc` | 纯 Go 的 CENC（AES-CTR）MP4 原地解密 |
-| `internal/mac` | 经 purego 调用 AVFoundation（播放、取帧）和 ImageIO（HEIC 解码），无 cgo |
+```
+main.go                 入口，调用 internal/app
+internal/
+  app/                  窗口与界面（MyGo Native UI）
+    app.go              窗口、侧栏、页面切换
+    pages.go            频道、排行榜、搜索、继续观看、追剧
+    watch.go            播放页：画面、控制条、选集、相关推荐
+    kit.go              调色板、按钮、标签、骨架屏等组件
+    system.go           菜单栏、媒体键、自动更新
+    images.go           封面异步加载与缓存
+  catalog/              openhongguo 封装；剧集下载、解密、磁盘缓存（2 GB LRU）
+  library/              观看进度、追剧、设置（library.json）
+  cenc/                 纯 Go 的 CENC（AES-CTR）MP4 原地解密
+  mac/                  经 purego 调用 AVFoundation（播放、取帧）和 ImageIO（HEIC），无 cgo
+resources/icon.png      应用图标，由 scripts/icon.swift 绘制
+```
 
 ### 播放是怎么工作的
 

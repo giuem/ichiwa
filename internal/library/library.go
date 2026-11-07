@@ -1,7 +1,10 @@
-package main
+// Package library keeps what the user watched and follows, and their
+// player settings, in a JSON file.
+package library
 
 import (
 	"encoding/json"
+	"hongguo/internal/catalog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,27 +13,28 @@ import (
 
 // Record is where the user is in a drama.
 type Record struct {
-	Show     Show      `json:"show"`
-	Episode  int       `json:"episode"`  // index into the episodes, from 0
-	Position float64   `json:"position"` // seconds into it
-	Duration float64   `json:"duration"`
-	Updated  time.Time `json:"updated"`
+	Show     catalog.Show `json:"show"`
+	Episode  int          `json:"episode"`  // index into the episodes, from 0
+	Position float64      `json:"position"` // seconds into it
+	Duration float64      `json:"duration"`
+	Updated  time.Time    `json:"updated"`
 }
 
 // Library keeps the watch history and the dramas followed, in a JSON file.
 // It is used on the main thread only.
 type Library struct {
 	path    string
-	History map[string]*Record `json:"history"`
-	Follows map[string]Show    `json:"follows"`
-	Order   []string           `json:"followOrder"`
-	Volume  float64            `json:"volume"`
-	Speed   float64            `json:"speed"`
-	Page    string             `json:"page"`
+	History map[string]*Record      `json:"history"`
+	Follows map[string]catalog.Show `json:"follows"`
+	Order   []string                `json:"followOrder"`
+	Volume  float64                 `json:"volume"`
+	Speed   float64                 `json:"speed"`
+	Page    string                  `json:"page"`
 	dirty   bool
 }
 
-func loadLibrary(dir string) *Library {
+// Load reads the library in dir, or starts an empty one.
+func Load(dir string) *Library {
 	l := &Library{path: filepath.Join(dir, "library.json"), Volume: 1, Speed: 1}
 	if data, err := os.ReadFile(l.path); err == nil {
 		_ = json.Unmarshal(data, l)
@@ -39,7 +43,7 @@ func loadLibrary(dir string) *Library {
 		l.History = map[string]*Record{}
 	}
 	if l.Follows == nil {
-		l.Follows = map[string]Show{}
+		l.Follows = map[string]catalog.Show{}
 	}
 	if l.Speed <= 0 {
 		l.Speed = 1
@@ -59,6 +63,9 @@ func (l *Library) save() {
 	l.dirty = false
 }
 
+// MarkDirty notes a change to the settings, which Flush saves.
+func (l *Library) MarkDirty() { l.dirty = true }
+
 // Flush saves pending changes.
 func (l *Library) Flush() {
 	if l.dirty {
@@ -67,7 +74,7 @@ func (l *Library) Flush() {
 }
 
 // Progress records the position in an episode; it saves later, by Flush.
-func (l *Library) Progress(s Show, episode int, pos, dur float64) {
+func (l *Library) Progress(s catalog.Show, episode int, pos, dur float64) {
 	w := l.History[s.ID]
 	if w == nil {
 		w = &Record{}
@@ -100,7 +107,7 @@ func (l *Library) Following(id string) bool {
 }
 
 // ToggleFollow follows a drama or stops following it.
-func (l *Library) ToggleFollow(s Show) {
+func (l *Library) ToggleFollow(s catalog.Show) {
 	if l.Following(s.ID) {
 		delete(l.Follows, s.ID)
 		for i, id := range l.Order {
@@ -117,8 +124,8 @@ func (l *Library) ToggleFollow(s Show) {
 }
 
 // Followed returns the dramas followed, latest first.
-func (l *Library) Followed() []Show {
-	out := make([]Show, 0, len(l.Order))
+func (l *Library) Followed() []catalog.Show {
+	out := make([]catalog.Show, 0, len(l.Order))
 	for _, id := range l.Order {
 		if s, ok := l.Follows[id]; ok {
 			out = append(out, s)

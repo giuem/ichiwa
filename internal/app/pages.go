@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -73,8 +73,9 @@ func (app *App) poster(c *ui.Context, url, title string, radius float32) ui.Elem
 	}
 	box.Children(func() {
 		if in < 1 {
-			ui.Text(c, firstRune(title)).FontSize(26).Bold().TextColor(p.faint).Opacity(1 - in).
-				Absolute().Top(0).Left(0).Right(0).Bottom(0).TextAlign(ui.Center).PaddingY(0).Center()
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Opacity(1 - in).Children(func() {
+				ui.Text(c, firstRune(title)).FontSize(26).Bold().TextColor(p.faint)
+			})
 		}
 		if bmp != nil {
 			img := ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Label(title)

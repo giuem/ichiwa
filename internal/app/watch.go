@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -385,7 +385,9 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 	show = stage.AnimateTo("chrome", show, ui.Smooth)
 	stage.Children(func() {
 		// The picture, under everything.
-		video := ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center()
+		// Under the title bar and the controls, which are in the flow: absolute
+		// elements otherwise paint over those and take their clicks.
+		video := ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().ZIndex(-1)
 		if video.Clicked() {
 			w.togglePlay()
 		}
@@ -506,7 +508,7 @@ func (app *App) speedButton(c *ui.Context, w *Watching) {
 			}
 		}
 		app.lib.Speed = next
-		app.lib.dirty = true
+		app.lib.MarkDirty()
 		if p := w.player; p != nil && p.Playing() {
 			p.SetRate(next)
 		}
@@ -525,14 +527,14 @@ func (app *App) volume(c *ui.Context, w *Watching) {
 	}
 	if symbolButton(c, icon, 14, white, "静音").Clicked() {
 		app.lib.Volume = ternary(vol > 0, 0.0, 1.0)
-		app.lib.dirty = true
+		app.lib.MarkDirty()
 		if p := w.player; p != nil {
 			p.SetVolume(app.lib.Volume)
 		}
 	}
 	s := ui.SliderBase(c.Key("volume"), &app.lib.Volume, 0, 1).Width(84).Height(18).Label("音量")
 	if s.Changed() {
-		app.lib.dirty = true
+		app.lib.MarkDirty()
 		if p := w.player; p != nil {
 			p.SetVolume(app.lib.Volume)
 		}
