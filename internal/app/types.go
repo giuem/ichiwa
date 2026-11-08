@@ -9,6 +9,7 @@ import (
 type (
 	Show      = catalog.Show
 	Detail    = catalog.Detail
+	Season    = catalog.Season
 	HotBoard  = catalog.HotBoard
 	RankPage  = catalog.RankPage
 	FilterRow = catalog.FilterRow
