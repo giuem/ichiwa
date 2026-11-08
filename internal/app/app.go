@@ -55,6 +55,8 @@ type App struct {
 
 	// narrowed tells the window gave up the width of the folded panel.
 	narrowed bool
+	// narrowedBy is the width it gave up.
+	narrowedBy int
 	// watch is the player page, over the rest while it is open.
 	watch *Watching
 	toast string
@@ -82,10 +84,11 @@ func (app *App) go2(page string) {
 	}
 }
 
-// The smallest the window may be, except while narrowed (syncNarrow).
+// The smallest the window may be: the width takes the player's controls,
+// the height the whole sidebar.
 const (
-	minWindowWidth  = 980
-	minWindowHeight = 640
+	minWindowWidth  = 480
+	minWindowHeight = 480
 )
 
 func (app *App) view(c *ui.Context) {
