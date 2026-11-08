@@ -53,6 +53,8 @@ type App struct {
 	// person is an actor's page, over the sidebar's page while it is open.
 	person *personState
 
+	// narrowed tells the window gave up the width of the folded panel.
+	narrowed bool
 	// watch is the player page, over the rest while it is open.
 	watch *Watching
 	toast string
@@ -80,7 +82,14 @@ func (app *App) go2(page string) {
 	}
 }
 
+// The smallest the window may be, except while narrowed (syncNarrow).
+const (
+	minWindowWidth  = 980
+	minWindowHeight = 640
+)
+
 func (app *App) view(c *ui.Context) {
+	app.syncNarrow()
 	if c.Theme().Dark || app.watch != nil {
 		app.pal = darkPalette()
 	} else {
@@ -221,8 +230,8 @@ func Run() {
 			Title:                "红果短剧",
 			Width:                1280,
 			Height:               820,
-			MinWidth:             980,
-			MinHeight:            640,
+			MinWidth:             minWindowWidth,
+			MinHeight:            minWindowHeight,
 			TitleBarStyle:        mygo.TitleBarHidden,
 			TrafficLightPosition: &mygo.Point{X: 18, Y: 18},
 			Vibrancy:             mygo.VibrancySidebar,
@@ -237,9 +246,10 @@ func Run() {
 			if app.watch != nil {
 				app.watch.close()
 			}
+			app.widen()
 			app.lib.Flush()
 		})
-		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.lib.Close() })
+		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.widen(); app.lib.Close() })
 		// Saves progress now and then, in case the app is killed.
 		go func() {
 			for range time.Tick(10 * time.Second) {
