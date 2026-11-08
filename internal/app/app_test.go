@@ -193,3 +193,31 @@ func TestSeasonRowSwitches(t *testing.T) {
 		t.Fatalf("switched to %v at %v", *to, *eps)
 	}
 }
+
+func TestWantsDisplay(t *testing.T) {
+	app := &App{}
+	playing := new(ui.VideoPlayer)
+	for _, c := range []struct {
+		name string
+		w    Watching
+		want bool
+	}{
+		{"loading the next episode", Watching{loading: true}, true},
+		{"playing", Watching{player: playing}, true},
+		{"paused", Watching{player: playing, paused: true}, false},
+		{"ended", Watching{player: playing, ended: true}, false},
+		{"failed", Watching{err: "播放失败"}, false},
+		{"nothing to play", Watching{}, false},
+	} {
+		w := c.w
+		w.app, app.watch = app, &w
+		if got := w.wantsDisplay(); got != c.want {
+			t.Errorf("%s: wantsDisplay = %v, want %v", c.name, got, c.want)
+		}
+	}
+	w := Watching{app: app, loading: true}
+	app.watch = nil
+	if w.wantsDisplay() {
+		t.Error("a page left still wants the display")
+	}
+}

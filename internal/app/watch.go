@@ -54,6 +54,7 @@ type Watching struct {
 	auto    bool // the next play call comes from autoplay
 	skipped int  // episodes autoplay skipped in a row
 	retryAt time.Time
+	awake   func() // releases the display, while it is kept on
 
 	seek     float64
 	dragging bool
@@ -78,12 +79,16 @@ func (app *App) open(s Show, ep int) { app.openIn(s, ep, nil) }
 // openIn opens a drama among seasons already known, which the page keeps
 // rather than asks for again.
 func (app *App) openIn(s Show, ep int, seasons []Season) {
+	var awake func()
 	if app.watch != nil {
 		app.watch.close()
+		// A season going on to the next keeps the display on throughout.
+		awake, app.watch.awake = app.watch.awake, nil
 	}
-	w := &Watching{app: app, show: s, index: max(ep, 0), loading: true, panel: !app.lib.OnTop, unpin: app.lib.OnTop}
+	w := &Watching{app: app, show: s, index: max(ep, 0), loading: true, panel: !app.lib.OnTop, unpin: app.lib.OnTop, awake: awake}
 	w.switchSeason = func(next Season, ep int) { app.openIn(next.Show, ep, w.seasons) }
 	app.watch = w
+	go w.keepAwake()
 	if seasonOf(seasons, s.ID) >= 0 {
 		w.seasons = seasons
 	} else {
@@ -276,6 +281,39 @@ func (w *Watching) watchEnd(gen int, p *ui.VideoPlayer, stop chan struct{}) {
 			w.onEnded()
 		})
 		return
+	}
+}
+
+// wantsDisplay tells whether the display should stay on: from the moment
+// an episode is asked for until the user pauses or nothing is left to
+// play, so autoplay moving on leaves no gap for an idle display to go dark.
+func (w *Watching) wantsDisplay() bool {
+	return w.app.watch == w && w.err == "" && !w.ended && !w.paused && (w.loading || w.player != nil)
+}
+
+// keepAwake holds the display on while the page wants it, until the page
+// is left. AVPlayer does not do it itself, as it only prevents display
+// sleep when it draws through an AVPlayerLayer, and ui.Video copies the
+// frames out. It asks the clock, as a window out of sight builds no views.
+func (w *Watching) keepAwake() {
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		left := false
+		mygo.RunOnMain(func() {
+			switch want := w.wantsDisplay(); {
+			case want && w.awake == nil:
+				w.awake = mygo.Power.KeepAwake("正在播放短剧", true)
+			case !want && w.awake != nil:
+				w.awake()
+				w.awake = nil
+			}
+			left = w.app.watch != w
+		})
+		if left {
+			return
+		}
+		<-tick.C
 	}
 }
 
