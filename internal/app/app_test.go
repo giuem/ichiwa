@@ -92,6 +92,47 @@ func TestStageButtonsTakeClicks(t *testing.T) {
 	}
 }
 
+// Pinning the window folds the panel, and unpinning opens it again unless
+// the user opened or closed it meanwhile.
+func TestPinFoldsPanel(t *testing.T) {
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	w := &Watching{app: app, panel: true, index: 1,
+		detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
+	tt.Frame()
+	pin := func() {
+		t.Helper()
+		if err := tt.Click("窗口置顶 (T)"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+	}
+	pin()
+	if !app.lib.OnTop || w.panel {
+		t.Fatalf("pinned: on top %v, panel %v", app.lib.OnTop, w.panel)
+	}
+	if w.paused {
+		t.Fatal("the click went to the picture")
+	}
+	pin()
+	if app.lib.OnTop || !w.panel {
+		t.Fatalf("unpinned: on top %v, panel %v", app.lib.OnTop, w.panel)
+	}
+	pin()
+	if err := tt.Click("选集面板"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("选集面板"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	pin()
+	if w.panel {
+		t.Fatal("unpinning opened a panel the user closed")
+	}
+}
+
 // seasonsWatching is the last episode of the first of two seasons, noting
 // the season it switches to.
 func seasonsWatching(t *testing.T, secondOnline bool) (*Watching, *[]Season, *[]int) {
@@ -150,5 +191,33 @@ func TestSeasonRowSwitches(t *testing.T) {
 	tt.Frame()
 	if len(*to) != 1 || (*to)[0].ID != "s2" || (*eps)[0] != -1 {
 		t.Fatalf("switched to %v at %v", *to, *eps)
+	}
+}
+
+func TestWantsDisplay(t *testing.T) {
+	app := &App{}
+	playing := new(ui.VideoPlayer)
+	for _, c := range []struct {
+		name string
+		w    Watching
+		want bool
+	}{
+		{"loading the next episode", Watching{loading: true}, true},
+		{"playing", Watching{player: playing}, true},
+		{"paused", Watching{player: playing, paused: true}, false},
+		{"ended", Watching{player: playing, ended: true}, false},
+		{"failed", Watching{err: "播放失败"}, false},
+		{"nothing to play", Watching{}, false},
+	} {
+		w := c.w
+		w.app, app.watch = app, &w
+		if got := w.wantsDisplay(); got != c.want {
+			t.Errorf("%s: wantsDisplay = %v, want %v", c.name, got, c.want)
+		}
+	}
+	w := Watching{app: app, loading: true}
+	app.watch = nil
+	if w.wantsDisplay() {
+		t.Error("a page left still wants the display")
 	}
 }

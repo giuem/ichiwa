@@ -49,10 +49,13 @@ type Watching struct {
 	auto    bool // the next play call comes from autoplay
 	skipped int  // episodes autoplay skipped in a row
 	retryAt time.Time
+	awake   func() // releases the display, while it is kept on
 
 	seek     float64
 	dragging bool
 	panel    bool
+	unpin    bool // the panel opens again when the window is unpinned
+	onTop    bool // what the window was last told
 	descOpen bool
 	epRange  int
 	side     ui.ScrollState
@@ -71,12 +74,16 @@ func (app *App) open(s Show, ep int) { app.openIn(s, ep, nil) }
 // openIn opens a drama among seasons already known, which the page keeps
 // rather than asks for again.
 func (app *App) openIn(s Show, ep int, seasons []Season) {
+	var awake func()
 	if app.watch != nil {
 		app.watch.close()
+		// A season going on to the next keeps the display on throughout.
+		awake, app.watch.awake = app.watch.awake, nil
 	}
-	w := &Watching{app: app, show: s, index: max(ep, 0), loading: true, panel: true}
+	w := &Watching{app: app, show: s, index: max(ep, 0), loading: true, panel: !app.lib.OnTop, unpin: app.lib.OnTop, awake: awake}
 	w.switchSeason = func(next Season, ep int) { app.openIn(next.Show, ep, w.seasons) }
 	app.watch = w
+	go w.keepAwake()
 	if seasonOf(seasons, s.ID) >= 0 {
 		w.seasons = seasons
 	} else {
@@ -130,6 +137,9 @@ func (app *App) openIn(s Show, ep int, seasons []Season) {
 
 func (app *App) closeWatch() {
 	if app.watch != nil {
+		if app.watch.onTop { // only the player page stays on top
+			app.win.SetAlwaysOnTop(false)
+		}
 		app.watch.close()
 		app.watch = nil
 		mygo.NowPlaying.Clear()
@@ -269,6 +279,39 @@ func (w *Watching) watchEnd(gen int, p *ui.VideoPlayer, stop chan struct{}) {
 	}
 }
 
+// wantsDisplay tells whether the display should stay on: from the moment
+// an episode is asked for until the user pauses or nothing is left to
+// play, so autoplay moving on leaves no gap for an idle display to go dark.
+func (w *Watching) wantsDisplay() bool {
+	return w.app.watch == w && w.err == "" && !w.ended && !w.paused && (w.loading || w.player != nil)
+}
+
+// keepAwake holds the display on while the page wants it, until the page
+// is left. AVPlayer does not do it itself, as it only prevents display
+// sleep when it draws through an AVPlayerLayer, and ui.Video copies the
+// frames out. It asks the clock, as a window out of sight builds no views.
+func (w *Watching) keepAwake() {
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		left := false
+		mygo.RunOnMain(func() {
+			switch want := w.wantsDisplay(); {
+			case want && w.awake == nil:
+				w.awake = mygo.Power.KeepAwake("正在播放短剧", true)
+			case !want && w.awake != nil:
+				w.awake()
+				w.awake = nil
+			}
+			left = w.app.watch != w
+		})
+		if left {
+			return
+		}
+		<-tick.C
+	}
+}
+
 // failed shows why episode i did not play. Autoplay skips an episode the
 // anonymous device cannot play, up to maxSkips in a row, as the
 // openhongguo CLI does.
@@ -377,6 +420,31 @@ func (w *Watching) togglePlay() {
 	w.syncNowPlaying()
 }
 
+// toggleOnTop pins the window above others, or unpins it. A pinned window
+// is out of the way as far as it can be, so the panel folds, and opens
+// again on unpinning unless the user touched it since.
+func (w *Watching) toggleOnTop() {
+	lib := w.app.lib
+	lib.OnTop = !lib.OnTop
+	lib.MarkDirty()
+	switch {
+	case lib.OnTop && w.panel:
+		w.panel, w.unpin = false, true
+	case !lib.OnTop && w.unpin:
+		w.panel, w.unpin = true, false
+	}
+	w.app.toast = ternary(lib.OnTop, "窗口已置顶", "已取消置顶")
+}
+
+// syncOnTop tells the window to stay on top or not: a full screen window
+// has nothing to stay above.
+func (w *Watching) syncOnTop(full bool) {
+	if want := w.app.lib.OnTop && !full; want != w.onTop {
+		w.onTop = want
+		w.app.win.SetAlwaysOnTop(want)
+	}
+}
+
 func (w *Watching) step(d int) {
 	if w.detail == nil {
 		return
@@ -429,6 +497,7 @@ func (app *App) watchView(c *ui.Context) {
 	w := app.watch
 	c.Root().Background(app.pal.bg)
 	full := app.win.IsFullScreen()
+	w.syncOnTop(full)
 
 	// Keyboard.
 	c.OnShortcut(0, ui.KeySpace, w.togglePlay)
@@ -437,6 +506,11 @@ func (app *App) watchView(c *ui.Context) {
 	c.OnShortcut(0, ui.KeyUp, func() { w.step(-1) })
 	c.OnShortcut(0, ui.KeyDown, func() { w.step(1) })
 	c.OnShortcut(0, ui.KeyF, app.win.ToggleFullScreen)
+	c.OnShortcut(0, ui.KeyT, func() {
+		if !app.win.IsFullScreen() {
+			w.toggleOnTop()
+		}
+	})
 	c.OnShortcut(0, ui.KeyEscape, func() {
 		if app.win.IsFullScreen() {
 			app.win.SetFullScreen(false)
@@ -528,7 +602,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 					}
 				})
 				if !full && symbolButton(c, "sidebar.right", 15, white, "选集面板").Clicked() {
-					w.panel = !w.panel
+					w.panel, w.unpin = !w.panel, false
 				}
 			})
 
@@ -563,6 +637,9 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				app.speedButton(c, w)
 				app.volume(c, w)
 				fs := ternary(full, "arrow.down.right.and.arrow.up.left", "arrow.up.left.and.arrow.down.right")
+				if !full && symbolButton(c, "pin.fill", 14, ternary(app.lib.OnTop, app.pal.accent, white), "窗口置顶 (T)").Clicked() {
+					w.toggleOnTop()
+				}
 				if symbolButton(c, fs, 14, white, "全屏 (F)").Clicked() {
 					app.win.ToggleFullScreen()
 				}
