@@ -95,7 +95,7 @@ func (app *App) mediaKeys() {
 			case mygo.MediaPrevious:
 				w.step(-1)
 			case mygo.MediaSeek:
-				w.player.Seek(pos.Seconds())
+				w.player.Seek(pos)
 				w.syncNowPlaying()
 			}
 			app.win.Invalidate()
@@ -112,8 +112,8 @@ func (w *Watching) nowPlaying() {
 		Title:    w.show.Title,
 		Artist:   "第" + itoa(w.index+1) + "集",
 		Album:    "红果短剧",
-		Duration: time.Duration(w.player.Duration() * float64(time.Second)),
-		Position: time.Duration(w.player.Position() * float64(time.Second)),
+		Duration: w.player.Duration(),
+		Position: w.player.Position(),
 		Rate:     w.app.lib.Speed,
 		State:    mygo.PlaybackPlaying,
 		Commands: mygo.MediaPlay | mygo.MediaPause | mygo.MediaSeek | mygo.MediaNext | mygo.MediaPrevious,
@@ -136,7 +136,7 @@ func (w *Watching) syncNowPlaying() {
 	if w.player.Playing() {
 		state = mygo.PlaybackPlaying
 	}
-	mygo.NowPlaying.SetPlayback(state, time.Duration(w.player.Position()*float64(time.Second)))
+	mygo.NowPlaying.SetPlayback(state, w.player.Position())
 }
 
 // checkForUpdates looks for a newer version and offers to install it.

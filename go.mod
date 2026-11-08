@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/beilunyang/openhongguo v0.2.0
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.8.3
+	github.com/egoist/mygo v0.8.4-0.20261108132554-29c8444fd574
 )
 
 require (
