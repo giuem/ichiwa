@@ -35,6 +35,7 @@ type Library struct {
 	Volume  float64
 	Speed   float64
 	Page    string
+	OnTop   bool // the player page keeps the window above others
 
 	db       *sqlite.DB // nil when the database could not be opened
 	order    []string   // followed IDs, latest first
@@ -216,6 +217,8 @@ func (l *Library) read(ctx context.Context) error {
 			}
 		case "page":
 			l.Page = value
+		case "on_top":
+			l.OnTop = value == "1"
 		}
 	}
 	return nil
@@ -249,6 +252,7 @@ func (l *Library) Flush() {
 			settingStatement("volume", formatFloat(l.Volume)),
 			settingStatement("speed", formatFloat(l.Speed)),
 			settingStatement("page", l.Page),
+			settingStatement("on_top", onTopValue(l.OnTop)),
 		)
 	}
 	if len(stmts) > 0 && l.write(stmts...) {
@@ -356,6 +360,13 @@ func followStatement(s catalog.Show, stamp int64) sqlite.Statement {
 
 func settingStatement(key, value string) sqlite.Statement {
 	return sqlite.Statement{SQL: "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", Args: []any{key, value}}
+}
+
+func onTopValue(on bool) string {
+	if on {
+		return "1"
+	}
+	return "0"
 }
 
 func formatFloat(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
