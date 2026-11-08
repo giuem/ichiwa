@@ -419,7 +419,7 @@ License: Apache-2.0
    limitations under the License.
 ```
 
-## github.com/egoist/mygo v0.8.3
+## github.com/egoist/mygo v0.8.4-0.20261108132554-29c8444fd574
 
 License: MIT
 

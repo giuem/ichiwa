@@ -3,16 +3,15 @@ package app
 import (
 	"context"
 	"fmt"
-	"image"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/video"
 
 	"hongguo/internal/catalog"
-	"hongguo/internal/mac"
 )
 
 var speeds = []float64{1, 1.25, 1.5, 2, 0.75}
@@ -39,19 +38,17 @@ type Watching struct {
 	detailErr string
 	recs      []Show
 
-	index     int
-	gen       int // counts episodes started, to drop stale results
-	player    *mac.Player
-	bitmap    *ui.Bitmap
-	frameSize image.Point
-	stop      chan struct{}
-	loading   bool
-	err       string
-	ended     bool
-	paused    bool // the user paused
-	auto      bool // the next play call comes from autoplay
-	skipped   int  // episodes autoplay skipped in a row
-	retryAt   time.Time
+	index   int
+	gen     int // counts episodes started, to drop stale results
+	player  *ui.VideoPlayer
+	stop    chan struct{}
+	loading bool
+	err     string
+	ended   bool
+	paused  bool // the user paused
+	auto    bool // the next play call comes from autoplay
+	skipped int  // episodes autoplay skipped in a row
+	retryAt time.Time
 
 	seek     float64
 	dragging bool
@@ -162,7 +159,7 @@ func (w *Watching) saveProgress() {
 	if w.player == nil || w.detail == nil {
 		return
 	}
-	w.app.lib.Progress(w.show, w.index, w.player.Position(), w.player.Duration())
+	w.app.lib.Progress(w.show, w.index, w.player.Position().Seconds(), w.player.Duration().Seconds())
 }
 
 // play starts episode i at second at.
@@ -179,7 +176,6 @@ func (w *Watching) play(i int, at float64) {
 	w.index, w.err, w.ended, w.paused, w.loading = i, "", false, false, true
 	w.retryAt = time.Time{}
 	w.epRange = i / episodesPerRange
-	w.bitmap = nil
 	ep := w.detail.Episodes[i]
 	if !ep.Playable {
 		if auto && i+1 < len(w.detail.Episodes) {
@@ -193,34 +189,28 @@ func (w *Watching) play(i int, at float64) {
 	app.lib.Progress(w.show, i, at, 0)
 	go func() {
 		path, err := app.be.Episode(context.Background(), ep.ID)
-		var p *mac.Player
-		if err == nil {
-			p, err = mac.Open(path)
-		}
 		app.win.Update(func() {
 			if app.watch != w || w.gen != gen {
-				if p != nil {
-					p.Close()
-				}
 				return
 			}
 			w.loading = false
+			var p *ui.VideoPlayer
+			if err == nil {
+				p, err = video.Open(path)
+			}
 			if err != nil {
 				w.failed(i, auto, err)
 				return
 			}
 			w.skipped = 0
 			w.player = p
-			p.SetVolume(app.lib.Volume)
+			// It starts playing once the view shows it.
+			p.SetVolume(app.lib.Volume).SetRate(app.lib.Speed)
 			if at > 1 {
-				p.Seek(at - 1)
-			}
-			p.Play()
-			if app.lib.Speed != 1 {
-				p.SetRate(app.lib.Speed)
+				p.Seek(seconds(at - 1))
 			}
 			w.stop = make(chan struct{})
-			go w.pump(gen, p, w.stop)
+			go w.watchEnd(gen, p, w.stop)
 			// Control Center learns the duration once the item loaded.
 			time.AfterFunc(600*time.Millisecond, func() {
 				mygo.RunOnMain(func() {
@@ -241,55 +231,41 @@ func (w *Watching) play(i int, at float64) {
 	}()
 }
 
-// pump copies the frames AVPlayer shows into the bitmap the view draws,
-// and notices the end of the episode.
-func (w *Watching) pump(gen int, p *mac.Player, stop chan struct{}) {
-	var bufs [4]*image.RGBA
-	n := 0
-	tick := time.NewTicker(6 * time.Millisecond)
+// watchEnd notices the end of the episode. It asks the clock rather than
+// wait for the view, as a window out of sight builds no frames while the
+// sound plays on.
+func (w *Watching) watchEnd(gen int, p *ui.VideoPlayer, stop chan struct{}) {
+	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
-	lastCheck := time.Now()
-	endedSent := false
 	for {
 		select {
 		case <-stop:
 			return
 		case <-tick.C:
 		}
-		if img, ok := p.Frame(bufs[n%len(bufs)]); ok {
-			bufs[n%len(bufs)] = img
-			n++
-			mygo.RunOnMain(func() {
-				if w.gen != gen || w.app.watch != w {
-					return
-				}
-				if w.bitmap == nil || w.frameSize != img.Rect.Size() {
-					w.bitmap = ui.NewBitmap(img)
-					w.frameSize = img.Rect.Size()
-				} else {
-					w.bitmap.Update(img)
-				}
-				w.app.win.Invalidate()
-			})
-		}
-		if time.Since(lastCheck) > 250*time.Millisecond {
-			lastCheck = time.Now()
-			dur, pos := p.Duration(), p.Position()
-			failed := p.Failed()
-			if !endedSent && (failed || dur > 0 && pos >= dur-0.3) {
-				endedSent = true
-				w.app.win.Update(func() {
-					if w.gen != gen || w.app.watch != w {
-						return
-					}
-					if failed {
-						w.err = "播放失败"
-						return
-					}
-					w.onEnded()
-				})
+		var failed, finished bool
+		mygo.RunOnMain(func() {
+			if w.gen != gen || w.app.watch != w { // the player may be closed
+				return
 			}
+			dur := p.Duration()
+			failed = p.Err() != nil
+			finished = p.Ended() || dur > 0 && p.Position() >= dur-300*time.Millisecond
+		})
+		if !failed && !finished {
+			continue
 		}
+		w.app.win.Update(func() {
+			if w.gen != gen || w.app.watch != w {
+				return
+			}
+			if failed {
+				w.err = "播放失败"
+				return
+			}
+			w.onEnded()
+		})
+		return
 	}
 }
 
@@ -386,19 +362,16 @@ func (w *Watching) togglePlay() {
 	if p == nil {
 		return
 	}
-	if w.ended {
-		w.ended = false
-		p.Seek(0)
-	}
-	if p.Playing() {
+	if p.Playing() && !w.ended {
 		p.Pause()
 		w.paused = true
 		w.saveProgress()
 	} else {
-		p.Play()
-		if w.app.lib.Speed != 1 {
-			p.SetRate(w.app.lib.Speed)
+		if w.ended {
+			w.ended = false
+			p.Seek(0)
 		}
+		p.Play()
 		w.paused = false
 	}
 	w.syncNowPlaying()
@@ -418,10 +391,13 @@ func (w *Watching) step(d int) {
 
 func (w *Watching) seekBy(d float64) {
 	if p := w.player; p != nil {
-		p.Seek(min(max(p.Position()+d, 0), p.Duration()))
+		p.Seek(min(max(p.Position()+seconds(d), 0), p.Duration()))
 		w.syncNowPlaying()
 	}
 }
+
+// seconds is s seconds as a Duration.
+func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
 
 func fmtTime(s float64) string {
 	if s < 0 {
@@ -475,7 +451,7 @@ func (app *App) watchView(c *ui.Context) {
 			c.After(250 * time.Millisecond) // the clock and the progress bar
 		}
 		if !w.dragging {
-			app.lib.Progress(w.show, w.index, w.player.Position(), w.player.Duration())
+			w.saveProgress()
 		}
 	}
 
@@ -524,10 +500,14 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 			w.togglePlay()
 		}
 		video.Children(func() {
-			if w.bitmap != nil {
-				ui.Image(c, w.bitmap).Fill().Fit(ui.Contain)
-			} else if bmp := app.posters.Get(w.show.Cover); bmp != nil {
-				ui.Image(c, bmp).Fill().Fit(ui.Cover).Opacity(0.3).Blur(40)
+			// Built before its first picture too: only then does it start.
+			if w.player != nil {
+				ui.Video(c, w.player).Fill().Fit(ui.Contain)
+			}
+			if w.player == nil || !w.player.Ready() {
+				if bmp := app.posters.Get(w.show.Cover); bmp != nil {
+					ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Opacity(0.3).Blur(40)
+				}
 			}
 			ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Gap(14).PassThrough().Children(func() {
 				app.stageMessage(c, w)
@@ -576,7 +556,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				if pl := w.player; pl != nil {
 					ui.Row(c).Gap(4).Margin(0, 0, 0, 8).Children(func() {
 						ui.Text(c, fmtTime(w.seek)).FontSize(12.5).FontWeight(500).TextColor(white).NoWrap()
-						ui.Text(c, "/ "+fmtTime(pl.Duration())).FontSize(12.5).TextColor(white.Alpha(0.55)).NoWrap()
+						ui.Text(c, "/ "+fmtTime(pl.Duration().Seconds())).FontSize(12.5).TextColor(white.Alpha(0.55)).NoWrap()
 					})
 				}
 				ui.Spacer(c)
@@ -672,7 +652,7 @@ func (app *App) speedButton(c *ui.Context, w *Watching) {
 		}
 		app.lib.Speed = next
 		app.lib.MarkDirty()
-		if p := w.player; p != nil && p.Playing() {
+		if p := w.player; p != nil {
 			p.SetRate(next)
 		}
 		app.toast = fmt.Sprintf("播放速度 %gx", next)
@@ -716,16 +696,16 @@ func (app *App) progress(c *ui.Context, w *Watching) {
 	pl := w.player
 	dur := 1.0
 	if pl != nil {
-		dur = max(pl.Duration(), 1)
+		dur = max(pl.Duration().Seconds(), 1)
 		if !w.dragging {
-			w.seek = pl.Position()
+			w.seek = pl.Position().Seconds()
 		}
 	} else {
 		w.seek = 0
 	}
 	s := ui.SliderBase(c.Key("seek"), &w.seek, 0, dur).Height(20).Label("进度").Disabled(pl == nil)
 	if s.Changed() && pl != nil {
-		pl.Seek(w.seek)
+		pl.Seek(seconds(w.seek))
 	}
 	if w.dragging && !s.Dragging() {
 		w.syncNowPlaying()

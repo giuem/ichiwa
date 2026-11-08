@@ -54,7 +54,7 @@ internal/
   catalog/              openhongguo 封装；剧集下载、解密、磁盘缓存（2 GB LRU）
   library/              观看进度、追剧、设置（SQLite：library.db）
   cenc/                 纯 Go 的 CENC（AES-CTR）MP4 原地解密
-  mac/                  经 purego 调用 AVFoundation（播放、取帧）和 ImageIO（HEIC），无 cgo
+  mac/                  经 purego 调用 ImageIO（HEIC），无 cgo
 resources/icon.png      应用图标，由 scripts/icon.swift 绘制
 ```
 
@@ -62,8 +62,8 @@ resources/icon.png      应用图标，由 scripts/icon.swift 绘制
 
 1. openhongguo 取得分集的播放地址和内容密钥；
 2. 下载 MP4，用 `internal/cenc` 原地解密（box 大小不变，只解密样本、恢复原始格式）；
-3. AVPlayer 播放解密后的文件，负责声音、时钟和跳转；
-4. `AVPlayerItemVideoOutput` 逐帧取出像素，交给 MyGo 的 `ui.Bitmap` 绘制。
+3. MyGo 的 `ui/video` 用系统的 AVFoundation 播放解密后的文件，负责声音、时钟和跳转；
+4. `ui.Video` 直接绘制 GPU 上的解码画面，不经过 CPU 拷贝。
 
 ## 快捷键
 
