@@ -29,9 +29,12 @@ const retryCooldown = 30 * time.Second
 const episodesPerRange = 50
 
 // panelWidth is the width of the player page's side panel. Pinning the
-// window takes it off the window, which is then allowed to be that much
-// narrower than it otherwise may be.
+// window takes it off the window.
 const panelWidth = 368
+
+// chromeLinger is how long full screen keeps the title bar and the controls
+// after the pointer last moved.
+const chromeLinger = 3 * time.Second
 
 // Watching is the player page: a drama, the episode playing and the
 // player playing it.
@@ -63,7 +66,12 @@ type Watching struct {
 	onTop    bool // what the window was last told
 	descOpen bool
 	epRange  int
-	side     ui.ScrollState
+
+	// Where the pointer was over the stage in full screen, and since when.
+	pointerX, pointerY float32
+	pointerAt          time.Time
+
+	side ui.ScrollState
 
 	// seasons are the drama's seasons when it has more than one, the one
 	// showing among them; switchSeason opens another at an episode, -1
@@ -451,9 +459,9 @@ func (w *Watching) syncOnTop(full bool) {
 }
 
 // syncNarrow takes the width of a panel folded by pinning off the window,
-// and gives it back when the panel opens, the window unpins or the page
-// closes. It waits out full screen, which keeps its own size, and leaves
-// a maximized window alone.
+// as far as the minimum size lets it, and gives that back when the panel
+// opens, the window unpins or the page closes. It waits out full screen,
+// which keeps its own size, and leaves a maximized window alone.
 func (app *App) syncNarrow() {
 	w := app.watch
 	want := w != nil && app.lib.OnTop && w.unpin
@@ -465,11 +473,10 @@ func (app *App) syncNarrow() {
 	app.win.Update(func() {
 		width, height := app.win.Size()
 		if want {
-			app.win.SetMinimumSize(minWindowWidth-panelWidth, minWindowHeight)
-			app.win.SetSize(width-panelWidth, height)
+			app.narrowedBy = narrowing(width)
+			app.win.SetSize(width-app.narrowedBy, height)
 		} else {
-			app.win.SetSize(width+panelWidth, height)
-			app.win.SetMinimumSize(minWindowWidth, minWindowHeight)
+			app.win.SetSize(width+app.narrowedBy, height)
 		}
 	})
 }
@@ -482,8 +489,17 @@ func (app *App) widen() {
 	}
 	app.narrowed = false
 	width, height := app.win.Size()
-	app.win.SetSize(width+panelWidth, height)
+	app.win.SetSize(width+app.narrowedBy, height)
 }
+
+// narrowing is how much of the panel's width a window this wide can give up.
+func narrowing(width int) int {
+	return max(min(panelWidth, width-minWindowWidth), 0)
+}
+
+// panelFits tells a window this wide has room for the side panel beside
+// the controls of the video.
+func panelFits(width float32) bool { return width >= minWindowWidth+panelWidth }
 
 func (w *Watching) step(d int) {
 	if w.detail == nil {
@@ -535,7 +551,9 @@ func ago(r *Record) string {
 
 func (app *App) watchView(c *ui.Context) {
 	w := app.watch
-	c.Root().Background(app.pal.bg)
+	// A click leaves the focus alone, or the button clicked would take Space
+	// and the sliders the arrows from the shortcuts below. Tab still reaches them.
+	c.Root().Background(app.pal.bg).KeepFocus()
 	full := app.win.IsFullScreen()
 	w.syncOnTop(full)
 
@@ -571,7 +589,7 @@ func (app *App) watchView(c *ui.Context) {
 
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		app.stage(c, w, playing, full)
-		if w.panel && !full {
+		if w.panel && !full && app.panelRoom(c) {
 			app.sidePanel(c, w)
 		}
 	})
@@ -595,16 +613,53 @@ func playPause(c *ui.Context, b ui.Element, playing bool, size float32) {
 	})
 }
 
+// panelRoom tells the window has room for the side panel now.
+func (app *App) panelRoom(c *ui.Context) bool {
+	width, _ := c.Size()
+	return panelFits(width)
+}
+
+// pointerStill is how long the pointer has rested on the stage, which only
+// counts while the video plays and the user is not seeking. The frames that
+// let the controls go are those playing asks for anyway.
+func (w *Watching) pointerStill(stage ui.Element, playing bool) time.Duration {
+	x, y, _ := stage.PointerPosition()
+	now := time.Now()
+	if x != w.pointerX || y != w.pointerY || !playing || w.dragging {
+		w.pointerX, w.pointerY, w.pointerAt = x, y, now
+	}
+	return now.Sub(w.pointerAt)
+}
+
+// chromeShown tells whether the title bar and the controls show. A paused
+// video keeps them. In full screen the pointer is always over the video, so
+// only its moving brings them; in a window, its being over the video does.
+func chromeShown(playing, hover, full bool, still time.Duration) bool {
+	switch {
+	case !playing:
+		return true
+	case full:
+		return still < chromeLinger
+	}
+	return hover
+}
+
 // stage is the video with its title bar and controls.
 func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 	bar := c.TitleBar()
 	stage := ui.Column(c).Grow(1).Background(black)
 	hover := stage.Hovered()
-	show := float32(1)
-	if playing && !hover {
-		show = 0
+	var still time.Duration
+	if full {
+		still = w.pointerStill(stage, playing)
+	} else {
+		w.pointerAt = time.Now() // full screen starts with the controls showing
 	}
-	show = stage.AnimateTo("chrome", show, ui.Smooth)
+	shown := chromeShown(playing, hover, full, still)
+	if full && !shown {
+		stage.Cursor(ui.CursorNone)
+	}
+	show := stage.AnimateTo("chrome", boolf(shown), ui.Smooth)
 	stage.Children(func() {
 		// The picture, under everything.
 		// Under the title bar and the controls, which are in the flow: absolute
@@ -641,7 +696,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 						ui.Text(c, fmt.Sprintf("第%d集 · 共%d集", w.index+1, len(w.detail.Episodes))).FontSize(11.5).TextColor(white.Alpha(0.65))
 					}
 				})
-				if !full && symbolButton(c, "sidebar.right", 15, white, "选集面板").Clicked() {
+				if !full && app.panelRoom(c) && symbolButton(c, "sidebar.right", 15, white, "选集面板").Clicked() {
 					w.panel, w.unpin = !w.panel, false
 				}
 			})

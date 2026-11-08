@@ -2,6 +2,7 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
@@ -219,5 +220,64 @@ func TestWantsDisplay(t *testing.T) {
 	app.watch = nil
 	if w.wantsDisplay() {
 		t.Error("a page left still wants the display")
+	}
+}
+
+// In full screen the controls go once the pointer rests, even over the
+// video; in a window they stay while the pointer is over it.
+func TestChromeShown(t *testing.T) {
+	for _, tt := range []struct {
+		playing, hover, full bool
+		still                time.Duration
+		want                 bool
+	}{
+		{playing: false, hover: false, full: true, still: time.Hour, want: true},
+		{playing: true, hover: true, full: true, still: chromeLinger - 1, want: true},
+		{playing: true, hover: true, full: true, still: chromeLinger, want: false},
+		{playing: true, hover: true, full: false, still: time.Hour, want: true},
+		{playing: true, hover: false, full: false, want: false},
+	} {
+		if got := chromeShown(tt.playing, tt.hover, tt.full, tt.still); got != tt.want {
+			t.Errorf("chromeShown(%+v) = %v", tt, got)
+		}
+	}
+}
+
+// Narrowing never asks for less than the minimum width, so that widening
+// gives back what was really taken.
+func TestNarrowing(t *testing.T) {
+	for in, want := range map[int]int{minWindowWidth: 0, minWindowWidth + 100: 100, 1280: panelWidth} {
+		if got := narrowing(in); got != want {
+			t.Errorf("narrowing(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// A button clicked in a KeepFocus root leaves Space to the shortcut, once
+// and only once; Tab still gives the button the key.
+func TestKeepFocusLeavesSpaceToShortcut(t *testing.T) {
+	var clicks, spaces int
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.Root().KeepFocus()
+		c.OnShortcut(0, ui.KeySpace, func() { spaces++ })
+		if ui.ButtonBase(c).Size(80, 40).Label("go").Clicked() {
+			clicks++
+		}
+	}, 200, 200)
+	if err := tt.Click("go"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	tt.Key(0, ui.KeySpace)
+	tt.Frame()
+	if clicks != 1 || spaces != 1 {
+		t.Fatalf("after a click and Space: %d clicks, %d shortcuts", clicks, spaces)
+	}
+	tt.Key(0, ui.KeyTab)
+	tt.Frame()
+	tt.Key(0, ui.KeySpace)
+	tt.Frame()
+	if clicks != 2 || spaces != 1 {
+		t.Fatalf("after Tab and Space: %d clicks, %d shortcuts", clicks, spaces)
 	}
 }
