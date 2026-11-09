@@ -4,6 +4,7 @@ package app
 
 import (
 	_ "embed"
+	"fmt"
 	"log"
 
 	"hongguo/internal/catalog"
@@ -60,6 +61,8 @@ type App struct {
 	// watch is the player page, over the rest while it is open.
 	watch *Watching
 	toast string
+	// told is the page title screen readers were last told of.
+	told string
 
 	warmed bool // the first pages of the other pages were asked for
 }
@@ -98,6 +101,9 @@ func (app *App) view(c *ui.Context) {
 	} else {
 		app.pal = lightPalette()
 	}
+	if c.Preferences().HighContrast {
+		app.pal = app.pal.contrasted()
+	}
 	applyPalette(c, app.pal)
 	if app.toast != "" {
 		c.Toast(app.toast)
@@ -113,12 +119,12 @@ func (app *App) view(c *ui.Context) {
 	}
 	c.OnShortcut(ui.Cmd, ui.KeyF, func() { app.go2(pageSearch); app.search.focus = true })
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		side := ui.Column(c).Width(sidebarWidth).Shrink(0)
+		side := ui.Column(c).Width(sidebarWidth).Shrink(0).Role(ui.RoleNavigation).Label("主导航")
 		if !c.Vibrancy() {
 			side.Background(app.pal.sidebar)
 		}
 		side.Children(func() { app.sidebar(c) })
-		ui.Column(c.Key("main")).Grow(1).Background(app.pal.bg).Children(func() {
+		ui.Column(c.Key("main")).Grow(1).Background(app.pal.bg).Role(ui.RoleRegion).Label("内容").Children(func() {
 			app.content(c)
 		})
 	})
@@ -154,13 +160,19 @@ func (app *App) sidebar(c *ui.Context) {
 }
 
 func (app *App) navSection(c *ui.Context, title string) {
-	ui.Text(c, title).FontSize(11).FontWeight(600).TextColor(app.pal.faint).Padding(14, 10, 6)
+	ui.Text(c, title).FontSize(11).FontWeight(600).TextColor(app.pal.faint).Padding(14, 10, 6).Role(ui.RoleHeading).Level(2)
 }
 
 func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count int) {
 	p := app.pal
 	selected := app.page == page && app.person == nil
-	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(label)
+	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label(label)
+	if selected {
+		b.Current(ui.CurrentPage)
+	}
+	if count > 0 {
+		b.Description(fmt.Sprintf("%d部", count))
+	}
 	bg := ui.Transparent
 	switch {
 	case selected:
