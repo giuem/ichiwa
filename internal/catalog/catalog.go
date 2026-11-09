@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -396,7 +397,31 @@ func (b *Backend) fetch(episodeID, path string) (string, error) {
 	return "", fmt.Errorf("下载失败：%w", lastErr)
 }
 
-func rankStream(s model.Stream) int {
+// rankStream orders a stream for this system.
+func rankStream(s model.Stream) int { return rankStreamOn(runtime.GOOS, s) }
+
+// rankStreamOn ranks HEVC last outside macOS, whose systems may have no
+// decoder for it.
+func rankStreamOn(goos string, s model.Stream) int {
+	if goos != "darwin" && isHEVC(s.Codec) {
+		return rankBySize(s) - hevcPenalty
+	}
+	return rankBySize(s)
+}
+
+const hevcPenalty = 1 << 20
+
+func isHEVC(codec string) bool {
+	codec = strings.ToLower(codec)
+	for _, name := range []string{"h265", "h.265", "hevc", "hvc1", "hev1", "bytevc1"} {
+		if strings.Contains(codec, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func rankBySize(s model.Stream) int {
 	short := min(s.Width, s.Height)
 	if short == 0 {
 		short = 480

@@ -40,3 +40,18 @@ func TestRankStream(t *testing.T) {
 		t.Error("a stream above 1080p should rank below the others")
 	}
 }
+
+func TestRankStreamAvoidsHEVCOutsideMac(t *testing.T) {
+	hevc := model.Stream{Width: 1080, Height: 1920, Codec: "bytevc1"}
+	h264 := model.Stream{Width: 720, Height: 1280, Codec: "h264"}
+	unknown := model.Stream{Width: 720, Height: 1280}
+	if rankStreamOn("darwin", hevc) <= rankStreamOn("darwin", h264) {
+		t.Error("macOS should take the higher resolution")
+	}
+	if rankStreamOn("windows", hevc) >= rankStreamOn("windows", h264) {
+		t.Error("Windows should prefer H.264")
+	}
+	if rankStreamOn("linux", hevc) >= rankStreamOn("linux", unknown) {
+		t.Error("Linux should prefer an unknown codec to HEVC")
+	}
+}

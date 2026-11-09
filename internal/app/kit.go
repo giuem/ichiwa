@@ -4,7 +4,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -148,7 +147,7 @@ func iconButton(c *ui.Context, icon *ui.SVG, size float32, color ui.Color, label
 // symbolButton is a roundButton showing an SF Symbol.
 func symbolButton(c *ui.Context, symbol string, size float32, color ui.Color, label string) ui.Element {
 	b := roundButton(c, size, color, label)
-	b.Children(func() { sfsymbols.Symbol(c, symbol).Size(size).Color(color) })
+	b.Children(func() { sfIcon(c, symbol).Size(size).Color(color) })
 	return b
 }
 

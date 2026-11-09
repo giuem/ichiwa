@@ -6,13 +6,11 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
-
-	"hongguo/internal/library"
 )
 
 func a11yApp(t *testing.T) *App {
 	t.Helper()
-	return &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir()), feeds: map[string]*Feed{}}
+	return &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t), feeds: map[string]*Feed{}}
 }
 
 func accessOf(t *testing.T, tt *ui.Tester, r ui.Role, name string) ui.AccessInfo {

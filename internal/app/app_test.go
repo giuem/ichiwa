@@ -76,7 +76,7 @@ func TestFeedReset(t *testing.T) {
 // The player's buttons take their clicks: the picture, laid over the whole
 // stage, once covered them and took every click as play/pause.
 func TestStageButtonsTakeClicks(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
 		detail: &Detail{Episodes: make([]model.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
@@ -96,7 +96,7 @@ func TestStageButtonsTakeClicks(t *testing.T) {
 // Pinning the window folds the panel, and unpinning opens it again unless
 // the user opened or closed it meanwhile.
 func TestPinFoldsPanel(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
 		detail: &Detail{Episodes: make([]model.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
@@ -137,7 +137,7 @@ func TestPinFoldsPanel(t *testing.T) {
 // seasonsWatching is the last episode of the first of two seasons, noting
 // the season it switches to.
 func seasonsWatching(t *testing.T, secondOnline bool) (*Watching, *[]Season, *[]int) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 2, show: Show{ID: "s1"},
 		detail: &Detail{Episodes: make([]model.Episode, 3)},
 		seasons: []Season{
@@ -246,7 +246,7 @@ func TestChromeShown(t *testing.T) {
 
 // Muting remembers the volume instead of coming back at full.
 func TestMuteRestoresVolume(t *testing.T) {
-	app := &App{lib: library.Load(t.TempDir())}
+	app := &App{lib: testLibrary(t)}
 	app.lib.Volume = 0.4
 	w := &Watching{app: app}
 	w.toggleMute()
@@ -327,7 +327,7 @@ func TestSleepEpisodeStopsOnce(t *testing.T) {
 }
 
 func TestSleepTickWaitsForLoading(t *testing.T) {
-	app := &App{lib: library.Load(t.TempDir())}
+	app := &App{lib: testLibrary(t)}
 	w := &Watching{app: app, loading: true}
 	app.setSleep(15)
 	if w.sleepTick(time.Now().Add(time.Hour)) || app.sleepMins != 15 {
@@ -355,7 +355,7 @@ func TestMiniSize(t *testing.T) {
 // The episodes open over the picture in full screen, and a click beside
 // them closes them without reaching the picture.
 func TestDrawerClosesOnClickBeside(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}, drawer: true}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, true) }, 1200, 700)
 	tt.Frame()
@@ -372,7 +372,7 @@ func TestDrawerClosesOnClickBeside(t *testing.T) {
 // The picture takes the clicks that land on it, and what shows over it
 // still takes its own: nothing in the flow may cover them.
 func TestPictureTakesClicks(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
@@ -394,7 +394,7 @@ func TestPictureTakesClicks(t *testing.T) {
 
 // The controls of the narrowest stage still build, for the small window.
 func TestStageBuildsNarrow(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, miniMinWidth, miniMinHeight)
 	tt.Frame()
@@ -417,7 +417,7 @@ func TestSteppedSpeed(t *testing.T) {
 // up ends the hold, and a boost asks for no seek.
 func TestHoldRightEnds(t *testing.T) {
 	now := time.Now()
-	w := &Watching{app: &App{lib: library.Load(t.TempDir())}, rightAt: now, boost: true, boosted: true}
+	w := &Watching{app: &App{lib: testLibrary(t)}, rightAt: now, boost: true, boosted: true}
 	w.holdRight(true, now.Add(time.Second))
 	if !w.boost {
 		t.Fatal("the hold ended while the key was down")
@@ -431,7 +431,7 @@ func TestHoldRightEnds(t *testing.T) {
 
 // The seek bar builds and takes the pointer with no player yet.
 func TestProgressWithoutPlayer(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app}
 	tt := ui.NewTester(func(c *ui.Context) { app.progress(c, w) }, 400, 80)
 	tt.Frame()
@@ -477,4 +477,12 @@ func TestKeepFocusLeavesSpaceToShortcut(t *testing.T) {
 	if clicks != 2 || spaces != 1 {
 		t.Fatalf("after Tab and Space: %d clicks, %d shortcuts", clicks, spaces)
 	}
+}
+
+// testLibrary closes its database before the test's directory goes, which
+// Windows refuses while the file is open.
+func testLibrary(t *testing.T) *library.Library {
+	lib := library.Load(t.TempDir())
+	t.Cleanup(lib.Close)
+	return lib
 }

@@ -14,8 +14,6 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-
-	"hongguo/internal/mac"
 )
 
 // Posters loads cover images in the background and keeps them as bitmaps.
@@ -109,5 +107,5 @@ func (p *Posters) load(key, url string) (*image.RGBA, error) {
 		_ = os.WriteFile(file, data, 0o644)
 	}
 	// Posters show at most ~240 DIPs wide, twice that in pixels.
-	return mac.DecodeImage(data, 480)
+	return decodePoster(data, 480)
 }

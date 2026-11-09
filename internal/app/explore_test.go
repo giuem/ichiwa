@@ -5,8 +5,6 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
-
-	"hongguo/internal/library"
 )
 
 // Choosing a genre clears the other rows, whose options depend on it;
@@ -68,7 +66,7 @@ func TestActorPagesKeepRanking(t *testing.T) {
 
 // An actor on the ranking opens their page, and its back button returns.
 func TestActorOpensPerson(t *testing.T) {
-	app := &App{pal: lightPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir()), page: pageRank}
+	app := &App{pal: lightPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t), page: pageRank}
 	app.rank.page = &RankPage{
 		Contents: []model.RankContent{{ID: "ranklist_celebrity", Name: "演员", Boards: []model.RankBoard{{ID: "b", Name: "剧星榜"}}}},
 		Content:  "ranklist_celebrity", Board: "b",

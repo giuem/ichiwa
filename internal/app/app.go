@@ -9,6 +9,7 @@ import (
 
 	"hongguo/internal/catalog"
 	"hongguo/internal/library"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -159,10 +160,7 @@ func (app *App) sidebar(c *ui.Context) {
 	ui.Column(c).Fill().Padding(top, 12, 14).Gap(2).DragWindow().Children(func() {
 		ui.Row(c).Padding(2, 8, 12).Gap(10).Children(func() {
 			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
-			ui.Column(c).Children(func() {
-				ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
-				ui.Text(c, "for Mac").FontSize(10.5).TextColor(p.muted)
-			})
+			ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
 		})
 		app.navSection(c, "发现")
 		app.navItem(c, iconHome, "推荐", pageRecommend, 0)
@@ -177,6 +175,13 @@ func (app *App) sidebar(c *ui.Context) {
 		ui.Spacer(c)
 		if v := mygo.App.Version(); v != "" {
 			ui.Text(c, "v"+v).FontSize(10.5).TextColor(p.faint).Padding(0, 10)
+		}
+		if runtime.GOOS != "darwin" { // a hidden title bar hides the menu bar
+			b := ui.ButtonBase(c.Key("updates")).Padding(4, 10).Justify(ui.Start).FocusRing(false).Label("检查更新")
+			b.Children(func() { ui.Text(c, "检查更新").FontSize(10.5).TextColor(ternary(b.Hovered(), p.muted, p.faint)) })
+			if b.Clicked() {
+				go checkForUpdates(true)
+			}
 		}
 	})
 }
@@ -293,7 +298,8 @@ func Run() {
 		app.setMenu()
 		app.mediaKeys()
 		app.win.OnClose(func(e *mygo.CloseEvent) {
-			if !app.quitting {
+			// Only macOS has a Dock icon to bring the window back.
+			if !app.quitting && runtime.GOOS == "darwin" {
 				e.PreventDefault()
 				app.closeWatch()
 				app.lib.Flush()
