@@ -37,6 +37,8 @@ go test ./...        # 测试
 go tool mygo build   # 打包到 build/darwin-<arch>/
 ```
 
+Windows 和 Linux 版本正在开发，还不能正式使用，进度见 [#15](https://github.com/giuem/hongguo-mygo/issues/15)。
+
 `HONGGUO_TOUR=<目录>` 会让应用自动浏览各页面、截图到该目录后退出，用来检查界面。
 
 ### 结构

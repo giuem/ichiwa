@@ -8,6 +8,7 @@ import (
 
 	"hongguo/internal/catalog"
 	"hongguo/internal/library"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -133,7 +134,7 @@ func (app *App) sidebar(c *ui.Context) {
 			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
 			ui.Column(c).Children(func() {
 				ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
-				ui.Text(c, "for Mac").FontSize(10.5).TextColor(p.muted)
+				ui.Text(c, platformLabel).FontSize(10.5).TextColor(p.muted)
 			})
 		})
 		app.navSection(c, "发现")
@@ -149,6 +150,13 @@ func (app *App) sidebar(c *ui.Context) {
 		ui.Spacer(c)
 		if v := mygo.App.Version(); v != "" {
 			ui.Text(c, "v"+v).FontSize(10.5).TextColor(p.faint).Padding(0, 10)
+		}
+		if runtime.GOOS != "darwin" { // a hidden title bar hides the menu bar
+			b := ui.ButtonBase(c.Key("updates")).Padding(4, 10).Justify(ui.Start).FocusRing(false).Label("检查更新")
+			b.Children(func() { ui.Text(c, "检查更新").FontSize(10.5).TextColor(ternary(b.Hovered(), p.muted, p.faint)) })
+			if b.Clicked() {
+				go checkForUpdates(true)
+			}
 		}
 	})
 }

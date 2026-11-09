@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
 
@@ -608,7 +607,7 @@ func playPause(c *ui.Context, b ui.Element, playing bool, size float32) {
 				continue
 			}
 			s := 0.4 + 0.6*icon.shown
-			sfsymbols.Symbol(c, icon.name).Size(size).Color(white).Absolute().Top(0).Left(0).Scale(s, s).Opacity(min(icon.shown, 1))
+			sfIcon(c, icon.name).Size(size).Color(white).Absolute().Top(0).Left(0).Scale(s, s).Opacity(min(icon.shown, 1))
 		}
 	})
 }
@@ -684,7 +683,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 		})
 
 		// Title bar.
-		ui.Row(c).Padding(max(bar.Height, 28)/2-2, 14, 34, bar.Left+14).Gap(8).DragWindow().
+		ui.Row(c).Padding(max(bar.Height, 28)/2-2, bar.Right+14, 34, bar.Left+14).Gap(8).DragWindow().
 			Gradient(ui.RGBA(0, 0, 0, 0.7), ui.Transparent, 180).Opacity(max(show, boolf(!playing))).
 			Children(func() {
 				if symbolButton(c, "chevron.left", 15, white, "返回 (Esc)").Clicked() {
@@ -748,11 +747,11 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 	dim := white.Alpha(0.7)
 	switch {
 	case w.detailErr != "":
-		sfsymbols.Symbol(c, "exclamationmark.triangle").Size(30).Color(dim)
+		sfIcon(c, "exclamationmark.triangle").Size(30).Color(dim)
 		ui.Text(c, w.detailErr).FontSize(15).TextColor(white)
 		app.secondary(c, nil, "返回").OnClick(app.closeWatch)
 	case w.err != "":
-		sfsymbols.Symbol(c, "exclamationmark.triangle").Size(30).Color(dim)
+		sfIcon(c, "exclamationmark.triangle").Size(30).Color(dim)
 		ui.Text(c, w.err).FontSize(15).TextColor(white)
 		ui.Row(c).Gap(10).Margin(6, 0, 0).Children(func() {
 			label := "重试"
@@ -803,7 +802,7 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 	case w.paused && w.player != nil:
 		ui.Box(c).Size(76, 76).Radius(999).Background(ui.RGBA(0, 0, 0, 0.45)).Center().
 			Border(1, white.Alpha(0.15)).Children(func() {
-			sfsymbols.Symbol(c, "play.fill").Size(30).Color(white).Margin(0, 0, 0, 4)
+			sfIcon(c, "play.fill").Size(30).Color(white).Margin(0, 0, 0, 4)
 		})
 	}
 }
@@ -1009,7 +1008,7 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 				pressable(cell, rest, ternary(current, rest, p.surface.Mix(p.text, 0.08)), 0.92)
 				cell.Children(func() {
 					if current && playing {
-						sfsymbols.Symbol(c, "waveform").Size(13).Color(white)
+						sfIcon(c, "waveform").Size(13).Color(white)
 						return
 					}
 					n := ui.Text(c, itoa(i+1)).FontSize(13).FontWeight(600)
@@ -1024,7 +1023,7 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 						n.TextColor(p.text)
 					}
 					if !ep.Playable {
-						sfsymbols.Symbol(c, "lock.fill").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
+						sfIcon(c, "lock.fill").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
 					}
 				})
 				if cell.Clicked() && !current {

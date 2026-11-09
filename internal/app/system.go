@@ -5,10 +5,14 @@ import (
 	"context"
 	"errors"
 	"image/jpeg"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
 )
+
+// platformLabel says in the sidebar which system this build is for.
+var platformLabel = map[string]string{"darwin": "for Mac", "windows": "for Windows", "linux": "for Linux"}[runtime.GOOS]
 
 // setMenu gives the app its menu bar: the app menu with updates, the
 // editing commands text fields need, the player's controls and the window.

@@ -1,5 +1,5 @@
-# Builds and tests on every push to main and every pull request. The app is
-# macOS only: it plays through AVFoundation.
+# Builds and tests on every push to main and every pull request, on each
+# system the app is built for.
 name: Test
 
 on:
@@ -16,7 +16,11 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -27,4 +31,4 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Build
-        run: go build -o /dev/null .
+        run: go build ./...

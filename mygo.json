@@ -20,5 +20,22 @@
       "CFBundleDisplayName": "红果短剧",
       "LSApplicationCategoryType": "public.app-category.entertainment"
     }
+  },
+  "windows": {
+    "displayName": "红果短剧",
+    "installDirName": "Hongguo"
+  },
+  "linux": {
+    "webview": false,
+    "comment": "红果短剧桌面客户端",
+    "categories": [
+      "AudioVideo",
+      "Video"
+    ],
+    "depends": [
+      "gstreamer1.0-plugins-base",
+      "gstreamer1.0-plugins-good",
+      "gstreamer1.0-libav"
+    ]
   }
 }
