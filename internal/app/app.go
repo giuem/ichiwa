@@ -60,6 +60,22 @@ type App struct {
 	// watch is the player page, over the rest while it is open.
 	watch *Watching
 	toast string
+	// unmute is the volume the mute button goes back to.
+	unmute float64
+
+	// miniOn asks for the small window; mini tells the window is it, and
+	// miniBack is the size it goes back to.
+	miniOn, mini         bool
+	miniBackW, miniBackH int
+	miniW, miniH         int
+	miniFull             bool // the small window is in full screen
+	miniFixUntil         time.Time
+
+	// The sleep timer, which outlasts a season going on to the next:
+	// sleepMins is the choice, sleepEpisode for the end of this episode,
+	// and sleepAt when the time runs out.
+	sleepMins int
+	sleepAt   time.Time
 
 	warmed bool // the first pages of the other pages were asked for
 }
@@ -92,6 +108,7 @@ const (
 )
 
 func (app *App) view(c *ui.Context) {
+	app.syncMini()
 	app.syncNarrow()
 	if c.Theme().Dark || app.watch != nil {
 		app.pal = darkPalette()

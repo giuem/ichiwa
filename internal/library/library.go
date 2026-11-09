@@ -30,12 +30,13 @@ type Record struct {
 // memory and writes changes through to library.db. It is used on the main
 // thread only.
 type Library struct {
-	History map[string]*Record
-	Follows map[string]catalog.Show
-	Volume  float64
-	Speed   float64
-	Page    string
-	OnTop   bool // the player page keeps the window above others
+	History  map[string]*Record
+	Follows  map[string]catalog.Show
+	Volume   float64
+	Speed    float64
+	Page     string
+	OnTop    bool // the player page keeps the window above others
+	Autoplay bool // an episode ending starts the next
 
 	db       *sqlite.DB // nil when the database could not be opened
 	order    []string   // followed IDs, latest first
@@ -76,6 +77,7 @@ func Load(dir string) *Library {
 		Follows:  map[string]catalog.Show{},
 		Volume:   1,
 		Speed:    1,
+		Autoplay: true,
 		followed: map[string]int64{},
 		watched:  map[string]bool{},
 	}
@@ -219,6 +221,8 @@ func (l *Library) read(ctx context.Context) error {
 			l.Page = value
 		case "on_top":
 			l.OnTop = value == "1"
+		case "autoplay":
+			l.Autoplay = value == "1"
 		}
 	}
 	return nil
@@ -253,6 +257,7 @@ func (l *Library) Flush() {
 			settingStatement("speed", formatFloat(l.Speed)),
 			settingStatement("page", l.Page),
 			settingStatement("on_top", onTopValue(l.OnTop)),
+			settingStatement("autoplay", onTopValue(l.Autoplay)),
 		)
 	}
 	if len(stmts) > 0 && l.write(stmts...) {
