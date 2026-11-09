@@ -56,6 +56,10 @@ type App struct {
 
 	// narrowed tells the window gave up the width of the folded panel.
 	narrowed bool
+	// quitting tells the window to really close, not just hide.
+	quitting bool
+	// hideOnLeave hides the window once it has left full screen.
+	hideOnLeave bool
 	// narrowedBy is the width it gave up.
 	narrowedBy int
 	// watch is the player page, over the rest while it is open.
@@ -225,6 +229,19 @@ func (app *App) content(c *ui.Context) {
 	}
 }
 
+// hideWindow takes the window off the screen and leaves the app running.
+// A full screen window leaves full screen first, or its space stays behind
+// empty.
+func (app *App) hideWindow() {
+	if app.win.IsFullScreen() {
+		app.hideOnLeave = true
+		app.win.SetFullScreen(false)
+		return
+	}
+	app.widen()
+	app.win.Hide()
+}
+
 // Run starts the app and returns when it quits.
 func Run() {
 	app := &App{page: pageRecommend, feeds: map[string]*Feed{}}
@@ -257,13 +274,33 @@ func Run() {
 		app.posters = newPosters(cacheDir, app.win.Invalidate)
 		app.setMenu()
 		app.mediaKeys()
-		app.win.OnClose(func(*mygo.CloseEvent) {
+		app.win.OnClose(func(e *mygo.CloseEvent) {
+			if !app.quitting {
+				e.PreventDefault()
+				app.closeWatch()
+				app.lib.Flush()
+				app.hideWindow()
+				return
+			}
 			if app.watch != nil {
 				app.watch.close()
 			}
 			app.widen()
 			app.lib.Flush()
 		})
+		app.win.OnLeaveFullScreen(func() {
+			if app.hideOnLeave {
+				app.hideOnLeave = false
+				app.hideWindow()
+			}
+		})
+		// The Dock icon brings back the window closing hid.
+		mygo.App.OnActivate(func(visible bool) {
+			if !visible && !app.win.IsMinimized() {
+				app.win.Show()
+			}
+		})
+		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { app.quitting = true })
 		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.widen(); app.lib.Close() })
 		// Saves progress now and then, in case the app is killed.
 		go func() {
