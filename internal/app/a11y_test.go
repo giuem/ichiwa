@@ -62,7 +62,7 @@ func TestPlayerControlsSpeak(t *testing.T) {
 	app := a11yApp(t)
 	app.lib.OnTop, app.lib.Volume, app.lib.Speed = true, 0.5, 1.5
 	w := &Watching{app: app, panel: true, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
-	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
+	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 1200, 600) // room for the volume slider beside the panel
 	tt.Frame()
 	if a := accessOf(t, tt, ui.RoleButton, "播放"); a.Description != "" || a.KeyShortcuts == "" {
 		t.Errorf("the play button: %+v", a)
