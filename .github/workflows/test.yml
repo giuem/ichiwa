@@ -21,6 +21,8 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      GOFLAGS: -tags=nodynamic # HEIC posters decode the same everywhere, without a system libheif
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

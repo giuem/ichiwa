@@ -76,7 +76,7 @@ func TestFeedReset(t *testing.T) {
 // The player's buttons take their clicks: the picture, laid over the whole
 // stage, once covered them and took every click as play/pause.
 func TestStageButtonsTakeClicks(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
 		detail: &Detail{Episodes: make([]model.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
@@ -96,7 +96,7 @@ func TestStageButtonsTakeClicks(t *testing.T) {
 // Pinning the window folds the panel, and unpinning opens it again unless
 // the user opened or closed it meanwhile.
 func TestPinFoldsPanel(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
 		detail: &Detail{Episodes: make([]model.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
@@ -137,7 +137,7 @@ func TestPinFoldsPanel(t *testing.T) {
 // seasonsWatching is the last episode of the first of two seasons, noting
 // the season it switches to.
 func seasonsWatching(t *testing.T, secondOnline bool) (*Watching, *[]Season, *[]int) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: library.Load(t.TempDir())}
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 2, show: Show{ID: "s1"},
 		detail: &Detail{Episodes: make([]model.Episode, 3)},
 		seasons: []Season{
@@ -280,4 +280,12 @@ func TestKeepFocusLeavesSpaceToShortcut(t *testing.T) {
 	if clicks != 2 || spaces != 1 {
 		t.Fatalf("after Tab and Space: %d clicks, %d shortcuts", clicks, spaces)
 	}
+}
+
+// testLibrary closes its database before the test's directory goes, which
+// Windows refuses while the file is open.
+func testLibrary(t *testing.T) *library.Library {
+	lib := library.Load(t.TempDir())
+	t.Cleanup(lib.Close)
+	return lib
 }

@@ -2,9 +2,12 @@
 
 package app
 
-import "image"
+import (
+	"image"
 
-// decodePoster cannot read HEIC here yet: see issue 15.
+	_ "github.com/gen2brain/heic" // decodeImage reads the catalog's HEIC posters
+)
+
 func decodePoster(data []byte, maxWidth int) (*image.RGBA, error) {
 	return decodeImage(data, maxWidth)
 }
