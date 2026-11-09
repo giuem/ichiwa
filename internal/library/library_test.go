@@ -39,7 +39,7 @@ func TestProgress(t *testing.T) {
 	l := Load(dir)
 	l.Progress(catalog.Show{ID: "a", Title: "甲"}, 3, 42.5, math.NaN())
 	l.Progress(catalog.Show{ID: "b"}, 0, 1, 60)
-	l.Volume, l.Speed, l.Page, l.OnTop = 0.5, 1.5, "rank", true
+	l.Volume, l.Speed, l.Page, l.OnTop, l.Autoplay = 0.5, 1.5, "rank", true, false
 	l.MarkDirty()
 	l.Close()
 
@@ -48,7 +48,7 @@ func TestProgress(t *testing.T) {
 	if r == nil || r.Show.Title != "甲" || r.Episode != 3 || r.Position != 42.5 || r.Duration != 0 {
 		t.Fatalf("History[a] = %+v", r)
 	}
-	if l.Volume != 0.5 || l.Speed != 1.5 || l.Page != "rank" || !l.OnTop {
+	if l.Volume != 0.5 || l.Speed != 1.5 || l.Page != "rank" || !l.OnTop || l.Autoplay {
 		t.Fatalf("settings = %v %v %q %v", l.Volume, l.Speed, l.Page, l.OnTop)
 	}
 	l.Forget("a")

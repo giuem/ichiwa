@@ -103,7 +103,7 @@ func TestPinFoldsPanel(t *testing.T) {
 	tt.Frame()
 	pin := func() {
 		t.Helper()
-		if err := tt.Click("窗口置顶 (T)"); err != nil {
+		if err := tt.Click("窗口置顶"); err != nil {
 			t.Fatal(err)
 		}
 		tt.Frame()
@@ -224,7 +224,7 @@ func TestWantsDisplay(t *testing.T) {
 }
 
 // In full screen the controls go once the pointer rests, even over the
-// video; in a window they stay while the pointer is over it.
+// video; in a window they also need the pointer over it.
 func TestChromeShown(t *testing.T) {
 	for _, tt := range []struct {
 		playing, hover, full bool
@@ -234,13 +234,210 @@ func TestChromeShown(t *testing.T) {
 		{playing: false, hover: false, full: true, still: time.Hour, want: true},
 		{playing: true, hover: true, full: true, still: chromeLinger - 1, want: true},
 		{playing: true, hover: true, full: true, still: chromeLinger, want: false},
-		{playing: true, hover: true, full: false, still: time.Hour, want: true},
+		{playing: true, hover: true, full: false, still: chromeLinger - 1, want: true},
+		{playing: true, hover: true, full: false, still: chromeLinger, want: false},
 		{playing: true, hover: false, full: false, want: false},
 	} {
 		if got := chromeShown(tt.playing, tt.hover, tt.full, tt.still); got != tt.want {
 			t.Errorf("chromeShown(%+v) = %v", tt, got)
 		}
 	}
+}
+
+// Muting remembers the volume instead of coming back at full.
+func TestMuteRestoresVolume(t *testing.T) {
+	app := &App{lib: testLibrary(t)}
+	app.lib.Volume = 0.4
+	w := &Watching{app: app}
+	w.toggleMute()
+	if app.lib.Volume != 0 {
+		t.Fatalf("muted at %v", app.lib.Volume)
+	}
+	w.toggleMute()
+	if app.lib.Volume != 0.4 {
+		t.Fatalf("unmuted at %v", app.lib.Volume)
+	}
+}
+
+// A single click counts only after the wait; a double click goes to full
+// screen and never touches the playback.
+func TestPictureClicks(t *testing.T) {
+	now := time.Now()
+	at := func(ms int) time.Time { return now.Add(time.Duration(ms) * time.Millisecond) }
+	w := &Watching{}
+	if toggle, _ := w.pictureClicks(true, false, false, at(0)); toggle {
+		t.Fatal("toggled before the wait")
+	}
+	if toggle, _ := w.pictureClicks(false, false, false, at(300)); !toggle {
+		t.Fatal("the single click never counted")
+	}
+
+	w = &Watching{}
+	w.pictureClicks(true, false, false, at(0))
+	if toggle, full := w.pictureClicks(false, true, true, at(100)); toggle || !full {
+		t.Fatalf("double click: toggle %v, full %v", toggle, full)
+	}
+	if toggle, _ := w.pictureClicks(true, false, false, at(150)); toggle {
+		t.Fatal("the release of the double click toggled")
+	}
+	if toggle, _ := w.pictureClicks(false, false, false, at(900)); toggle {
+		t.Fatal("a click was left waiting")
+	}
+
+	// Press and release of the second click in one frame.
+	w = &Watching{}
+	w.pictureClicks(true, false, false, at(0))
+	if toggle, full := w.pictureClicks(true, true, false, at(100)); toggle || !full {
+		t.Fatalf("one frame: toggle %v, full %v", toggle, full)
+	}
+	if w.skipClick {
+		t.Fatal("the next click would be lost")
+	}
+
+	// Slower than the wait: the pause that happened is put back.
+	w = &Watching{}
+	w.pictureClicks(true, false, false, at(0))
+	w.pictureClicks(false, false, false, at(250))
+	if toggle, full := w.pictureClicks(false, true, true, at(450)); !toggle || !full {
+		t.Fatalf("slow double click: toggle %v, full %v", toggle, full)
+	}
+}
+
+// With autoplay off the page waits at the end of an episode.
+func TestEndedHaltsWithoutAutoplay(t *testing.T) {
+	w, to, _ := seasonsWatching(t, true)
+	w.app.lib.Autoplay = false
+	w.onEnded()
+	if !w.halt || w.ended || len(*to) != 0 {
+		t.Fatalf("halt %v, ended %v, switched %v", w.halt, w.ended, *to)
+	}
+	if w.wantsDisplay() {
+		t.Error("keeps the display on while waiting")
+	}
+}
+
+// Stopping at the end of the episode happens once.
+func TestSleepEpisodeStopsOnce(t *testing.T) {
+	w, _, _ := seasonsWatching(t, true)
+	w.app.setSleep(sleepEpisode)
+	w.onEnded()
+	if !w.halt || w.app.sleepMins != 0 {
+		t.Fatalf("halt %v, sleep %d", w.halt, w.app.sleepMins)
+	}
+}
+
+func TestSleepTickWaitsForLoading(t *testing.T) {
+	app := &App{lib: testLibrary(t)}
+	w := &Watching{app: app, loading: true}
+	app.setSleep(15)
+	if w.sleepTick(time.Now().Add(time.Hour)) || app.sleepMins != 15 {
+		t.Fatal("ran out during loading")
+	}
+	w.loading = false
+	if w.sleepTick(time.Now()) {
+		t.Fatal("ran out early")
+	}
+	if !w.sleepTick(time.Now().Add(time.Hour)) || app.sleepMins != 0 {
+		t.Fatal("did not run out")
+	}
+}
+
+func TestMiniSize(t *testing.T) {
+	for _, tt := range []struct{ vw, vh, w, h int }{
+		{1080, 1920, 360, 640}, {0, 0, 360, 640}, {1920, 1080, 640, 360}, {720, 2400, miniMinWidth, 640}, {2400, 720, 640, miniMinHeight},
+	} {
+		if w, h := miniSize(tt.vw, tt.vh); w != tt.w || h != tt.h {
+			t.Errorf("miniSize(%d, %d) = %d, %d", tt.vw, tt.vh, w, h)
+		}
+	}
+}
+
+// The episodes open over the picture in full screen, and a click beside
+// them closes them without reaching the picture.
+func TestDrawerClosesOnClickBeside(t *testing.T) {
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
+	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}, drawer: true}
+	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, true) }, 1200, 700)
+	tt.Frame()
+	tt.ClickAt(100, 300)
+	tt.Frame()
+	if w.drawer {
+		t.Fatal("still open")
+	}
+	if !w.clickAt.IsZero() || w.paused {
+		t.Fatal("the click reached the picture")
+	}
+}
+
+// The picture takes the clicks that land on it, and what shows over it
+// still takes its own: nothing in the flow may cover them.
+func TestPictureTakesClicks(t *testing.T) {
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
+	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
+	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
+	tt.Frame()
+	tt.ClickAt(200, 300)
+	tt.Frame()
+	if w.clickAt.IsZero() {
+		t.Fatal("the picture got no click")
+	}
+	w.clickAt, w.halt = time.Time{}, true
+	tt.Frame()
+	if err := tt.Click("重播"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if w.halt {
+		t.Fatal("the button over the picture got no click")
+	}
+}
+
+// The controls of the narrowest stage still build, for the small window.
+func TestStageBuildsNarrow(t *testing.T) {
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
+	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, miniMinWidth, miniMinHeight)
+	tt.Frame()
+	tt.Frame()
+}
+
+func TestSteppedSpeed(t *testing.T) {
+	for _, tt := range []struct {
+		cur  float64
+		d    int
+		want float64
+	}{{1, 1, 1.25}, {1, -1, 0.75}, {0.75, -1, 0.75}, {2, 1, 2}, {3, 1, 1}} {
+		if got := steppedSpeed(tt.cur, tt.d); got != tt.want {
+			t.Errorf("steppedSpeed(%v, %d) = %v, want %v", tt.cur, tt.d, got, tt.want)
+		}
+	}
+}
+
+// The state of the right arrow without a player: a key that went down and
+// up ends the hold, and a boost asks for no seek.
+func TestHoldRightEnds(t *testing.T) {
+	now := time.Now()
+	w := &Watching{app: &App{lib: testLibrary(t)}, rightAt: now, boost: true, boosted: true}
+	w.holdRight(true, now.Add(time.Second))
+	if !w.boost {
+		t.Fatal("the hold ended while the key was down")
+	}
+	w.holdRight(false, now.Add(2*time.Second))
+	if !w.rightAt.IsZero() || w.boost || w.boosted {
+		t.Fatalf("still held: %+v", w)
+	}
+	w.holdRight(false, now.Add(3*time.Second)) // up with no press: nothing
+}
+
+// The seek bar builds and takes the pointer with no player yet.
+func TestProgressWithoutPlayer(t *testing.T) {
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
+	w := &Watching{app: app}
+	tt := ui.NewTester(func(c *ui.Context) { app.progress(c, w) }, 400, 80)
+	tt.Frame()
+	tt.Move(100, 10)
+	tt.Frame()
+	tt.Frame()
 }
 
 // Narrowing never asks for less than the minimum width, so that widening

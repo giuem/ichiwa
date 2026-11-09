@@ -14,6 +14,9 @@ const volumeBody = `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="cu
 // symbolFallbacks draws the SF Symbols of the app on the systems without
 // them, with Lucide icons (ISC license) adjusted to match.
 var symbolFallbacks = map[string]*ui.SVG{
+	"forward.fill":                       lucide(`<polygon points="13 19 22 12 13 5 13 19" fill="currentColor"/><polygon points="2 19 11 12 2 5 2 19" fill="currentColor"/>`),
+	"list.number":                        lucide(`<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 4v4"/><path d="M3 18h3l-3 3h3"/><path d="M3 11h3l-3 3h3" transform="translate(0 -1)"/>`),
+	"ellipsis":                           filled(`<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>`),
 	"chevron.left":                       iconChevronLeft,
 	"sidebar.right":                      lucide(`<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>`),
 	"play.fill":                          iconPlayFill,
