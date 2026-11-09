@@ -72,6 +72,7 @@ type Watching struct {
 	pointerAt          time.Time
 
 	side ui.ScrollState
+	told string // what screen readers were last told is playing
 
 	// seasons are the drama's seasons when it has more than one, the one
 	// showing among them; switchSeason opens another at an episode, -1
@@ -577,6 +578,11 @@ func (app *App) watchView(c *ui.Context) {
 		app.closeWatch()
 	})
 
+	if news := w.news(); news != "" && news != w.told {
+		w.told = news
+		c.Announce(news)
+	}
+
 	playing := w.player != nil && w.player.Playing()
 	if w.player != nil {
 		if playing {
@@ -593,6 +599,18 @@ func (app *App) watchView(c *ui.Context) {
 			app.sidePanel(c, w)
 		}
 	})
+}
+
+// news is what screen readers are told as it changes: the episode that
+// started, and the end. Failures are read as the alerts they show as.
+func (w *Watching) news() string {
+	switch {
+	case w.detail == nil || w.loading || w.err != "":
+		return ""
+	case w.ended:
+		return w.show.Title + " 已看完"
+	}
+	return fmt.Sprintf("正在播放 %s 第%d集", w.show.Title, w.index+1)
 }
 
 // playPause draws the icon of a button that plays and pauses: the icon
@@ -655,7 +673,8 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 	} else {
 		w.pointerAt = time.Now() // full screen starts with the controls showing
 	}
-	shown := chromeShown(playing, hover, full, still)
+	// The keyboard's focus on a control keeps the controls in view.
+	shown := chromeShown(playing, hover, full, still) || stage.FocusWithin()
 	if full && !shown {
 		stage.Cursor(ui.CursorNone)
 	}
@@ -687,16 +706,16 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 		ui.Row(c).Padding(max(bar.Height, 28)/2-2, 14, 34, bar.Left+14).Gap(8).DragWindow().
 			Gradient(ui.RGBA(0, 0, 0, 0.7), ui.Transparent, 180).Opacity(max(show, boolf(!playing))).
 			Children(func() {
-				if symbolButton(c, "chevron.left", 15, white, "返回 (Esc)").Clicked() {
+				if symbolButton(c, "chevron.left", 15, white, "返回 (Esc)").KeyShortcuts(0, ui.KeyEscape).Clicked() {
 					app.closeWatch()
 				}
 				ui.Column(c).Grow(1).Gap(1).Children(func() {
-					ui.Text(c, w.show.Title).FontSize(15).Bold().TextColor(white).SingleLine()
+					ui.Text(c, w.show.Title).FontSize(15).Bold().TextColor(white).SingleLine().Role(ui.RoleHeading).Level(1)
 					if w.detail != nil {
 						ui.Text(c, fmt.Sprintf("第%d集 · 共%d集", w.index+1, len(w.detail.Episodes))).FontSize(11.5).TextColor(white.Alpha(0.65))
 					}
 				})
-				if !full && app.panelRoom(c) && symbolButton(c, "sidebar.right", 15, white, "选集面板").Clicked() {
+				if !full && app.panelRoom(c) && symbolButton(c, "sidebar.right", 15, white, "选集面板").Expanded(w.panel).Clicked() {
 					w.panel, w.unpin = !w.panel, false
 				}
 			})
@@ -711,15 +730,15 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				next, hasNextSeason := w.nextSeason()
 				hasNextSeason = hasNextSeason && next.Online && w.lastEpisode()
 				hasNext := w.detail != nil && w.index+1 < len(w.detail.Episodes) || hasNextSeason
-				if symbolButton(c, "backward.end.fill", 15, white, "上一集 (↑)").Disabled(!hasPrev).Clicked() {
+				if symbolButton(c, "backward.end.fill", 15, white, "上一集 (↑)").KeyShortcuts(0, ui.KeyUp).Disabled(!hasPrev).Clicked() {
 					w.step(-1)
 				}
-				pb := roundButton(c, 22, white, "播放/暂停 (空格)")
+				pb := roundButton(c, 22, white, ternary(playing, "暂停 (空格)", "播放 (空格)")).KeyShortcuts(0, ui.KeySpace)
 				pb.Children(func() { playPause(c, pb, playing, 22) })
 				if pb.Clicked() {
 					w.togglePlay()
 				}
-				if symbolButton(c, "forward.end.fill", 15, white, ternary(hasNextSeason, "下一季 (↓)", "下一集 (↓)")).Disabled(!hasNext).Clicked() {
+				if symbolButton(c, "forward.end.fill", 15, white, ternary(hasNextSeason, "下一季 (↓)", "下一集 (↓)")).KeyShortcuts(0, ui.KeyDown).Disabled(!hasNext).Clicked() {
 					w.step(1)
 				}
 				if pl := w.player; pl != nil {
@@ -732,10 +751,10 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				app.speedButton(c, w)
 				app.volume(c, w)
 				fs := ternary(full, "arrow.down.right.and.arrow.up.left", "arrow.up.left.and.arrow.down.right")
-				if !full && symbolButton(c, "pin.fill", 14, ternary(app.lib.OnTop, app.pal.accent, white), "窗口置顶 (T)").Clicked() {
+				if !full && symbolButton(c, "pin.fill", 14, ternary(app.lib.OnTop, app.pal.accent, white), "窗口置顶 (T)").KeyShortcuts(0, ui.KeyT).Role(ui.RoleToggleButton).Checked(app.lib.OnTop).Clicked() {
 					w.toggleOnTop()
 				}
-				if symbolButton(c, fs, 14, white, "全屏 (F)").Clicked() {
+				if symbolButton(c, fs, 14, white, ternary(full, "退出全屏 (F)", "全屏 (F)")).KeyShortcuts(0, ui.KeyF).Clicked() {
 					app.win.ToggleFullScreen()
 				}
 			})
@@ -749,11 +768,11 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 	switch {
 	case w.detailErr != "":
 		sfsymbols.Symbol(c, "exclamationmark.triangle").Size(30).Color(dim)
-		ui.Text(c, w.detailErr).FontSize(15).TextColor(white)
+		ui.Text(c, w.detailErr).FontSize(15).TextColor(white).Role(ui.RoleAlert)
 		app.secondary(c, nil, "返回").OnClick(app.closeWatch)
 	case w.err != "":
 		sfsymbols.Symbol(c, "exclamationmark.triangle").Size(30).Color(dim)
-		ui.Text(c, w.err).FontSize(15).TextColor(white)
+		ui.Text(c, w.err).FontSize(15).TextColor(white).Role(ui.RoleAlert)
 		ui.Row(c).Gap(10).Margin(6, 0, 0).Children(func() {
 			label := "重试"
 			wait := w.retryWait()
@@ -810,7 +829,9 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 
 func (app *App) speedButton(c *ui.Context, w *Watching) {
 	speed := app.lib.Speed
-	b := ui.ButtonBase(c.Key("speed")).Height(28).PaddingX(10).Radius(999).Center().FocusRing(false).Label("播放速度").Tooltip("播放速度")
+	b := ui.ButtonBase(c.Key("speed")).Height(28).PaddingX(10).Radius(999).Center().Label("播放速度").
+		Value(fmt.Sprintf("%g倍", speed))
+	tooltip(c, b, "播放速度")
 	pressable(b, ui.Transparent, white.Alpha(0.14), 0.92)
 	b.Children(func() {
 		ui.Text(c, fmt.Sprintf("%gx", speed)).FontSize(12.5).Bold().TextColor(white)
@@ -840,14 +861,15 @@ func (app *App) volume(c *ui.Context, w *Watching) {
 	case vol < 0.5:
 		icon = "speaker.wave.1.fill"
 	}
-	if symbolButton(c, icon, 14, white, "静音").Clicked() {
+	if symbolButton(c, icon, 14, white, ternary(vol > 0, "静音", "取消静音")).Clicked() {
 		app.lib.Volume = ternary(vol > 0, 0.0, 1.0)
 		app.lib.MarkDirty()
 		if p := w.player; p != nil {
 			p.SetVolume(app.lib.Volume)
 		}
 	}
-	s := ui.SliderBase(c.Key("volume"), &app.lib.Volume, 0, 1).Width(84).Height(18).Label("音量")
+	s := ui.SliderBase(c.Key("volume"), &app.lib.Volume, 0, 1).Width(84).Height(18).Label("音量").
+		Value(fmt.Sprintf("%d%%", int(app.lib.Volume*100+0.5)))
 	if s.Changed() {
 		app.lib.MarkDirty()
 		if p := w.player; p != nil {
@@ -863,6 +885,15 @@ func (app *App) volume(c *ui.Context, w *Watching) {
 	})
 }
 
+// spokenTime is a time as screen readers should say it.
+func spokenTime(s float64) string {
+	n := int(max(s, 0) + 0.5)
+	if n >= 3600 {
+		return fmt.Sprintf("%d小时%d分%d秒", n/3600, n/60%60, n%60)
+	}
+	return fmt.Sprintf("%d分%d秒", n/60, n%60)
+}
+
 // progress is the seek bar.
 func (app *App) progress(c *ui.Context, w *Watching) {
 	pl := w.player
@@ -875,7 +906,8 @@ func (app *App) progress(c *ui.Context, w *Watching) {
 	} else {
 		w.seek = 0
 	}
-	s := ui.SliderBase(c.Key("seek"), &w.seek, 0, dur).Height(20).Label("进度").Disabled(pl == nil)
+	s := ui.SliderBase(c.Key("seek"), &w.seek, 0, dur).Height(20).Label("进度").Disabled(pl == nil).
+		Value(spokenTime(w.seek) + "，共" + spokenTime(dur))
 	if s.Changed() && pl != nil {
 		pl.Seek(seconds(w.seek))
 	}
@@ -909,7 +941,7 @@ func (app *App) sidePanel(c *ui.Context, w *Watching) {
 				app.episodes(c, w)
 			} else if w.detailErr == "" {
 				sh := app.shimmer(c)
-				ui.Grid(c).Columns(6).Gap(8).Children(func() {
+				ui.Grid(c).Columns(6).Gap(8).Role(ui.RoleStatus).Label("加载中").Children(func() {
 					for i := range 24 {
 						sh.bone(c.Key(i), 9).Height(36)
 					}
@@ -925,7 +957,7 @@ func (app *App) about(c *ui.Context, w *Watching) {
 	ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
 		app.poster(c, w.show.Cover, w.show.Title, 10).Width(96).Shrink(0)
 		ui.Column(c).Grow(1).Gap(7).Children(func() {
-			ui.Text(c, w.show.Title).FontSize(17).Bold().MaxLines(3).TextColor(p.text)
+			ui.Text(c, w.show.Title).FontSize(17).Bold().MaxLines(3).TextColor(p.text).Role(ui.RoleHeading).Level(2)
 			var meta []string
 			if w.detail != nil {
 				meta = append(meta, fmt.Sprintf("全%d集", len(w.detail.Episodes)))
@@ -962,9 +994,11 @@ func (app *App) about(c *ui.Context, w *Watching) {
 		})
 	})
 	if w.show.Desc != "" {
-		d := ui.Column(c.Key("desc")).Cursor(ui.CursorPointer).Label("简介")
+		// A button reads no text inside it: its Description reads the synopsis.
+		d := ui.ButtonBase(c.Key("desc")).AlignItems(ui.Start).Justify(ui.Start).Shrink(1).Cursor(ui.CursorPointer).
+			Label("简介").Description(w.show.Desc).Expanded(w.descOpen)
 		d.Children(func() {
-			t := ui.Text(c, w.show.Desc).FontSize(12.5).LineHeight(1.55).TextColor(p.muted)
+			t := ui.Text(c, w.show.Desc).FontSize(12.5).LineHeight(1.55).TextColor(p.muted).Grow(1).Shrink(1)
 			if !w.descOpen {
 				t.MaxLines(3)
 			}
@@ -980,18 +1014,21 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 	eps := w.detail.Episodes
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).Children(func() {
-			ui.Text(c, "选集").FontSize(15).Bold().TextColor(p.text).Grow(1)
+			ui.Text(c, "选集").FontSize(15).Bold().TextColor(p.text).Grow(1).Role(ui.RoleHeading).Level(2)
 			ui.Text(c, fmt.Sprintf("第%d集 / 共%d集", w.index+1, len(eps))).FontSize(12).TextColor(p.muted)
 		})
 		ranges := (len(eps) + episodesPerRange - 1) / episodesPerRange
 		if ranges > 1 {
-			ui.ScrollHorizontal(c.Key("ranges")).Gap(6).Children(func() {
-				for r := range ranges {
-					from, to := r*episodesPerRange+1, min((r+1)*episodesPerRange, len(eps))
-					if app.chip(c.Key(r), fmt.Sprintf("%d-%d", from, to), r == w.epRange).Shrink(0).Clicked() {
-						w.epRange = r
+			ui.ScrollHorizontal(c.Key("ranges")).Children(func() {
+				choices(c, "集数范围").Gap(6).Children(func() {
+					for r := range ranges {
+						from, to := r*episodesPerRange+1, min((r+1)*episodesPerRange, len(eps))
+						chip := app.chip(c.Key(r), fmt.Sprintf("%d-%d", from, to), r == w.epRange).Shrink(0)
+						if radio(chip, r == w.epRange).Label(fmt.Sprintf("第%d到%d集", from, to)).Clicked() {
+							w.epRange = r
+						}
 					}
-				}
+				})
 			})
 		}
 		watched := -1
@@ -1004,7 +1041,11 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 			for i := from; i < min(from+episodesPerRange, len(eps)); i++ {
 				ep := eps[i]
 				current := i == w.index
-				cell := ui.ButtonBase(c.Key(ep.ID)).Height(36).Radius(9).Center().FocusRing(false).Label(fmt.Sprintf("第%d集", i+1))
+				cell := ui.ButtonBase(c.Key(ep.ID)).Height(36).Radius(9).Center().Label(fmt.Sprintf("第%d集", i+1)).
+					Description(ternary(!ep.Playable, "暂不可播放", ternary(i < watched, "已看过", "")))
+				if current {
+					cell.Current(ui.CurrentItem)
+				}
 				rest := ternary(current, p.accent, p.surface)
 				pressable(cell, rest, ternary(current, rest, p.surface.Mix(p.text, 0.08)), 0.92)
 				cell.Children(func() {
@@ -1041,12 +1082,13 @@ func (app *App) related(c *ui.Context, w *Watching) {
 		return
 	}
 	ui.Column(c).Gap(4).Children(func() {
-		ui.Text(c, "相关推荐").FontSize(15).Bold().TextColor(p.text).Margin(0, 0, 8)
+		ui.Text(c, "相关推荐").FontSize(15).Bold().TextColor(p.text).Margin(0, 0, 8).Role(ui.RoleHeading).Level(2)
 		for i, s := range w.recs {
 			if i >= 12 {
 				break
 			}
-			row := ui.ButtonBase(c.Key("rec-" + s.ID)).Gap(12).Padding(6).Radius(10).AlignItems(ui.Start).FocusRing(false).Label(s.Title)
+			row := ui.ButtonBase(c.Key("rec-" + s.ID)).Gap(12).Padding(6).Radius(10).AlignItems(ui.Start).Label(s.Title).
+				Description(joinNonEmpty(ternary(s.Episodes > 0, fmt.Sprintf("全%d集", s.Episodes), ""), s.Desc))
 			pressable(row, ui.Transparent, p.hover, 0.98)
 			row.Children(func() {
 				app.poster(c, s.Cover, s.Title, 7).Width(56).Shrink(0)
@@ -1092,7 +1134,7 @@ func (app *App) seasonRow(c *ui.Context, w *Watching) {
 	latest := w.seasons[len(w.seasons)-1]
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).Children(func() {
-			ui.Text(c, "系列").FontSize(15).Bold().TextColor(p.text).Grow(1)
+			ui.Text(c, "系列").FontSize(15).Bold().TextColor(p.text).Grow(1).Role(ui.RoleHeading).Level(2)
 			ui.Text(c, fmt.Sprintf("共%d季", len(w.seasons))).FontSize(12).TextColor(p.muted)
 		})
 		ui.ScrollHorizontal(c.Key("seasons")).Gap(6).Children(func() {
@@ -1105,7 +1147,11 @@ func (app *App) seasonRow(c *ui.Context, w *Watching) {
 					label += " · 新"
 				}
 				current := s.ID == w.show.ID
-				if !app.chip(c.Key("season-"+s.ID), label, current).Shrink(0).Label(label).Clicked() || current {
+				chip := app.chip(c.Key("season-"+s.ID), label, current).Shrink(0).Label(label)
+				if current {
+					chip.Current(ui.CurrentItem)
+				}
+				if !chip.Clicked() || current {
 					continue
 				}
 				if s.Online {

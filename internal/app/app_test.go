@@ -103,7 +103,7 @@ func TestPinFoldsPanel(t *testing.T) {
 	tt.Frame()
 	pin := func() {
 		t.Helper()
-		if err := tt.Click("窗口置顶 (T)"); err != nil {
+		if err := tt.Click("窗口置顶"); err != nil {
 			t.Fatal(err)
 		}
 		tt.Frame()

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"maps"
 	"strings"
 
@@ -29,7 +30,7 @@ func (app *App) avatar(c *ui.Context, url, name string, size float32) ui.Element
 	}
 	box.Children(func() {
 		if in < 1 {
-			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Opacity(1 - in).Children(func() {
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Opacity(1 - in).AccessHidden(true).Children(func() {
 				ui.Text(c, firstRune(name)).FontSize(size * 0.4).Bold().TextColor(p.muted)
 			})
 		}
@@ -46,7 +47,7 @@ func (app *App) avatar(c *ui.Context, url, name string, size float32) ui.Element
 // option is a choice in a row of the filter panel.
 func (app *App) option(c *ui.Context, label string, selected bool) ui.Element {
 	p := app.pal
-	b := ui.ButtonBase(c).Height(28).PaddingX(11).Radius(7).Center().FocusRing(false).Label(label)
+	b := radio(ui.ButtonBase(c).Height(28).PaddingX(11).Radius(7).Center().Label(label), selected)
 	rest, fg := ui.Transparent, p.muted
 	if selected {
 		rest, fg = p.accent.Alpha(0.12), p.accent
@@ -148,7 +149,7 @@ func (app *App) filterPage(c *ui.Context) {
 		ui.Box(c).Height(1).Background(p.hairline).Margin(14, 0, 22)
 		switch {
 		case len(r.items) > 0:
-			app.grid(c, visible(r, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+			app.grid(c, visible(r, n), episodesExtras)
 			app.feedFooter(c, r.loading, r.err, r.more, retry)
 		case r.loaded && !r.more && r.err == "":
 			ui.Text(c, "没有符合条件的短剧，换个条件试试").FontSize(13).TextColor(p.muted).Padding(40, 0).AlignSelf(ui.Center)
@@ -166,13 +167,13 @@ func (app *App) filterPanel(c *ui.Context) {
 	if !fs.rowsOK {
 		if fs.panelErr != "" {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(4, 0).Children(func() {
-				ui.Text(c, "筛选条件加载失败："+fs.panelErr).FontSize(12.5).TextColor(p.muted)
+				ui.Text(c, "筛选条件加载失败："+fs.panelErr).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
 				app.secondary(c, iconRefresh, "重试").OnClick(func() { fs.panelErr = "" })
 			})
 			return
 		}
 		sh := app.shimmer(c)
-		ui.Column(c).Gap(12).Children(func() {
+		ui.Column(c).Gap(12).Role(ui.RoleStatus).Label("加载中").Children(func() {
 			for i := range 4 {
 				sh.bone(c.Key(i), 7).Height(28).WidthPercent(float32(92 - i*13))
 			}
@@ -181,10 +182,11 @@ func (app *App) filterPanel(c *ui.Context) {
 	}
 	ui.Column(c).Gap(6).Children(func() {
 		for _, row := range fs.rows {
-			ui.Row(c.Key("row-" + row.Key)).Gap(4).Wrap().Children(func() {
+			choices(c.Key("row-"+row.Key), row.Name).Gap(4).Wrap().Children(func() {
 				all := fs.chosen[row.Key] == ""
 				key := row.Key
-				app.option(c.Key("all"), row.Name, all).OnClick(func() { fs.choose(key, "") })
+				// It shows the row's name and chooses all of it.
+				app.option(c.Key("all"), row.Name, all).Label("全部" + row.Name).OnClick(func() { fs.choose(key, "") })
 				for _, o := range row.Options {
 					value := o.Value
 					app.option(c.Key(o.Value), o.Name, fs.chosen[key] == value).OnClick(func() { fs.choose(key, value) })
@@ -217,7 +219,8 @@ func (app *App) actorGrid(c *ui.Context, actors []Actor) {
 func (app *App) actorCard(c *ui.Context, i int, a Actor, width float32) {
 	p := app.pal
 	b := ui.ButtonBase(c.Key(a.ID)).Width(width).Padding(14, 16).Gap(14).Radius(14).
-		AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(a.Name)
+		AlignItems(ui.Center).Justify(ui.Start).Label(a.Name).
+		Description(joinNonEmpty(append([]string{fmt.Sprintf("第%d名", i+1), a.Score}, a.Details...)...))
 	pressable(b, p.surface, p.surface.Mix(p.text, 0.05), 0.98)
 	b.Children(func() {
 		ui.Text(c, itoa(i+1)).FontSize(15).Bold().Width(22).TextAlign(ui.Center).TextColor(ternary(i < 3, p.accent, p.faint))
@@ -282,6 +285,7 @@ func (app *App) personPage(c *ui.Context) {
 			avatar = ps.info.Avatar
 		}
 	}
+	app.tell(c, name)
 	bar := c.TitleBar()
 	ui.Row(c).Padding(max(bar.Height, 28)+4, pagePad-8, 6).DragWindow().Children(func() {
 		iconButton(c, iconChevronLeft, 18, p.muted, "返回").OnClick(back)
@@ -291,14 +295,14 @@ func (app *App) personPage(c *ui.Context) {
 		ui.Row(c).Gap(22).AlignItems(ui.Center).Children(func() {
 			app.avatar(c, avatar, name, 96)
 			ui.Column(c).Grow(1).Shrink(1).Gap(8).Children(func() {
-				ui.Text(c, name).FontSize(26).Bold().TextColor(p.text)
+				ui.Text(c, name).FontSize(26).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
 				app.personFacts(c, ps)
 			})
 		})
-		ui.Text(c, "作品").FontSize(17).Bold().TextColor(p.text).Margin(30, 0, 16)
+		ui.Text(c, "作品").FontSize(17).Bold().TextColor(p.text).Margin(30, 0, 16).Role(ui.RoleHeading).Level(2)
 		switch {
 		case len(f.items) > 0:
-			app.grid(c, visible(f, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+			app.grid(c, visible(f, n), episodesExtras)
 			app.feedFooter(c, f.loading, f.err, f.more, retry)
 		case f.loaded && !f.more && f.err == "":
 			ui.Text(c, "暂无作品").FontSize(13).TextColor(p.muted).Padding(24, 0)
@@ -316,11 +320,12 @@ func (app *App) personFacts(c *ui.Context, ps *personState) {
 	switch {
 	case info == nil && ps.err != "":
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, ps.err).FontSize(12.5).TextColor(p.muted)
+			ui.Text(c, ps.err).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
 			app.secondary(c, iconRefresh, "重试").OnClick(func() { ps.err = "" })
 		})
 		return
 	case info == nil:
+		ui.Box(c).Role(ui.RoleStatus).Label("加载中")
 		sh := app.shimmer(c)
 		sh.bone(c, 4).Height(12).Width(180)
 		sh.bone(c, 4).Height(12).Width(320)
