@@ -132,10 +132,7 @@ func (app *App) sidebar(c *ui.Context) {
 	ui.Column(c).Fill().Padding(top, 12, 14).Gap(2).DragWindow().Children(func() {
 		ui.Row(c).Padding(2, 8, 12).Gap(10).Children(func() {
 			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
-			ui.Column(c).Children(func() {
-				ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
-				ui.Text(c, platformLabel).FontSize(10.5).TextColor(p.muted)
-			})
+			ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
 		})
 		app.navSection(c, "发现")
 		app.navItem(c, iconHome, "推荐", pageRecommend, 0)
