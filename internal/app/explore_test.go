@@ -5,7 +5,6 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
-
 )
 
 // Choosing a genre clears the other rows, whose options depend on it;
