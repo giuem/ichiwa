@@ -24,9 +24,10 @@ func itoa(n int) string { return strconv.Itoa(n) }
 func (app *App) header(c *ui.Context, title, subtitle string, trailing func()) {
 	p := app.pal
 	bar := c.TitleBar()
+	app.tell(c, title)
 	ui.Row(c).Padding(max(bar.Height, 28)+10, pagePad, 18, pagePad).Gap(12).AlignItems(ui.End).DragWindow().Children(func() {
 		ui.Column(c).Grow(1).Gap(4).Children(func() {
-			ui.Text(c, title).FontSize(28).Bold().TextColor(p.text)
+			ui.Text(c, title).FontSize(28).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
 			if subtitle != "" {
 				ui.Text(c, subtitle).FontSize(13).TextColor(p.muted)
 			}
@@ -37,18 +38,33 @@ func (app *App) header(c *ui.Context, title, subtitle string, trailing func()) {
 	})
 }
 
+// tell has screen readers read a page's title as the page changes, which
+// moves no keyboard focus that would bring it.
+func (app *App) tell(c *ui.Context, title string) {
+	if title != app.told {
+		app.told = title
+		c.Announce(title)
+	}
+}
+
 // centered shows a message in the middle of a page, with a button that
-// tries again when retry is set.
+// tries again when retry is set: a failure, read out as it appears.
 func (app *App) centered(c *ui.Context, icon *ui.SVG, title, detail string, retry func()) {
 	p := app.pal
 	ui.Column(c).Grow(1).Center().Gap(10).Padding(40).Children(func() {
 		ui.Box(c).Size(64, 64).Radius(999).Background(p.surface).Center().Margin(0, 0, 6).Children(func() {
 			ui.Icon(c, icon).Size(26, 26).TextColor(p.muted)
 		})
-		ui.Text(c, title).FontSize(16).Bold().TextColor(p.text)
-		if detail != "" {
-			ui.Text(c, detail).FontSize(13).TextColor(p.muted).TextAlign(ui.Center).MaxWidth(420)
+		message := ui.Column(c).Gap(10).AlignItems(ui.Center)
+		if retry != nil {
+			message.Role(ui.RoleAlert)
 		}
+		message.Children(func() {
+			ui.Text(c, title).FontSize(16).Bold().TextColor(p.text)
+			if detail != "" {
+				ui.Text(c, detail).FontSize(13).TextColor(p.muted).TextAlign(ui.Center).MaxWidth(420)
+			}
+		})
 		if retry != nil {
 			app.primary(c, iconRefresh, "重试").Margin(10, 0, 0).OnClick(retry)
 		}
@@ -66,7 +82,8 @@ func (app *App) contentWidth(c *ui.Context) float32 {
 	return w - sidebarWidth - 2*pagePad - 12 // and the scroll bar
 }
 
-// poster draws a cover, fading it in over a placeholder as it loads.
+// poster draws a cover, fading it in over a placeholder as it loads. It is
+// always beside the title, so assistive technology skips it.
 func (app *App) poster(c *ui.Context, url, title string, radius float32) ui.Element {
 	p := app.pal
 	box := ui.Box(c).AspectRatio(3.0 / 4).Radius(radius).Clip()
@@ -77,12 +94,12 @@ func (app *App) poster(c *ui.Context, url, title string, radius float32) ui.Elem
 	}
 	box.Children(func() {
 		if in < 1 {
-			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Opacity(1 - in).Children(func() {
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Opacity(1 - in).AccessHidden(true).Children(func() {
 				ui.Text(c, firstRune(title)).FontSize(26).Bold().TextColor(p.faint)
 			})
 		}
 		if bmp != nil {
-			img := ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Label(title)
+			img := ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover)
 			if in < 1 {
 				img.Opacity(in)
 			}
@@ -98,45 +115,72 @@ func firstRune(s string) string {
 	return ""
 }
 
-// card is a drama in a grid: its cover and title, a badge over the cover,
-// and what under draws below the title. A click opens it.
-func (app *App) card(c *ui.Context, s Show, width float32, badge string, under func()) {
+// cardExtras is what a page adds to a drama's card.
+type cardExtras struct {
+	badge string // over the cover
+	// under draws below the title, in place of the tag, and returns what
+	// screen readers read of it.
+	under func() string
+	// corner draws controls of their own at the card's bottom right, which
+	// a card, being one button, could not hold inside it.
+	corner func()
+}
+
+func episodesExtras(_ int, s Show) cardExtras { return cardExtras{badge: episodesBadge(s)} }
+
+// card is a drama in a grid: its cover and title, and the page's extras. A
+// click opens it.
+func (app *App) card(c *ui.Context, s Show, width float32, x cardExtras) {
 	p := app.pal
-	col := ui.Column(c.Key(s.ID)).Width(width).Gap(9).Cursor(ui.CursorPointer).Label(s.Title)
-	hover := col.Hovered()
-	lift := col.AnimateTo("lift", boolf(hover), ui.Smooth)
-	col.AnimatePose(ui.Pose{Scale: 1 - 0.02*boolf(col.Pressed())}, ui.Snappy)
-	col.Children(func() {
-		poster := app.poster(c, s.Cover, s.Title, 10)
-		poster.Shadow(0, 2+8*lift, 6+18*lift, 0, p.shade.Alpha(0.10+0.16*lift)).Translate(0, -3*lift)
-		poster.Children(func() {
-			if badge != "" {
-				ui.Text(c, badge).FontSize(11).FontWeight(600).TextColor(white).
-					Padding(3, 7).Radius(6).Background(ui.RGBA(0, 0, 0, 0.5)).
-					Absolute().Left(8).Bottom(8)
-			}
-			// A play button that rises in under the pointer.
-			if lift > 0.01 {
-				ui.Box(c).Size(40, 40).Radius(999).Background(p.accent).Center().
-					Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.3)).
-					Absolute().Right(10).Bottom(10).Opacity(lift).Scale(0.7+0.3*lift, 0.7+0.3*lift).
-					Children(func() { ui.Icon(c, iconPlayFill).Size(16, 16).TextColor(white).Margin(0, 0, 0, 2) })
-			}
+	ui.Box(c.Key(s.ID)).Width(width).Children(func() {
+		b := ui.ButtonBase(c).Width(width).AlignItems(ui.Start).Cursor(ui.CursorPointer).Label(s.Title)
+		hover := b.Hovered() || b.FocusVisible()
+		lift := b.AnimateTo("lift", boolf(hover), ui.Smooth)
+		b.AnimatePose(ui.Pose{Scale: 1 - 0.02*boolf(b.Pressed())}, ui.Snappy)
+		note := s.Tag
+		b.Children(func() {
+			ui.Column(c).Width(width).Gap(9).Children(func() {
+				poster := app.poster(c, s.Cover, s.Title, 10)
+				poster.Shadow(0, 2+8*lift, 6+18*lift, 0, p.shade.Alpha(0.10+0.16*lift)).Translate(0, -3*lift)
+				poster.Children(func() {
+					if x.badge != "" {
+						ui.Text(c, x.badge).FontSize(11).FontWeight(600).TextColor(white).
+							Padding(3, 7).Radius(6).Background(ui.RGBA(0, 0, 0, 0.5)).
+							Absolute().Left(8).Bottom(8)
+					}
+					// A play button that rises in under the pointer.
+					if lift > 0.01 {
+						ui.Box(c).Size(40, 40).Radius(999).Background(p.accent).Center().
+							Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.3)).
+							Absolute().Right(10).Bottom(10).Opacity(lift).Scale(0.7+0.3*lift, 0.7+0.3*lift).
+							Children(func() { ui.Icon(c, iconPlayFill).Size(16, 16).TextColor(white).Margin(0, 0, 0, 2) })
+					}
+				})
+				ui.Column(c).Gap(3).Children(func() {
+					ui.Text(c, s.Title).FontSize(13.5).FontWeight(600).
+						FixedLineHeight(titleLine).MaxLines(2).MinHeight(2 * titleLine).
+						TextColor(b.AnimateColor("title", ternary(hover, p.accent, p.text), quick))
+					if x.under != nil {
+						note = x.under()
+					} else if s.Tag != "" {
+						ui.Text(c, s.Tag).FontSize(11.5).TextColor(p.muted).SingleLine()
+					}
+				})
+			})
 		})
-		ui.Column(c).Gap(3).Children(func() {
-			ui.Text(c, s.Title).FontSize(13.5).FontWeight(600).
-				FixedLineHeight(titleLine).MaxLines(2).MinHeight(2 * titleLine).
-				TextColor(col.AnimateColor("title", ternary(hover, p.accent, p.text), quick))
-			if under != nil {
-				under()
-			} else if s.Tag != "" {
-				ui.Text(c, s.Tag).FontSize(11.5).TextColor(p.muted).SingleLine()
-			}
-		})
+		b.Description(joinNonEmpty(x.badge, note))
+		if b.Clicked() {
+			app.open(s, -1)
+		}
+		if x.corner != nil {
+			ui.Box(c).Absolute().Right(0).Bottom(0).Children(x.corner)
+		}
 	})
-	if col.Clicked() {
-		app.open(s, -1)
-	}
+}
+
+// joinNonEmpty joins what there is of parts, as one line to read.
+func joinNonEmpty(parts ...string) string {
+	return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), "，")
 }
 
 func ternary[T any](cond bool, a, b T) T {
@@ -154,17 +198,13 @@ func episodesBadge(s Show) string {
 }
 
 // grid lays cards out in rows that fill the width.
-func (app *App) grid(c *ui.Context, shows []Show, badge func(i int, s Show) string, under func(i int, s Show) func()) {
+func (app *App) grid(c *ui.Context, shows []Show, extras func(i int, s Show) cardExtras) {
 	n, w := columns(app.contentWidth(c))
 	ui.Column(c).Gap(28).Children(func() {
 		for start := 0; start < len(shows); start += n {
 			ui.Row(c.Key(start)).Gap(cardGap).AlignItems(ui.Start).Children(func() {
 				for i := start; i < min(start+n, len(shows)); i++ {
-					var u func()
-					if under != nil {
-						u = under(i, shows[i])
-					}
-					app.card(c, shows[i], w, badge(i, shows[i]), u)
+					app.card(c, shows[i], w, extras(i, shows[i]))
 				}
 			})
 		}
@@ -175,7 +215,7 @@ func (app *App) grid(c *ui.Context, shows []Show, badge func(i int, s Show) stri
 func (app *App) skeletonGrid(c *ui.Context, rows int) {
 	s := app.shimmer(c)
 	n, w := columns(app.contentWidth(c))
-	ui.Column(c).Grow(1).Padding(4, pagePad, 0).Gap(28).ClipY().Children(func() {
+	ui.Column(c).Grow(1).Padding(4, pagePad, 0).Gap(28).ClipY().Role(ui.RoleStatus).Label("加载中").Children(func() {
 		for r := range rows {
 			ui.Row(c.Key(r)).Gap(cardGap).Children(func() {
 				for i := range n {
@@ -203,7 +243,7 @@ func (app *App) feedFooter(c *ui.Context, loading bool, err string, more bool, r
 			ui.Spinner(c)
 			ui.Text(c, "加载中").FontSize(12.5).TextColor(p.muted)
 		case err != "":
-			ui.Text(c, err).FontSize(12.5).TextColor(p.muted)
+			ui.Text(c, err).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
 			app.secondary(c, iconRefresh, "重试").OnClick(retry)
 		case !more:
 			ui.Box(c).Width(28).Height(1).Background(p.hairline)
@@ -240,7 +280,7 @@ func (app *App) feedPage(c *ui.Context, channel string) {
 	}
 	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("feed-"+channel)).TrackScroll(&f.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
-		app.grid(c, visible(f, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+		app.grid(c, visible(f, n), episodesExtras)
 		app.feedFooter(c, f.loading, f.err, f.more, retry)
 	})
 	app.pump(c, f)
@@ -319,7 +359,7 @@ func (app *App) rankPage(c *ui.Context) {
 	}
 	contents := r.page.Contents
 	ui.Column(c).Padding(0, pagePad, 18).Gap(14).Children(func() {
-		ui.Row(c).Gap(22).Children(func() {
+		ui.Row(c).Gap(22).Role(ui.RoleTabList).Label("榜单类别").FocusGroup(ui.Horizontal).Children(func() {
 			for i, ct := range contents {
 				if app.tab(c.Key("tab-"+ct.ID), ct.Name, i == r.content).Clicked() && i != r.content {
 					r.content, r.board = i, 0
@@ -329,9 +369,9 @@ func (app *App) rankPage(c *ui.Context) {
 		})
 		if r.content < len(contents) {
 			boards := contents[r.content].Boards
-			ui.Row(c).Gap(8).Wrap().Children(func() {
+			choices(c, "榜单").Gap(8).Wrap().Children(func() {
 				for j, b := range boards {
-					if app.chip(c.Key(b.ID), b.Name, j == r.board).Clicked() && j != r.board {
+					if radio(app.chip(c.Key(b.ID), b.Name, j == r.board), j == r.board).Clicked() && j != r.board {
 						r.board = j
 						app.loadRank(contents[r.content].ID, b.ID)
 					}
@@ -357,8 +397,8 @@ func (app *App) rankPage(c *ui.Context) {
 	}
 	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("rank")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
-		app.grid(c, visible(l, n), func(i int, s Show) string { return "" }, func(i int, s Show) func() {
-			return func() {
+		app.grid(c, visible(l, n), func(i int, s Show) cardExtras {
+			return cardExtras{under: func() string {
 				ui.Row(c).Gap(6).Children(func() {
 					n := ui.Text(c, "TOP "+itoa(i+1)).FontSize(11).Bold()
 					if i < 3 {
@@ -370,7 +410,8 @@ func (app *App) rankPage(c *ui.Context) {
 						ui.Text(c, s.Tag).FontSize(11).TextColor(p.muted).SingleLine()
 					}
 				})
-			}
+				return joinNonEmpty(fmt.Sprintf("第%d名", i+1), s.Tag)
+			}}
 		})
 		app.feedFooter(c, l.loading, l.err, l.more, retry)
 	})
@@ -397,6 +438,7 @@ type searchState struct {
 	hotBusy bool
 	focus   bool
 	field   ui.Handle
+	told    string // the query screen readers were told the results of
 }
 
 // runSearch shows the results of q, or the hot boards when q is empty.
@@ -405,7 +447,7 @@ func (app *App) runSearch(q string) {
 	q = strings.TrimSpace(q)
 	f := &s.results
 	f.reset()
-	s.shown = q
+	s.shown, s.told = q, ""
 	if q == "" {
 		f.fetch = nil
 		return
@@ -442,8 +484,8 @@ func (app *App) searchPage(c *ui.Context) {
 	p := app.pal
 	app.loadHot()
 	app.header(c, "搜索", "", nil)
-	ui.Row(c).Padding(0, pagePad, 22).Children(func() {
-		f := ui.SearchField(c.Key("search"), &s.query).Placeholder("搜索剧名、演员、题材，回车搜索").Bind(&s.field).
+	ui.Row(c).Padding(0, pagePad, 22).Role(ui.RoleSearch).Children(func() {
+		f := ui.SearchField(c.Key("search"), &s.query).Label("搜索短剧").Placeholder("搜索剧名、演员、题材，回车搜索").Bind(&s.field).
 			Grow(1).MaxWidth(560).Height(40).Radius(10).FontSize(14)
 		if s.focus {
 			s.field.Focus(c)
@@ -462,6 +504,11 @@ func (app *App) searchPage(c *ui.Context) {
 	}
 	r := &s.results
 	retry := func() { r.err = ""; app.loadMore(r) }
+	// The focus stays in the field, so nothing else says the search is done.
+	if r.loaded && !r.loading && r.err == "" && s.told != s.shown {
+		s.told = s.shown
+		c.Announce(ternary(len(r.items) > 0, "“"+s.shown+"”的搜索结果已显示", "没有找到“"+s.shown+"”"))
+	}
 	if len(r.items) == 0 {
 		switch {
 		case r.loading:
@@ -477,7 +524,7 @@ func (app *App) searchPage(c *ui.Context) {
 	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("results-"+q)).TrackScroll(&r.scroll).Grow(1).Padding(0, pagePad, 0).Children(func() {
 		ui.Text(c, fmt.Sprintf("“%s”的搜索结果", q)).FontSize(13).TextColor(p.muted).Margin(0, 0, 16)
-		app.grid(c, visible(r, n), func(_ int, s Show) string { return episodesBadge(s) }, nil)
+		app.grid(c, visible(r, n), episodesExtras)
 		app.feedFooter(c, r.loading, r.err, r.more, retry)
 	})
 	app.pump(c, r)
@@ -492,7 +539,7 @@ func (app *App) hotBoards(c *ui.Context) {
 			return
 		}
 		sh := app.shimmer(c)
-		ui.Row(c).Padding(0, pagePad).Gap(20).Children(func() {
+		ui.Row(c).Padding(0, pagePad).Gap(20).Role(ui.RoleStatus).Label("加载中").Children(func() {
 			for i := range 2 {
 				sh.bone(c.Key(i), 16).Size(320, 420)
 			}
@@ -505,13 +552,13 @@ func (app *App) hotBoards(c *ui.Context) {
 				ui.Column(c.Key(bi)).Width(320).Padding(18, 14, 12).Radius(16).Background(p.surface).Gap(2).Children(func() {
 					ui.Row(c).Gap(7).Padding(0, 6, 10).Children(func() {
 						ui.Icon(c, iconFlame).Size(16, 16).TextColor(p.accent)
-						ui.Text(c, b.Name).FontSize(15).Bold().TextColor(p.text)
+						ui.Text(c, b.Name).FontSize(15).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(2)
 					})
 					for i, it := range b.Items {
 						if i >= 10 {
 							break
 						}
-						row := ui.ButtonBase(c.Key(it.ID)).Gap(12).Padding(8, 8).Radius(9).AlignItems(ui.Center).FocusRing(false).Label(it.Title)
+						row := ui.ButtonBase(c.Key(it.ID)).Gap(12).Padding(8, 8).Radius(9).AlignItems(ui.Center).Label(it.Title).Description(joinNonEmpty(fmt.Sprintf("第%d名", i+1), it.Tag))
 						pressable(row, ui.Transparent, p.hover.Mix(p.text, 0.02), 0.98)
 						row.Children(func() {
 							n := ui.Text(c, itoa(i+1)).FontSize(15).Bold().Width(18).TextAlign(ui.Center)
@@ -546,32 +593,34 @@ func (app *App) historyPage(c *ui.Context) {
 		shows[i] = w.Show
 	}
 	ui.Scroll(c.Key("history")).TrackScroll(&app.shelf).Grow(1).Padding(4, pagePad, 24).Children(func() {
-		app.grid(c, shows, func(i int, s Show) string {
-			return fmt.Sprintf("看到第%d集", recent[i].Episode+1)
-		}, func(i int, s Show) func() {
+		app.grid(c, shows, func(i int, s Show) cardExtras {
 			w := recent[i]
-			return func() {
-				frac := float32(0)
-				if s.Episodes > 0 {
-					done := float64(w.Episode)
-					if w.Duration > 0 {
-						done += w.Position / w.Duration
+			return cardExtras{
+				badge: fmt.Sprintf("看到第%d集", w.Episode+1),
+				under: func() string {
+					frac := float32(0)
+					if s.Episodes > 0 {
+						done := float64(w.Episode)
+						if w.Duration > 0 {
+							done += w.Position / w.Duration
+						}
+						frac = float32(done / float64(s.Episodes))
 					}
-					frac = float32(done / float64(s.Episodes))
-				}
-				ui.Box(c).Height(3).Radius(2).Background(p.hairline).Margin(2, 0).Draw(func(pt *ui.Painter, r ui.Rect) {
-					pt.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * min(max(frac, 0.02), 1), H: r.H}, p.accent, 2)
-				})
-				ui.Row(c).Children(func() {
-					ui.Text(c, ago(w)).FontSize(11).TextColor(p.muted).Grow(1)
-					x := ui.ButtonBase(c.Key("forget")).FocusRing(false).Label("移除记录")
+					ui.Box(c).Height(3).Radius(2).Background(p.hairline).Margin(2, 0).Draw(func(pt *ui.Painter, r ui.Rect) {
+						pt.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * min(max(frac, 0.02), 1), H: r.H}, p.accent, 2)
+					})
+					ui.Text(c, ago(w)).FontSize(11).TextColor(p.muted)
+					return ago(w)
+				},
+				corner: func() {
+					x := ui.ButtonBase(c.Key("forget")).Label("移除“" + s.Title + "”的记录")
 					x.Children(func() {
 						ui.Text(c, "移除").FontSize(11).TextColor(x.AnimateColor("fg", ternary(x.Hovered(), p.accent, p.faint), quick))
 					})
 					if x.Clicked() {
 						app.lib.Forget(s.ID)
 					}
-				})
+				},
 			}
 		})
 	})
@@ -585,12 +634,12 @@ func (app *App) followsPage(c *ui.Context) {
 		return
 	}
 	ui.Scroll(c.Key("follows")).Grow(1).Padding(4, pagePad, 24).Children(func() {
-		app.grid(c, shows, func(_ int, s Show) string {
+		app.grid(c, shows, func(i int, s Show) cardExtras {
 			if w := app.lib.History[s.ID]; w != nil {
-				return fmt.Sprintf("看到第%d集", w.Episode+1)
+				return cardExtras{badge: fmt.Sprintf("看到第%d集", w.Episode+1)}
 			}
-			return episodesBadge(s)
-		}, nil)
+			return episodesExtras(i, s)
+		})
 	})
 }
 

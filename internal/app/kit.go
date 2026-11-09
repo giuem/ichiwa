@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/plugins/sfsymbols"
@@ -64,6 +65,15 @@ func darkPalette() palette {
 	}
 }
 
+// contrasted is p for a desktop asking for more contrast (Increase Contrast):
+// secondary text and lines stand out clearly on the background.
+func (p palette) contrasted() palette {
+	p.muted = p.text.Alpha(0.85)
+	p.faint = p.text.Alpha(0.7)
+	p.hairline = p.text.Alpha(0.35)
+	return p
+}
+
 // applyPalette makes p the theme's colors, so MyGo's own widgets (the
 // search field, the slider, toasts) match the app.
 func applyPalette(c *ui.Context, p palette) {
@@ -80,6 +90,9 @@ func applyPalette(c *ui.Context, p palette) {
 	}
 	t.Selection = p.accent.Alpha(0.3)
 	t.Focus = p.accent.Alpha(0.6)
+	if c.Preferences().HighContrast {
+		t.Focus = p.accent
+	}
 	t.Radius = 8
 	c.SetTheme(&t)
 }
@@ -100,12 +113,27 @@ func pressable(b ui.Element, rest, hover ui.Color, give float32) ui.Element {
 	return b.AnimatePose(pose, ui.Snappy)
 }
 
+// tooltip is Element.Tooltip for a tip that repeats the element's name,
+// which Tooltip would have screen readers read a second time.
+func tooltip(c *ui.Context, anchor ui.Element, s string) {
+	t := c.Theme()
+	ui.TooltipBase(c, anchor, func(tip ui.Element) {
+		tip.Padding(5, 8).Radius(5).Background(t.Text).TextColor(t.Background).FontSize(t.FontSize-1).
+			Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.2)).
+			AttachTo(anchor, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 6, 0)
+		tip.Children(func() { ui.Text(c, s) })
+	})
+}
+
 // roundButton is a borderless round button, which a soft circle marks
-// under the pointer and which gives a little as it is pressed.
+// under the pointer and which gives a little as it is pressed. label may end in the key that
+// presses it, as "返回 (Esc)": the tooltip shows the key, and screen readers
+// read only the name, being told the key with KeyShortcuts.
 func roundButton(c *ui.Context, size float32, color ui.Color, label string) ui.Element {
-	b := ui.ButtonBase(c).Size(size+16, size+16).Center().Radius(999).Label(label).TextColor(color).FocusRing(false)
+	name, _, _ := strings.Cut(label, " (")
+	b := ui.ButtonBase(c).Size(size+16, size+16).Center().Radius(999).Label(name).TextColor(color)
 	if label != "" {
-		b.Tooltip(label)
+		tooltip(c, b, label)
 	}
 	return pressable(b, ui.Transparent, ui.RGBA(128, 128, 128, 0.16), 0.88)
 }
@@ -126,7 +154,7 @@ func symbolButton(c *ui.Context, symbol string, size float32, color ui.Color, la
 
 // pillButton is a rounded button with an optional icon and a label.
 func pillButton(c *ui.Context, icon *ui.SVG, label string, bg, fg ui.Color) ui.Element {
-	b := ui.ButtonBase(c).Height(34).PaddingX(16).Gap(7).Radius(999).AlignItems(ui.Center).TextColor(fg).FocusRing(false)
+	b := ui.ButtonBase(c).Height(34).PaddingX(16).Gap(7).Radius(999).AlignItems(ui.Center).TextColor(fg)
 	pressable(b, bg, bg.Mix(fg, 0.12), 0.96)
 	b.Children(func() {
 		if icon != nil {
@@ -149,7 +177,8 @@ func (app *App) secondary(c *ui.Context, icon *ui.SVG, label string) ui.Element 
 // chip is a small pill choosing one of several options.
 func (app *App) chip(c *ui.Context, label string, selected bool) ui.Element {
 	p := app.pal
-	b := ui.ButtonBase(c).Height(30).PaddingX(14).Radius(999).Center().FocusRing(false)
+	// The ring goes inside: chips sit at the edges of scrolling rows, which clip.
+	b := ui.ButtonBase(c).Height(30).PaddingX(14).Radius(999).Center().FocusRingOffset(-2)
 	rest, fg := p.surface, p.muted
 	if selected {
 		rest, fg = p.text, p.bg
@@ -164,10 +193,20 @@ func (app *App) chip(c *ui.Context, label string, selected bool) ui.Element {
 	return b
 }
 
+// radio makes b one of a group's choices for assistive technology, inside
+// a choices row.
+func radio(b ui.Element, on bool) ui.Element { return b.Role(ui.RoleRadio).Checked(on) }
+
+// choices is a row of radio buttons, one stop of Tab, the arrows moving
+// among them.
+func choices(c *ui.Context, label string) ui.Element {
+	return ui.Row(c).Role(ui.RoleRadioGroup).Label(label).FocusGroup(ui.Horizontal)
+}
+
 // tab is a text tab with an accent bar under the chosen one.
 func (app *App) tab(c *ui.Context, label string, selected bool) ui.Element {
 	p := app.pal
-	b := ui.ButtonBase(c).PaddingY(4).FocusRing(false)
+	b := ui.ButtonBase(c).PaddingY(4).Role(ui.RoleTab).Label(label).AccessSelected(selected)
 	on := b.AnimateTo("on", boolf(selected), ui.Smooth)
 	color := p.muted
 	if selected || b.Hovered() {

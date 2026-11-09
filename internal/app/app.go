@@ -4,6 +4,7 @@ package app
 
 import (
 	_ "embed"
+	"fmt"
 	"log"
 
 	"hongguo/internal/catalog"
@@ -55,6 +56,10 @@ type App struct {
 
 	// narrowed tells the window gave up the width of the folded panel.
 	narrowed bool
+	// quitting tells the window to really close, not just hide.
+	quitting bool
+	// hideOnLeave hides the window once it has left full screen.
+	hideOnLeave bool
 	// narrowedBy is the width it gave up.
 	narrowedBy int
 	// watch is the player page, over the rest while it is open.
@@ -76,6 +81,9 @@ type App struct {
 	// and sleepAt when the time runs out.
 	sleepMins int
 	sleepAt   time.Time
+
+	// told is the page title screen readers were last told of.
+	told string
 
 	warmed bool // the first pages of the other pages were asked for
 }
@@ -115,6 +123,9 @@ func (app *App) view(c *ui.Context) {
 	} else {
 		app.pal = lightPalette()
 	}
+	if c.Preferences().HighContrast {
+		app.pal = app.pal.contrasted()
+	}
 	applyPalette(c, app.pal)
 	if app.toast != "" {
 		c.Toast(app.toast)
@@ -130,12 +141,12 @@ func (app *App) view(c *ui.Context) {
 	}
 	c.OnShortcut(ui.Cmd, ui.KeyF, func() { app.go2(pageSearch); app.search.focus = true })
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		side := ui.Column(c).Width(sidebarWidth).Shrink(0)
+		side := ui.Column(c).Width(sidebarWidth).Shrink(0).Role(ui.RoleNavigation).Label("主导航")
 		if !c.Vibrancy() {
 			side.Background(app.pal.sidebar)
 		}
 		side.Children(func() { app.sidebar(c) })
-		ui.Column(c.Key("main")).Grow(1).Background(app.pal.bg).Children(func() {
+		ui.Column(c.Key("main")).Grow(1).Background(app.pal.bg).Role(ui.RoleRegion).Label("内容").Children(func() {
 			app.content(c)
 		})
 	})
@@ -171,13 +182,19 @@ func (app *App) sidebar(c *ui.Context) {
 }
 
 func (app *App) navSection(c *ui.Context, title string) {
-	ui.Text(c, title).FontSize(11).FontWeight(600).TextColor(app.pal.faint).Padding(14, 10, 6)
+	ui.Text(c, title).FontSize(11).FontWeight(600).TextColor(app.pal.faint).Padding(14, 10, 6).Role(ui.RoleHeading).Level(2)
 }
 
 func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count int) {
 	p := app.pal
 	selected := app.page == page && app.person == nil
-	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(label)
+	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label(label)
+	if selected {
+		b.Current(ui.CurrentPage)
+	}
+	if count > 0 {
+		b.Description(fmt.Sprintf("%d部", count))
+	}
 	bg := ui.Transparent
 	switch {
 	case selected:
@@ -230,6 +247,19 @@ func (app *App) content(c *ui.Context) {
 	}
 }
 
+// hideWindow takes the window off the screen and leaves the app running.
+// A full screen window leaves full screen first, or its space stays behind
+// empty.
+func (app *App) hideWindow() {
+	if app.win.IsFullScreen() {
+		app.hideOnLeave = true
+		app.win.SetFullScreen(false)
+		return
+	}
+	app.widen()
+	app.win.Hide()
+}
+
 // Run starts the app and returns when it quits.
 func Run() {
 	app := &App{page: pageRecommend, feeds: map[string]*Feed{}}
@@ -262,13 +292,33 @@ func Run() {
 		app.posters = newPosters(cacheDir, app.win.Invalidate)
 		app.setMenu()
 		app.mediaKeys()
-		app.win.OnClose(func(*mygo.CloseEvent) {
+		app.win.OnClose(func(e *mygo.CloseEvent) {
+			if !app.quitting {
+				e.PreventDefault()
+				app.closeWatch()
+				app.lib.Flush()
+				app.hideWindow()
+				return
+			}
 			if app.watch != nil {
 				app.watch.close()
 			}
 			app.widen()
 			app.lib.Flush()
 		})
+		app.win.OnLeaveFullScreen(func() {
+			if app.hideOnLeave {
+				app.hideOnLeave = false
+				app.hideWindow()
+			}
+		})
+		// The Dock icon brings back the window closing hid.
+		mygo.App.OnActivate(func(visible bool) {
+			if !visible && !app.win.IsMinimized() {
+				app.win.Show()
+			}
+		})
+		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { app.quitting = true })
 		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.widen(); app.lib.Close() })
 		// Saves progress now and then, in case the app is killed.
 		go func() {
