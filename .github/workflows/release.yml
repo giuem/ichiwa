@@ -40,7 +40,7 @@ jobs:
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             # The notes are the version's section of CHANGELOG.md.
             awk -v v="${TAG#v}" '
-              /^## / { if (found) exit; found = index($0, v) > 0; next }
+              /^## / { if (found) exit; found = ($0 == "## " v); next }
               found
             ' CHANGELOG.md > notes.md
             if [ -s notes.md ]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi

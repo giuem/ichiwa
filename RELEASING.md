@@ -5,7 +5,7 @@
 ## 发一个版本
 
 1. 确认测试通过：`go test ./...`
-2. 在 [`CHANGELOG.md`](CHANGELOG.md) 顶部加上新版本的一节（`## 0.1.1`）。
+2. 在 [`CHANGELOG.md`](CHANGELOG.md) 顶部加上新版本的一节，标题必须正好是 `## 0.1.1`，否则 release 说明会改用 GitHub 自动生成的内容。
 3. 修改 [`mygo.json`](mygo.json) 里的 `version`。
 4. 提交、打 tag、推送：
 
@@ -22,6 +22,19 @@
    ```sh
    gh release edit v0.1.1 --draft=false --latest
    ```
+
+## 发一个预发布版本
+
+版本号带 `-` 的是预发布版本，例如 `0.2.0-beta.1`。步骤和上面的 1～5 相同（CHANGELOG 的小节写 `## 0.2.0-beta.1`），CI 同样只生成 draft。检查 draft 后这样发布：
+
+```sh
+gh release view v0.2.0-beta.1 --json isDraft,isPrerelease,assets
+gh release edit v0.2.0-beta.1 --draft=false --prerelease
+```
+
+- **必须带 `--prerelease`，不要带 `--latest`**，否则普通用户也会收到这个版本。
+- 普通用户不会收到预发布版本。已装预发布版本的用户会在下一个正式版发布后自动更新，收到后续预发布版本则需要应用调用 `mygo.Updater.SetPrereleases(true)`。
+- 发现问题就发新的版本（`beta.2`），不要覆盖已发布的 tag。
 
 ## 仓库 Secrets
 
