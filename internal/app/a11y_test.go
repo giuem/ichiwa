@@ -74,11 +74,18 @@ func TestPlayerControlsSpeak(t *testing.T) {
 	if a := accessOf(t, tt, ui.RoleButton, "播放速度"); a.Value != "1.5倍" {
 		t.Errorf("the speed reads %q", a.Value)
 	}
-	if a := accessOf(t, tt, ui.RoleSlider, "音量"); a.Value != "50%" {
-		t.Errorf("the volume reads %q", a.Value)
+	if a := accessOf(t, tt, ui.RoleButton, "音量"); a.Value != "50%" || a.Expanded {
+		t.Errorf("the volume button: %+v", a)
 	}
 	if a := accessOf(t, tt, ui.RoleHeading, ""); a.Level != 1 {
 		t.Errorf("the title's level is %d", a.Level)
+	}
+	if err := tt.Click("音量"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleSlider, "音量"); a.Value != "50%" {
+		t.Errorf("the volume reads %q", a.Value)
 	}
 }
 

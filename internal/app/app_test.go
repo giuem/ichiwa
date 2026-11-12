@@ -486,3 +486,30 @@ func testLibrary(t *testing.T) *library.Library {
 	t.Cleanup(lib.Close)
 	return lib
 }
+
+// The speed button opens a list of the speeds; choosing one sets it and
+// closes the list.
+func TestSpeedPicker(t *testing.T) {
+	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
+	app.lib.Speed = 1
+	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
+	tt.Frame()
+	if err := tt.Click("播放速度"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !w.speedOpen || app.lib.Speed != 1 {
+		t.Fatalf("clicked the button: open %v, speed %v", w.speedOpen, app.lib.Speed)
+	}
+	if a, ok := tt.AccessByRole(ui.RoleOption, "1倍"); !ok || !a.Selected {
+		t.Fatalf("the current speed isn't selected: %+v", a)
+	}
+	if err := tt.Click("1.5倍"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if w.speedOpen || app.lib.Speed != 1.5 {
+		t.Fatalf("chose 1.5倍: open %v, speed %v", w.speedOpen, app.lib.Speed)
+	}
+}

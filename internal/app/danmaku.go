@@ -377,8 +377,7 @@ func (w *Watching) toggleDanmaku() {
 func (app *App) danmakuSettings(c *ui.Context, w *Watching, anchor ui.Element) {
 	lib := app.lib
 	ui.PopoverBase(c, anchor, &w.dmOpen, func(panel ui.Element) {
-		panel.Width(300).Padding(14, 18, 18).Gap(16).Radius(14).Background(ui.RGBA(30, 30, 32, 0.97)).
-			Border(1, white.Alpha(0.08)).Shadow(0, 8, 28, 0, ui.RGBA(0, 0, 0, 0.4)).Label("弹幕设置")
+		popPanel(panel, anchor).Width(300).Padding(14, 18, 18).Gap(16).Radius(14).Label("弹幕设置")
 		panel.Children(func() {
 			ui.Row(c).Children(func() {
 				ui.Text(c, "弹幕设置").FontSize(14).Bold().TextColor(white).Grow(1).Role(ui.RoleHeading).Level(2)

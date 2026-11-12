@@ -13,9 +13,8 @@ import (
 	"hongguo/internal/catalog"
 )
 
-var speeds = []float64{1, 1.25, 1.5, 2, 0.75}
-
-// speedSteps are the same speeds in order, for the keys that step them.
+// speedSteps are the speeds to choose from, in order, for the panel and
+// for the keys that step them.
 var speedSteps = []float64{0.75, 1, 1.25, 1.5, 2}
 
 // boostRate is the speed while the right arrow is held, and boostDelay how
@@ -121,10 +120,12 @@ type Watching struct {
 	halt   bool // the episode ended and the page waits rather than go on
 	drawer bool // the episodes are open over the picture
 
-	side   ui.ScrollState
-	dm     *danmaku // the comments of the episode playing
-	dmOpen bool     // the danmaku settings show
-	told   string   // what screen readers were last told is playing
+	side      ui.ScrollState
+	dm        *danmaku // the comments of the episode playing
+	dmOpen    bool     // the danmaku settings show
+	speedOpen bool     // the speed picker shows
+	volOpen   bool     // the volume panel shows
+	told      string   // what screen readers were last told is playing
 
 	// seasons are the drama's seasons when it has more than one, the one
 	// showing among them; switchSeason opens another at an episode, -1
@@ -1015,7 +1016,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 	hover := stage.Hovered()
 	still := w.pointerStill(stage, playing)
 	// The keyboard's focus on a control keeps the controls in view.
-	shown := chromeShown(playing, hover, full, still) || time.Since(w.keyAt) < keyLinger || w.drawer || w.dmOpen || stage.FocusWithin()
+	shown := chromeShown(playing, hover, full, still) || time.Since(w.keyAt) < keyLinger || w.drawer || w.dmOpen || w.speedOpen || w.volOpen || stage.FocusWithin()
 	if !shown {
 		stage.Cursor(ui.CursorNone)
 	}
@@ -1089,7 +1090,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 		if w.panel && !full && app.panelRoom(c) {
 			stageWidth -= panelWidth
 		}
-		narrow, tiny := stageWidth < 560, stageWidth < 460
+		tiny := stageWidth < 460
 		ui.Column(c).Padding(40, 18, 12).Gap(4).Gradient(ui.Transparent, ui.RGBA(0, 0, 0, 0.78), 180).Opacity(show).Children(func() {
 			app.progress(c, w)
 			ui.Row(c).Gap(2).Children(func() {
@@ -1117,7 +1118,9 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				ui.Spacer(c)
 				app.speedButton(c, w)
 				if !tiny {
-					app.volume(c, w, !narrow)
+					app.volume(c, w)
+				} else {
+					w.volOpen = false
 				}
 				if symbolButton(c, "text.bubble.fill", 14, ternary(app.lib.Danmaku, app.pal.accent, white), "弹幕 (D)").KeyShortcuts(0, ui.KeyD).Role(ui.RoleToggleButton).Checked(app.lib.Danmaku).Clicked() {
 					w.toggleDanmaku()
@@ -1275,54 +1278,101 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 
 func (app *App) speedButton(c *ui.Context, w *Watching) {
 	speed := app.lib.Speed
-	b := ui.ButtonBase(c.Key("speed")).Height(28).PaddingX(10).Radius(999).Center().Label("播放速度").
-		Value(fmt.Sprintf("%g倍", speed))
+	b := ui.ButtonBase(c.Key("speed")).Height(30).MinWidth(30).PaddingX(8).Radius(999).Center().Label("播放速度").
+		Value(fmt.Sprintf("%g倍", speed)).Expanded(w.speedOpen)
 	tooltip(c, b, "播放速度 ([ / ])")
 	pressable(b, ui.Transparent, white.Alpha(0.14), 0.92)
 	b.Children(func() {
-		ui.Text(c, fmt.Sprintf("%gx", speed)).FontSize(12.5).Bold().TextColor(white)
+		ui.Text(c, fmt.Sprintf("%gx", speed)).FontSize(12.5).Bold().TextColor(ternary(w.speedOpen, app.pal.accent, white))
 	})
 	if b.Clicked() {
-		next := speeds[0]
-		for i, s := range speeds {
-			if s == speed {
-				next = speeds[(i+1)%len(speeds)]
-			}
-		}
-		w.setSpeed(next)
+		w.speedOpen = !w.speedOpen
 	}
+	app.speedPicker(c, w, b)
 }
 
-func (app *App) volume(c *ui.Context, w *Watching, slider bool) {
+// speedPicker is the list of speeds that opens from anchor, the fastest on
+// top; choosing one closes it.
+func (app *App) speedPicker(c *ui.Context, w *Watching, anchor ui.Element) {
+	ui.PopoverBase(c, anchor, &w.speedOpen, func(panel ui.Element) {
+		popPanel(panel, anchor).Width(96).Padding(6).Gap(2).Radius(12).Role(ui.RoleListBox).Label("播放速度")
+		panel.Children(func() {
+			for i := len(speedSteps) - 1; i >= 0; i-- {
+				s := speedSteps[i]
+				on := s == app.lib.Speed
+				o := ui.ButtonBase(c.Key(i)).Height(30).Radius(8).Center().Role(ui.RoleOption).
+					Label(fmt.Sprintf("%g倍", s)).Checked(on)
+				pressable(o, ternary(on, white.Alpha(0.1), ui.Transparent), white.Alpha(0.14), 0.96)
+				o.Children(func() {
+					ui.Text(c, fmt.Sprintf("%gx", s)).FontSize(13).FontWeight(ternary(on, 700, 500)).
+						TextColor(ternary(on, app.pal.accent, white))
+				})
+				if o.Clicked() {
+					w.setSpeed(s)
+					w.speedOpen = false
+				}
+			}
+		})
+	})
+}
+
+// volume is the speaker button, which opens a panel of the volume: how
+// loud it is, a slider and a button to mute.
+func (app *App) volume(c *ui.Context, w *Watching) {
 	vol := app.lib.Volume
-	icon := "speaker.wave.2.fill"
+	b := symbolButton(c.Key("volume"), volumeSymbol(vol), 14, ternary(w.volOpen, app.pal.accent, white), "音量 (M 静音)").
+		Value(fmt.Sprintf("%d%%", int(vol*100+0.5))).Expanded(w.volOpen)
+	if b.Clicked() {
+		w.volOpen = !w.volOpen
+	}
+	ui.PopoverBase(c, b, &w.volOpen, func(panel ui.Element) {
+		popPanel(panel, b).Width(52).Padding(12, 0, 8).Gap(8).Radius(12).AlignItems(ui.Center).Label("音量")
+		panel.Children(func() {
+			ui.Text(c, fmt.Sprintf("%d", int(app.lib.Volume*100+0.5))).FontSize(12.5).FontWeight(600).TextColor(white)
+			s := ui.SliderBase(c.Key("slider"), &app.lib.Volume, 0, 1).Vertical().Width(24).Height(110).PaddingY(7).
+				Label("音量").Value(fmt.Sprintf("%d%%", int(app.lib.Volume*100+0.5)))
+			if s.Changed() {
+				app.lib.MarkDirty()
+				if p := w.player; p != nil {
+					p.SetVolume(app.lib.Volume)
+				}
+			}
+			hot := s.AnimateTo("hot", boolf(s.Hovered() || s.Dragging()), ui.Smooth)
+			at := float32(app.lib.Volume)
+			s.Draw(func(pt *ui.Painter, r ui.Rect) {
+				const knob = 14
+				x := r.X + r.W/2
+				y0, h := r.Y+knob/2, r.H-knob
+				pt.Fill(ui.Rect{X: x - 2, Y: r.Y, W: 4, H: r.H}, white.Alpha(0.18), 2)
+				fill := knob/2 + h*at
+				pt.Fill(ui.Rect{X: x - 2, Y: r.Y + r.H - fill, W: 4, H: fill}, white.Alpha(0.85), 2)
+				k := knob + 2*hot
+				ky := y0 + h*(1-at)
+				pt.Fill(ui.Rect{X: x - k/2, Y: ky - k/2, W: k, H: k}, white, k/2)
+			})
+			if symbolButton(c.Key("mute"), volumeSymbol(app.lib.Volume), 13, white.Alpha(0.85), ternary(app.lib.Volume > 0, "静音", "取消静音")).Clicked() {
+				w.toggleMute()
+			}
+		})
+	})
+}
+
+// volumeSymbol is the speaker that shows how loud vol is.
+func volumeSymbol(vol float64) string {
 	switch {
 	case vol == 0:
-		icon = "speaker.slash.fill"
+		return "speaker.slash.fill"
 	case vol < 0.5:
-		icon = "speaker.wave.1.fill"
+		return "speaker.wave.1.fill"
 	}
-	if symbolButton(c, icon, 14, white, ternary(vol > 0, "静音 (M)", "取消静音 (M)")).KeyShortcuts(0, ui.KeyM).Clicked() {
-		w.toggleMute()
-	}
-	if !slider {
-		return
-	}
-	s := ui.SliderBase(c.Key("volume"), &app.lib.Volume, 0, 1).Width(84).Height(18).Label("音量").
-		Value(fmt.Sprintf("%d%%", int(app.lib.Volume*100+0.5)))
-	if s.Changed() {
-		app.lib.MarkDirty()
-		if p := w.player; p != nil {
-			p.SetVolume(app.lib.Volume)
-		}
-	}
-	at := float32(app.lib.Volume)
-	s.Draw(func(pt *ui.Painter, r ui.Rect) {
-		y := r.Y + r.H/2 - 1.5
-		pt.Fill(ui.Rect{X: r.X, Y: y, W: r.W, H: 3}, white.Alpha(0.25), 1.5)
-		pt.Fill(ui.Rect{X: r.X, Y: y, W: r.W * at, H: 3}, white, 1.5)
-		pt.Fill(ui.Rect{X: r.X + r.W*at - 5, Y: r.Y + r.H/2 - 5, W: 10, H: 10}, white, 5)
-	})
+	return "speaker.wave.2.fill"
+}
+
+// popPanel gives a panel of the player's controls their look and centers
+// it a little above anchor, the button that opens it.
+func popPanel(panel, anchor ui.Element) ui.Element {
+	return panel.AttachTo(anchor, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 8, 0).
+		Background(ui.RGBA(30, 30, 32, 0.97)).Border(1, white.Alpha(0.08)).Shadow(0, 8, 28, 0, ui.RGBA(0, 0, 0, 0.4))
 }
 
 // spokenTime is a time as screen readers should say it.
