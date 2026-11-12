@@ -2,7 +2,7 @@
 
 红果短剧 includes the following software. Each is distributed under its own license, reproduced below.
 
-## github.com/beilunyang/openhongguo v0.2.0
+## github.com/beilunyang/openhongguo v0.2.1-0.20261112015315-015a388112ee
 
 License: Apache-2.0
 
