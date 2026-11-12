@@ -158,10 +158,6 @@ func (app *App) sidebar(c *ui.Context) {
 	p := app.pal
 	top := max(c.TitleBar().Height, 28) + 10
 	ui.Column(c).Fill().Padding(top, 12, 14).Gap(2).DragWindow().Children(func() {
-		ui.Row(c).Padding(2, 8, 12).Gap(10).Children(func() {
-			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
-			ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
-		})
 		app.navSection(c, "发现")
 		app.navItem(c, iconHome, "推荐", pageRecommend, 0)
 		app.navItem(c, iconFilm, "真人剧", pageLive, 0)
@@ -173,6 +169,10 @@ func (app *App) sidebar(c *ui.Context) {
 		app.navItem(c, iconClock, "继续观看", pageHistory, len(app.lib.History))
 		app.navItem(c, iconHeart, "追剧", pageFollows, len(app.lib.Follows))
 		ui.Spacer(c)
+		ui.Row(c).Padding(0, 8, 6).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
+			ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
+		})
 		if v := mygo.App.Version(); v != "" {
 			ui.Text(c, "v"+v).FontSize(10.5).TextColor(p.faint).Padding(0, 10)
 		}
