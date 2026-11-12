@@ -121,8 +121,10 @@ type Watching struct {
 	halt   bool // the episode ended and the page waits rather than go on
 	drawer bool // the episodes are open over the picture
 
-	side ui.ScrollState
-	told string // what screen readers were last told is playing
+	side   ui.ScrollState
+	dm     *danmaku // the comments of the episode playing
+	dmOpen bool     // the danmaku settings show
+	told   string   // what screen readers were last told is playing
 
 	// seasons are the drama's seasons when it has more than one, the one
 	// showing among them; switchSeason opens another at an episode, -1
@@ -213,6 +215,7 @@ func (app *App) closeWatch() {
 }
 
 func (w *Watching) stopPlayer() {
+	w.dropDanmaku()
 	if w.stop != nil {
 		close(w.stop)
 		w.stop = nil
@@ -893,6 +896,7 @@ func (app *App) watchView(c *ui.Context) {
 	}
 	c.OnShortcut(0, ui.KeyE, func() { w.toggleEpisodes(width, full) })
 	c.OnShortcut(0, ui.KeyA, w.toggleAutoplay)
+	c.OnShortcut(0, ui.KeyD, w.toggleDanmaku)
 	c.OnShortcut(0, ui.KeyV, w.toggleMini)
 	c.OnShortcut(0, ui.KeyM, w.toggleMute)
 	c.OnShortcut(0, ui.KeyMinus, func() { w.nudgeVolume(-0.1) })
@@ -930,6 +934,8 @@ func (app *App) watchView(c *ui.Context) {
 			w.saveProgress()
 		}
 	}
+
+	w.syncDanmaku()
 
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		app.stage(c, w, playing, full)
@@ -1009,7 +1015,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 	hover := stage.Hovered()
 	still := w.pointerStill(stage, playing)
 	// The keyboard's focus on a control keeps the controls in view.
-	shown := chromeShown(playing, hover, full, still) || time.Since(w.keyAt) < keyLinger || w.drawer || stage.FocusWithin()
+	shown := chromeShown(playing, hover, full, still) || time.Since(w.keyAt) < keyLinger || w.drawer || w.dmOpen || stage.FocusWithin()
 	if !shown {
 		stage.Cursor(ui.CursorNone)
 	}
@@ -1035,6 +1041,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 			if w.player != nil {
 				ui.Video(c, w.player).Fill().Fit(ui.Contain)
 			}
+			app.danmakuLayer(c, w)
 			if w.player == nil || !w.player.Ready() {
 				if bmp := app.posters.Get(w.show.Cover); bmp != nil {
 					ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Opacity(0.3).Blur(40)
@@ -1112,6 +1119,18 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				if !tiny {
 					app.volume(c, w, !narrow)
 				}
+				if symbolButton(c, "text.bubble.fill", 14, ternary(app.lib.Danmaku, app.pal.accent, white), "弹幕 (D)").KeyShortcuts(0, ui.KeyD).Role(ui.RoleToggleButton).Checked(app.lib.Danmaku).Clicked() {
+					w.toggleDanmaku()
+				}
+				if app.lib.Danmaku && !tiny {
+					sb := symbolButton(c.Key("dm-settings"), "slider.horizontal.3", 14, ternary(w.dmOpen, app.pal.accent, white), "弹幕设置").Expanded(w.dmOpen)
+					if sb.Clicked() {
+						w.dmOpen = !w.dmOpen
+					}
+					app.danmakuSettings(c, w, sb)
+				} else {
+					w.dmOpen = false
+				}
 				if drawerFits(width, full) && w.detail != nil && symbolButton(c, "list.number", 14, ternary(w.drawer, app.pal.accent, white), "选集 (E)").KeyShortcuts(0, ui.KeyE).Clicked() {
 					w.toggleEpisodes(width, full)
 				}
@@ -1153,6 +1172,9 @@ func (app *App) playerMenu(w *Watching, full bool) func(m *ui.Menu) {
 	return func(m *ui.Menu) {
 		if m.Item("自动连播").Checked(app.lib.Autoplay).Trailing("A").Chosen() {
 			w.toggleAutoplay()
+		}
+		if m.Item("弹幕").Checked(app.lib.Danmaku).Trailing("D").Chosen() {
+			w.toggleDanmaku()
 		}
 		sleep := m.Submenu("定时停止", func(m *ui.Menu) {
 			for _, o := range sleepOptions {

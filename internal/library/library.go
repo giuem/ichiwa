@@ -37,6 +37,15 @@ type Library struct {
 	Page     string
 	OnTop    bool // the player page keeps the window above others
 	Autoplay bool // an episode ending starts the next
+	Danmaku  bool // comments fly over the video
+
+	// How the comments show: their opacity, from 0.1 to 1, and the steps
+	// of the danmaku settings for their speed, the room they take and the
+	// size of their text, ResetDanmaku's when not set.
+	DanmakuOpacity float64
+	DanmakuSpeed   int
+	DanmakuArea    int
+	DanmakuSize    int
 
 	db       *sqlite.DB // nil when the database could not be opened
 	order    []string   // followed IDs, latest first
@@ -78,9 +87,11 @@ func Load(dir string) *Library {
 		Volume:   1,
 		Speed:    1,
 		Autoplay: true,
+		Danmaku:  true,
 		followed: map[string]int64{},
 		watched:  map[string]bool{},
 	}
+	l.ResetDanmaku()
 	if err := l.open(dir); err != nil {
 		log.Printf("library: %v; nothing will be saved", err)
 		if l.db != nil {
@@ -223,6 +234,18 @@ func (l *Library) read(ctx context.Context) error {
 			l.OnTop = value == "1"
 		case "autoplay":
 			l.Autoplay = value == "1"
+		case "danmaku":
+			l.Danmaku = value == "1"
+		case "danmaku_opacity":
+			if f, err := strconv.ParseFloat(value, 64); err == nil {
+				l.DanmakuOpacity = f
+			}
+		case "danmaku_speed":
+			l.DanmakuSpeed, _ = strconv.Atoi(value)
+		case "danmaku_area":
+			l.DanmakuArea, _ = strconv.Atoi(value)
+		case "danmaku_size":
+			l.DanmakuSize, _ = strconv.Atoi(value)
 		}
 	}
 	return nil
@@ -238,6 +261,18 @@ func (l *Library) write(stmts ...sqlite.Statement) bool {
 		return false
 	}
 	return true
+}
+
+// ResetDanmaku sets the danmaku settings back to their defaults: opaque,
+// and the middle step of each other.
+func (l *Library) ResetDanmaku() {
+	l.DanmakuOpacity, l.DanmakuSpeed, l.DanmakuArea, l.DanmakuSize = 1, 2, 2, 2
+	l.dirty = true
+}
+
+// DanmakuDefault tells the danmaku settings are their defaults.
+func (l *Library) DanmakuDefault() bool {
+	return l.DanmakuOpacity == 1 && l.DanmakuSpeed == 2 && l.DanmakuArea == 2 && l.DanmakuSize == 2
 }
 
 // MarkDirty notes a change to the settings, which Flush saves.
@@ -258,6 +293,11 @@ func (l *Library) Flush() {
 			settingStatement("page", l.Page),
 			settingStatement("on_top", onTopValue(l.OnTop)),
 			settingStatement("autoplay", onTopValue(l.Autoplay)),
+			settingStatement("danmaku", onTopValue(l.Danmaku)),
+			settingStatement("danmaku_opacity", formatFloat(l.DanmakuOpacity)),
+			settingStatement("danmaku_speed", strconv.Itoa(l.DanmakuSpeed)),
+			settingStatement("danmaku_area", strconv.Itoa(l.DanmakuArea)),
+			settingStatement("danmaku_size", strconv.Itoa(l.DanmakuSize)),
 		)
 	}
 	if len(stmts) > 0 && l.write(stmts...) {
