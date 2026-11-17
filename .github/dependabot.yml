@@ -1,0 +1,16 @@
+# Weekly updates of the Go modules, in one pull request, and monthly ones
+# of the workflows' actions. openhongguo has no releases and is followed
+# by hand: Dependabot only offers tagged versions.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

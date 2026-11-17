@@ -11,14 +11,20 @@ on:
 permissions:
   contents: write # the draft release and the uploads to it
 
+# One release at a time: a tag pushed again waits rather than uploads over
+# a build still running.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-latest
     env:
       HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Check the tag
