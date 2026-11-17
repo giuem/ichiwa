@@ -46,3 +46,39 @@ func TestFeedEmptyEndsAtOnce(t *testing.T) {
 		t.Fatalf("an empty end: %+v", f)
 	}
 }
+
+// A feed's first items are kept on disk; the next launch shows them, and
+// the first page goes before them, the rest of them staying after it.
+func TestFeedCache(t *testing.T) {
+	app := &App{feeds: map[string]*Feed{}, cacheDir: t.TempDir()}
+	f := app.feed(pageRecommend)
+	if f.stale || len(f.items) != 0 {
+		t.Fatalf("a first launch has nothing kept: %+v", f)
+	}
+	f.take(feedPage{items: []Show{{ID: "a"}, {ID: "b"}, {ID: "c"}}})
+	app.saveFeeds(true)
+	if f.changed {
+		t.Fatal("saved, yet changed")
+	}
+
+	app = &App{feeds: map[string]*Feed{}, cacheDir: app.cacheDir}
+	f = app.feed(pageRecommend)
+	if !f.stale || len(f.items) != 3 {
+		t.Fatalf("not kept: %+v", f)
+	}
+	app.saveFeeds(true) // nothing new: the kept items stay
+	fresh, added := f.take(feedPage{items: []Show{{ID: "d"}, {ID: "b"}}})
+	if !fresh || f.stale || len(added) != 4 {
+		t.Fatalf("fresh = %v, added = %v", fresh, added)
+	}
+	var ids string
+	for _, s := range f.items {
+		ids += s.ID
+	}
+	if ids != "dbac" {
+		t.Fatalf("items = %s", ids)
+	}
+	if f := (&App{feeds: map[string]*Feed{}, cacheDir: app.cacheDir}).feed(pageRank); f.cache != "" {
+		t.Fatal("only the channels are kept")
+	}
+}

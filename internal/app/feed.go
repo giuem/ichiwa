@@ -1,6 +1,11 @@
 package app
 
 import (
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -34,6 +39,13 @@ type Feed struct {
 	scroll  ui.ScrollState
 	gen     int // bumped by reset, so results of earlier loads are dropped
 	stalls  int // pages in a row that brought nothing new
+
+	// cache is the file that keeps the first items of the feed for the
+	// next launch, empty for a feed not kept. stale tells the items came
+	// from it, and changed that the items it keeps changed since saved.
+	cache   string
+	stale   bool
+	changed bool
 }
 
 func newFeed(fetch func(cursor string) (feedPage, error)) *Feed {
@@ -42,7 +54,7 @@ func newFeed(fetch func(cursor string) (feedPage, error)) *Feed {
 
 // reset empties the feed, keeping where it loads from.
 func (f *Feed) reset() {
-	*f = Feed{fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1}
+	*f = Feed{fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache}
 }
 
 func (f *Feed) add(items []Show) {
@@ -54,8 +66,28 @@ func (f *Feed) add(items []Show) {
 			continue
 		}
 		f.seen[s.ID] = true
+		if len(f.items) < feedCacheSize {
+			f.changed = true
+		}
 		f.items = append(f.items, s)
 	}
+}
+
+// take adds a page to f and returns whether it brought anything new and
+// the items to fill. The first page after items of the cache goes before
+// them, and they stay after it, so the grid doesn't shrink as it comes.
+func (f *Feed) take(p feedPage) (fresh bool, added []Show) {
+	if f.stale {
+		cached := f.items
+		f.items, f.seen, f.stale = nil, nil, false
+		f.add(p.items)
+		fresh = len(f.items) > 0
+		f.add(cached)
+		return fresh, f.items
+	}
+	before := len(f.items)
+	f.add(p.items)
+	return len(f.items) > before, f.items[before:]
 }
 
 // loadMore loads the next page of f, unless one is loading or f ended.
@@ -78,13 +110,12 @@ func (app *App) loadMore(f *Feed) {
 			f.err = errText(err)
 			return
 		}
-		before := len(f.items)
-		f.add(p.items)
-		f.more = f.step(p, len(f.items) > before)
+		fresh, added := f.take(p)
+		f.more = f.step(p, fresh)
 		if f.onPage != nil {
 			f.onPage(p)
 		}
-		app.fill(f, f.items[before:])
+		app.fill(f, added)
 		app.warm()
 	})
 }
@@ -140,6 +171,7 @@ func (app *App) fill(f *Feed, fresh []Show) {
 		for i, s := range f.items {
 			if d, ok := byID[s.ID]; ok {
 				f.items[i] = d
+				f.changed = f.changed || i < feedCacheSize
 			}
 		}
 	})
@@ -174,9 +206,81 @@ func (app *App) feed(channel string) *Feed {
 			items, next, more, err := app.be.Discover(channel, cursor)
 			return feedPage{items: items, cursor: next, more: more}, err
 		})
+		if name := feedCacheNames[channel]; name != "" && app.cacheDir != "" {
+			f.cache = filepath.Join(app.cacheDir, "feeds", name+".json")
+			f.items = loadFeedCache(f.cache)
+			f.stale = len(f.items) > 0
+		}
 		app.feeds[channel] = f
 	}
 	return f
+}
+
+// The channels whose first items are kept for the next launch, which
+// shows them at once and then what comes, and their files.
+var feedCacheNames = map[string]string{pageRecommend: "recommend", pageLive: "live", pageComic: "comic"}
+
+// feedCacheSize is how many items of a channel are kept: a few screens.
+const feedCacheSize = 48
+
+func loadFeedCache(path string) []Show {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var items []Show
+	if err := json.Unmarshal(data, &items); err != nil {
+		log.Printf("feeds: %s is unreadable: %v", path, err)
+		return nil
+	}
+	return items
+}
+
+// saveFeeds writes the first items of the channels that changed, on a
+// goroutine unless wait.
+func (app *App) saveFeeds(wait bool) {
+	type job struct {
+		path  string
+		items []Show
+	}
+	var jobs []job
+	for _, f := range app.feeds {
+		if f.cache == "" || f.stale || !f.changed || len(f.items) == 0 {
+			continue
+		}
+		f.changed = false
+		jobs = append(jobs, job{f.cache, slices.Clone(f.items[:min(len(f.items), feedCacheSize)])})
+	}
+	if len(jobs) == 0 {
+		return
+	}
+	write := func() {
+		for _, j := range jobs {
+			if err := writeFeedCache(j.path, j.items); err != nil {
+				log.Printf("feeds: saving %s: %v", j.path, err)
+			}
+		}
+	}
+	if wait {
+		write()
+	} else {
+		go write()
+	}
+}
+
+func writeFeedCache(path string, items []Show) error {
+	data, err := json.Marshal(items)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // warm asks once for the first pages of the other pages, so they show at

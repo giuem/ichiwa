@@ -41,8 +41,10 @@ type App struct {
 	be      *catalog.Backend
 	posters *Posters
 	lib     *library.Library
-	initErr string
-	pal     palette
+	// cacheDir keeps what the app may lose: covers, episodes, feeds.
+	cacheDir string
+	initErr  string
+	pal      palette
 
 	page  string
 	feeds map[string]*Feed
@@ -271,6 +273,7 @@ func Run() {
 	mygo.App.WhenReady(func() {
 		dataDir, _ := mygo.App.Path(mygo.PathUserData)
 		cacheDir, _ := mygo.App.Path(mygo.PathCache)
+		app.cacheDir = cacheDir
 		app.lib = library.Load(dataDir)
 		switch app.lib.Page {
 		case pageRecommend, pageLive, pageComic, pageRank, pageFilter, pageSearch, pageHistory, pageFollows:
@@ -325,11 +328,11 @@ func Run() {
 			}
 		})
 		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { app.quitting = true })
-		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.widen(); app.lib.Close() })
+		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.widen(); app.lib.Close(); app.saveFeeds(true) })
 		// Saves progress now and then, in case the app is killed.
 		go func() {
 			for range time.Tick(10 * time.Second) {
-				mygo.RunOnMain(app.lib.Flush)
+				mygo.RunOnMain(func() { app.lib.Flush(); app.saveFeeds(false) })
 			}
 		}()
 		go func() {
