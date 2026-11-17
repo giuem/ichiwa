@@ -742,7 +742,7 @@ func (w *Watching) step(d int) {
 	}
 	i := w.index + d
 	if i >= 0 && i < len(w.detail.Episodes) {
-		w.play(i, 0)
+		w.play(i, w.app.lib.EpisodeStart(w.show.ID, i))
 	} else if d > 0 {
 		w.toNextSeason()
 	}
@@ -780,10 +780,7 @@ func (w *Watching) resumeAt() float64 {
 	if w.player != nil {
 		return w.player.Position().Seconds()
 	}
-	if rec := w.app.lib.History[w.show.ID]; rec != nil && rec.Episode == w.index {
-		return rec.Position
-	}
-	return 0
+	return w.app.lib.EpisodeStart(w.show.ID, w.index)
 }
 
 func (w *Watching) setVolume(v float64) {
@@ -1535,18 +1532,27 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 				})
 			})
 		}
-		watched := -1
-		if rec := app.lib.History[w.show.ID]; rec != nil {
-			watched = rec.Episode
-		}
 		playing := w.player != nil && w.player.Playing()
 		from := w.epRange * episodesPerRange
 		ui.Grid(c.Key(w.epRange)).Columns(6).Gap(8).Children(func() {
 			for i := from; i < min(from+episodesPerRange, len(eps)); i++ {
 				ep := eps[i]
 				current := i == w.index
-				cell := ui.ButtonBase(c.Key(ep.ID)).Height(36).Radius(9).Center().Label(fmt.Sprintf("第%d集", i+1)).
-					Description(ternary(!ep.Playable, "暂不可播放", ternary(i < watched, "已看过", "")))
+				done := app.lib.Watched(w.show.ID, i)
+				part := 0.0
+				if e := app.lib.Episode(w.show.ID, i); e != nil && !done && !current {
+					part = e.Fraction()
+				}
+				note := ""
+				switch {
+				case !ep.Playable:
+					note = "暂不可播放"
+				case done:
+					note = "已看完"
+				case part > 0:
+					note = fmt.Sprintf("看到%d%%", int(part*100))
+				}
+				cell := ui.ButtonBase(c.Key(ep.ID)).Height(36).Radius(9).Center().Clip().Label(fmt.Sprintf("第%d集", i+1)).Description(note)
 				if current {
 					cell.Current(ui.CurrentItem)
 				}
@@ -1563,18 +1569,26 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 						n.TextColor(white)
 					case !ep.Playable:
 						n.TextColor(p.faint)
-					case i < watched:
+					case done:
 						n.TextColor(p.muted)
 					default:
 						n.TextColor(p.text)
 					}
-					if !ep.Playable {
+					switch {
+					case !ep.Playable:
 						sfIcon(c, "lock.fill").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
+					case done && !current:
+						sfIcon(c, "checkmark").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
+					case part > 0.02:
+						// How far it got, along the cell's bottom.
+						ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(2.5).Draw(func(pt *ui.Painter, r ui.Rect) {
+							pt.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * float32(part), H: r.H}, p.accent, 0)
+						})
 					}
 				})
 				if cell.Clicked() && !current {
 					w.drawer = false
-					w.play(i, 0)
+					w.play(i, app.lib.EpisodeStart(w.show.ID, i))
 				}
 			}
 		})

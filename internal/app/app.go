@@ -53,6 +53,8 @@ type App struct {
 	filter filterState
 	search searchState
 	shelf  ui.ScrollState
+	// historyFilter is the history page's filter, in historyFilters.
+	historyFilter int
 
 	// person is an actor's page, over the sidebar's page while it is open.
 	person *personState

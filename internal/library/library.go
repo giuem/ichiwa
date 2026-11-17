@@ -26,6 +26,33 @@ type Record struct {
 	Updated  time.Time    `json:"updated"`
 }
 
+// EpisodeRecord is how far one episode was watched. Finished stays set once
+// the episode was watched to its end, watching it again or not.
+type EpisodeRecord struct {
+	Position float64
+	Duration float64
+	Finished bool
+}
+
+// Fraction is how much of the episode was watched, from 0 to 1.
+func (e *EpisodeRecord) Fraction() float64 {
+	if e.Finished {
+		return 1
+	}
+	if e.Duration <= 0 {
+		return 0
+	}
+	return min(max(e.Position/e.Duration, 0), 1)
+}
+
+// finishedWithin is how close to its end an episode counts as watched.
+const finishedWithin = 3 // seconds
+
+type epKey struct {
+	show    string
+	episode int
+}
+
 // Library keeps the watch history and the dramas followed. It holds them in
 // memory and writes changes through to library.db. It is used on the main
 // thread only.
@@ -47,16 +74,22 @@ type Library struct {
 	DanmakuArea    int
 	DanmakuSize    int
 
+	// Episodes is how far each episode watched got, by drama and then by
+	// episode index.
+	Episodes map[string]map[int]*EpisodeRecord
+
 	db       *sqlite.DB // nil when the database could not be opened
 	order    []string   // followed IDs, latest first
 	followed map[string]int64
 	watched  map[string]bool // history records not saved yet
+	epsDirty map[epKey]bool  // episode records not saved yet
 	dirty    bool            // settings not saved yet
 }
 
-const schema = 1
+const schema = 2
 
-var migrations = []string{
+// migrations[v] takes the database from version v to v+1.
+var migrations = [][]string{{
 	`CREATE TABLE history (
 		show_id  TEXT PRIMARY KEY,
 		show     TEXT NOT NULL, -- catalog.Show as JSON
@@ -75,7 +108,23 @@ var migrations = []string{
 		value TEXT NOT NULL
 	)`,
 	`PRAGMA user_version = 1`,
-}
+}, {
+	`CREATE TABLE episodes (
+		show_id  TEXT NOT NULL,
+		episode  INTEGER NOT NULL, -- index into the episodes, from 0
+		position REAL NOT NULL,
+		duration REAL NOT NULL,
+		finished INTEGER NOT NULL,
+		updated  INTEGER NOT NULL, -- Unix milliseconds
+		PRIMARY KEY (show_id, episode)
+	)`,
+	// The history knew only the episode each drama got to: those before
+	// it count as watched, as they did.
+	`INSERT INTO episodes (show_id, episode, position, duration, finished, updated)
+		WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 9999)
+		SELECT history.show_id, n.i, 0, 0, 1, history.updated FROM history JOIN n ON n.i < history.episode`,
+	`PRAGMA user_version = 2`,
+}}
 
 // Load opens the library in dir, creating it, and importing library.json
 // from earlier versions, when needed. If the database cannot be opened it
@@ -84,6 +133,8 @@ func Load(dir string) *Library {
 	l := &Library{
 		History:  map[string]*Record{},
 		Follows:  map[string]catalog.Show{},
+		Episodes: map[string]map[int]*EpisodeRecord{},
+		epsDirty: map[epKey]bool{},
 		Volume:   1,
 		Speed:    1,
 		Autoplay: true,
@@ -119,23 +170,28 @@ func (l *Library) open(dir string) error {
 	if err != nil {
 		return err
 	}
-	switch version := rows.Values[0][0].(int64); {
-	case version == 0:
-		stmts := make([]sqlite.Statement, 0, len(migrations))
-		for _, sql := range migrations {
-			stmts = append(stmts, sqlite.Statement{SQL: sql})
+	version := int(asInt(rows.Values[0][0]))
+	if version > schema {
+		return fmt.Errorf("library.db is from a newer version (%d)", version)
+	}
+	if version < schema {
+		var stmts []sqlite.Statement
+		for v := version; v < schema; v++ {
+			for _, sql := range migrations[v] {
+				stmts = append(stmts, sqlite.Statement{SQL: sql})
+			}
+			if v == 0 { // into the tables of version 1
+				stmts = append(stmts, importJSON(filepath.Join(dir, "library.json"))...)
+			}
 		}
-		stmts = append(stmts, importJSON(filepath.Join(dir, "library.json"))...)
 		if _, err := db.Transaction(ctx, stmts); err != nil {
-			return fmt.Errorf("creating the database: %w", err)
+			return fmt.Errorf("updating the database from version %d: %w", version, err)
 		}
 		// Kept, renamed, so it is not imported again.
 		old := filepath.Join(dir, "library.json")
-		if _, err := os.Stat(old); err == nil {
+		if _, err := os.Stat(old); err == nil && version == 0 {
 			_ = os.Rename(old, old+".bak")
 		}
-	case version > schema:
-		return fmt.Errorf("library.db is from a newer version (%d)", version)
 	}
 	return l.read(ctx)
 }
@@ -213,6 +269,13 @@ func (l *Library) read(ctx context.Context) error {
 			l.order = append(l.order, id)
 		}
 	}
+	rows, err = l.db.Query(ctx, "SELECT show_id, episode, position, duration, finished FROM episodes")
+	if err != nil {
+		return err
+	}
+	for _, v := range rows.Values {
+		l.episode(asString(v[0]), int(asInt(v[1]))).set(asFloat(v[2]), asFloat(v[3]), asInt(v[4]) != 0)
+	}
 	rows, err = l.db.Query(ctx, "SELECT key, value FROM settings")
 	if err != nil {
 		return err
@@ -286,6 +349,11 @@ func (l *Library) Flush() {
 			stmts = append(stmts, historyStatement(id, r))
 		}
 	}
+	for k := range l.epsDirty {
+		if e := l.Episodes[k.show][k.episode]; e != nil {
+			stmts = append(stmts, episodeStatement(k, e))
+		}
+	}
 	if l.dirty {
 		stmts = append(stmts,
 			settingStatement("volume", formatFloat(l.Volume)),
@@ -302,6 +370,7 @@ func (l *Library) Flush() {
 	}
 	if len(stmts) > 0 && l.write(stmts...) {
 		clear(l.watched)
+		clear(l.epsDirty)
 		l.dirty = false
 	}
 }
@@ -324,6 +393,61 @@ func (l *Library) Progress(s catalog.Show, episode int, pos, dur float64) {
 	}
 	w.Show, w.Episode, w.Position, w.Duration, w.Updated = s, episode, pos, dur, time.Now()
 	l.watched[s.ID] = true
+	e := l.episode(s.ID, episode)
+	if dur > 0 && dur == dur { // a duration not known yet keeps the one known
+		e.set(finite(pos), dur, e.Finished)
+	} else if !e.Finished || pos > 0 {
+		e.Position = finite(pos)
+	}
+	l.epsDirty[epKey{s.ID, episode}] = true
+}
+
+// episode returns the record of an episode, making it.
+func (l *Library) episode(id string, i int) *EpisodeRecord {
+	m := l.Episodes[id]
+	if m == nil {
+		m = map[int]*EpisodeRecord{}
+		l.Episodes[id] = m
+	}
+	e := m[i]
+	if e == nil {
+		e = &EpisodeRecord{}
+		m[i] = e
+	}
+	return e
+}
+
+// set takes in a position, finishing the episode near its end.
+func (e *EpisodeRecord) set(pos, dur float64, finished bool) {
+	e.Position, e.Duration = pos, dur
+	e.Finished = finished || dur > 0 && pos >= dur-finishedWithin
+}
+
+// Episode returns how far episode i of a drama was watched, nil if it
+// was not.
+func (l *Library) Episode(id string, i int) *EpisodeRecord { return l.Episodes[id][i] }
+
+// Watched reports whether episode i of a drama was watched to its end.
+func (l *Library) Watched(id string, i int) bool {
+	e := l.Episode(id, i)
+	return e != nil && e.Finished
+}
+
+// EpisodeStart is where to play episode i of a drama from: where it was
+// left, or its start when it was watched to its end or barely begun.
+func (l *Library) EpisodeStart(id string, i int) float64 {
+	e := l.Episode(id, i)
+	if e == nil || e.Position < 5 || e.Duration > 0 && e.Position >= e.Duration-finishedWithin {
+		return 0
+	}
+	return e.Position
+}
+
+// Done reports whether the record's drama was watched to its last
+// episode's end.
+func (r *Record) Done() bool {
+	last := r.Show.Episodes - 1
+	return r.Show.Episodes > 0 && r.Episode >= last && r.Duration > 0 && r.Position >= r.Duration-finishedWithin
 }
 
 // Recent returns the history, latest first.
@@ -340,7 +464,12 @@ func (l *Library) Recent() []*Record {
 func (l *Library) Forget(id string) {
 	delete(l.History, id)
 	delete(l.watched, id)
-	l.write(sqlite.Statement{SQL: "DELETE FROM history WHERE show_id = ?", Args: []any{id}})
+	for i := range l.Episodes[id] {
+		delete(l.epsDirty, epKey{id, i})
+	}
+	delete(l.Episodes, id)
+	l.write(sqlite.Statement{SQL: "DELETE FROM history WHERE show_id = ?", Args: []any{id}},
+		sqlite.Statement{SQL: "DELETE FROM episodes WHERE show_id = ?", Args: []any{id}})
 }
 
 // Following reports whether a drama is followed.
@@ -393,6 +522,20 @@ func historyStatement(id string, r *Record) sqlite.Statement {
 			position = excluded.position, duration = excluded.duration, updated = excluded.updated`,
 		Args: []any{id, string(show), r.Episode, finite(r.Position), finite(r.Duration), r.Updated.UnixMilli()},
 	}
+}
+
+func episodeStatement(k epKey, e *EpisodeRecord) sqlite.Statement {
+	return sqlite.Statement{
+		SQL:  "INSERT OR REPLACE INTO episodes (show_id, episode, position, duration, finished, updated) VALUES (?, ?, ?, ?, ?, ?)",
+		Args: []any{k.show, k.episode, finite(e.Position), finite(e.Duration), boolInt(e.Finished), time.Now().UnixMilli()},
+	}
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func followStatement(s catalog.Show, stamp int64) sqlite.Statement {

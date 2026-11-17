@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"hongguo/internal/catalog"
+
+	"github.com/egoist/mygo/plugins/sqlite"
 )
 
 // Following a drama and following it again leaves it unfollowed, and the
@@ -88,5 +90,58 @@ func TestImportJSON(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "library.json.bak")); err != nil {
 		t.Fatal("library.json was not set aside")
+	}
+}
+
+// Each episode keeps how far it got; one watched to its end stays watched
+// when watched again, and plays again from its start.
+func TestEpisodes(t *testing.T) {
+	dir := t.TempDir()
+	l := Load(dir)
+	s := catalog.Show{ID: "a", Episodes: 3}
+	l.Progress(s, 0, 0, 0)
+	l.Progress(s, 0, 59, 60)
+	l.Progress(s, 1, 30, 60)
+	l.Progress(s, 0, 0, 0) // again, from the start
+	l.Close()
+
+	l = Load(dir)
+	defer l.Close()
+	if !l.Watched("a", 0) || l.Watched("a", 1) || l.Watched("a", 2) {
+		t.Fatalf("Episodes = %+v", l.Episodes["a"])
+	}
+	if got := l.Episode("a", 1).Fraction(); got != 0.5 {
+		t.Fatalf("Fraction = %v", got)
+	}
+	if l.EpisodeStart("a", 0) != 0 || l.EpisodeStart("a", 1) != 30 || l.EpisodeStart("a", 2) != 0 {
+		t.Fatal("EpisodeStart")
+	}
+	if l.History["a"].Done() {
+		t.Fatal("not done")
+	}
+	l.Progress(s, 2, 60, 60)
+	if !l.History["a"].Done() {
+		t.Fatal("done")
+	}
+	l.Forget("a")
+	if l.Episode("a", 2) != nil {
+		t.Fatal("Forget keeps episodes")
+	}
+}
+
+// A library of version 1 counts the episodes before the one each drama got
+// to as watched.
+func TestMigrateEpisodes(t *testing.T) {
+	dir := t.TempDir()
+	l := Load(dir)
+	l.Progress(catalog.Show{ID: "a"}, 2, 10, 60)
+	l.Flush()
+	l.write(sqlite.Statement{SQL: "DROP TABLE episodes"}, sqlite.Statement{SQL: "PRAGMA user_version = 1"})
+	l.Close()
+
+	l = Load(dir)
+	defer l.Close()
+	if !l.Watched("a", 0) || !l.Watched("a", 1) || l.Watched("a", 2) || l.Episode("a", 2) != nil {
+		t.Fatalf("Episodes = %+v", l.Episodes["a"])
 	}
 }

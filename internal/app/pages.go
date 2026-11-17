@@ -580,12 +580,71 @@ func (app *App) hotBoards(c *ui.Context) {
 
 // ---- Library ----
 
+// The filters of the history page: everything, the dramas being watched,
+// and those watched to the end.
+var historyFilters = []string{"全部", "在看", "看完"}
+
+// historyShown is the records the history filter f shows, latest first.
+func historyShown(recent []*Record, f int) []*Record {
+	if f == 0 {
+		return recent
+	}
+	out := make([]*Record, 0, len(recent))
+	for _, r := range recent {
+		if r.Done() == (f == 2) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// watchBadge says where a drama watched got to, over its cover.
+func watchBadge(r *Record) string {
+	if r.Done() {
+		return "已看完"
+	}
+	return fmt.Sprintf("看到第%d集", r.Episode+1)
+}
+
+// watchBar draws how much of a drama was watched, under a card's title.
+func (app *App) watchBar(c *ui.Context, r *Record) {
+	p := app.pal
+	frac := float32(0)
+	if n := r.Show.Episodes; n > 0 {
+		done := float64(r.Episode)
+		if r.Duration > 0 {
+			done += min(r.Position/r.Duration, 1)
+		}
+		frac = float32(done / float64(n))
+	}
+	ui.Box(c).Height(3).Radius(2).Background(p.hairline).Margin(2, 0).Draw(func(pt *ui.Painter, rc ui.Rect) {
+		pt.Fill(ui.Rect{X: rc.X, Y: rc.Y, W: rc.W * min(max(frac, 0.02), 1), H: rc.H}, p.accent, 2)
+	})
+}
+
 func (app *App) historyPage(c *ui.Context) {
 	p := app.pal
-	recent := app.lib.Recent()
+	all := app.lib.Recent()
 	app.header(c, "继续观看", "从上次停下的地方接着看", nil)
-	if len(recent) == 0 {
+	if len(all) == 0 {
 		app.centered(c, iconClock, "还没有观看记录", "看过的短剧会出现在这里", nil)
+		return
+	}
+	ui.Row(c).Padding(0, pagePad, 18).Children(func() {
+		choices(c, "筛选观看记录").Gap(8).Children(func() {
+			for i, name := range historyFilters {
+				label := fmt.Sprintf("%s %d", name, len(historyShown(all, i)))
+				on := i == app.historyFilter
+				if radio(app.chip(c.Key(i), label, on), on).Label(name).Clicked() && !on {
+					app.historyFilter = i
+					app.shelf = ui.ScrollState{}
+				}
+			}
+		})
+	})
+	recent := historyShown(all, app.historyFilter)
+	if len(recent) == 0 {
+		app.centered(c, iconClock, ternary(app.historyFilter == 2, "还没有看完的剧", "没有在看的剧"), "", nil)
 		return
 	}
 	shows := make([]Show, len(recent))
@@ -596,19 +655,9 @@ func (app *App) historyPage(c *ui.Context) {
 		app.grid(c, shows, func(i int, s Show) cardExtras {
 			w := recent[i]
 			return cardExtras{
-				badge: fmt.Sprintf("看到第%d集", w.Episode+1),
+				badge: watchBadge(w),
 				under: func() string {
-					frac := float32(0)
-					if s.Episodes > 0 {
-						done := float64(w.Episode)
-						if w.Duration > 0 {
-							done += w.Position / w.Duration
-						}
-						frac = float32(done / float64(s.Episodes))
-					}
-					ui.Box(c).Height(3).Radius(2).Background(p.hairline).Margin(2, 0).Draw(func(pt *ui.Painter, r ui.Rect) {
-						pt.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * min(max(frac, 0.02), 1), H: r.H}, p.accent, 2)
-					})
+					app.watchBar(c, w)
 					ui.Text(c, ago(w)).FontSize(11).TextColor(p.muted)
 					return ago(w)
 				},
@@ -635,10 +684,18 @@ func (app *App) followsPage(c *ui.Context) {
 	}
 	ui.Scroll(c.Key("follows")).Grow(1).Padding(4, pagePad, 24).Children(func() {
 		app.grid(c, shows, func(i int, s Show) cardExtras {
-			if w := app.lib.History[s.ID]; w != nil {
-				return cardExtras{badge: fmt.Sprintf("看到第%d集", w.Episode+1)}
+			w := app.lib.History[s.ID]
+			if w == nil {
+				return cardExtras{badge: episodesBadge(s), under: func() string {
+					ui.Text(c, "还没看").FontSize(11).TextColor(app.pal.muted)
+					return "还没看"
+				}}
 			}
-			return episodesExtras(i, s)
+			return cardExtras{badge: watchBadge(w), under: func() string {
+				app.watchBar(c, w)
+				ui.Text(c, ago(w)).FontSize(11).TextColor(app.pal.muted)
+				return ago(w)
+			}}
 		})
 	})
 }

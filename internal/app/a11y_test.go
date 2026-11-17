@@ -38,8 +38,11 @@ func TestCardsAreButtons(t *testing.T) {
 	if forget.Bounds.X < card.Bounds.X || forget.Bounds.Y+forget.Bounds.H > card.Bounds.Y+card.Bounds.H+1 {
 		t.Errorf("the corner control %+v is outside the card %+v", forget.Bounds, card.Bounds)
 	}
-	tt.Key(0, ui.KeyTab)
-	tt.Frame()
+	// The filters are one stop of Tab, then the card.
+	for range 2 {
+		tt.Key(0, ui.KeyTab)
+		tt.Frame()
+	}
 	if !tt.Focused("长安") {
 		t.Error("Tab doesn't reach the card")
 	}
@@ -135,5 +138,43 @@ func TestContrastedPalette(t *testing.T) {
 	}
 	if h.muted == p.muted || h.faint == p.faint || h.hairline == p.hairline {
 		t.Error("the secondary colors didn't")
+	}
+}
+
+// The history filters show the dramas being watched or those watched to
+// the end, and each card says which.
+func TestHistoryFilter(t *testing.T) {
+	app := a11yApp(t)
+	app.lib.Progress(Show{ID: "a", Title: "长安", Episodes: 3}, 1, 30, 100)
+	app.lib.Progress(Show{ID: "b", Title: "洛阳", Episodes: 3}, 2, 100, 100)
+	tt := ui.NewTester(app.historyPage, 900, 600)
+	tt.Frame()
+	if err := tt.Click("看完"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleButton, "长安"); ok {
+		t.Error("a drama being watched shows under 看完")
+	}
+	if a := accessOf(t, tt, ui.RoleButton, "洛阳"); !strings.Contains(a.Description, "已看完") {
+		t.Errorf("the card says %q", a.Description)
+	}
+}
+
+// The episodes say which were watched to the end and how far others got.
+func TestEpisodesSayProgress(t *testing.T) {
+	app := a11yApp(t)
+	s := Show{ID: "a", Title: "长安", Episodes: 3}
+	app.lib.Progress(s, 0, 60, 60)
+	app.lib.Progress(s, 1, 15, 60)
+	eps := []model.Episode{{ID: "e0", Playable: true}, {ID: "e1", Playable: true}, {ID: "e2", Playable: true}}
+	w := &Watching{app: app, show: s, index: 2, detail: &Detail{Show: s, Episodes: eps}}
+	tt := ui.NewTester(func(c *ui.Context) { app.episodes(c, w) }, 400, 400)
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleButton, "第1集"); a.Description != "已看完" {
+		t.Errorf("episode 1 says %q", a.Description)
+	}
+	if a := accessOf(t, tt, ui.RoleButton, "第2集"); a.Description != "看到25%" {
+		t.Errorf("episode 2 says %q", a.Description)
 	}
 }
