@@ -16,7 +16,12 @@
   "macos": {
     "minimumSystemVersion": "13.0",
     "infoPlist": {
-      "CFBundleDisplayName": "一集",
+      "CFBundleDevelopmentRegion": "en",
+      "CFBundleLocalizations": [
+        "en",
+        "zh-Hans",
+        "zh-Hant"
+      ],
       "LSApplicationCategoryType": "public.app-category.entertainment"
     }
   },
