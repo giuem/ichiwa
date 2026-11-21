@@ -26,7 +26,7 @@ func (app *App) setMenu() {
 			}
 		}
 	}
-	name := "红果短剧"
+	name := "一集"
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 		{Label: name, Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleAbout, Label: "关于" + name},
@@ -111,7 +111,7 @@ func (w *Watching) nowPlaying() {
 	info := mygo.NowPlayingInfo{
 		Title:    w.show.Title,
 		Artist:   "第" + itoa(w.index+1) + "集",
-		Album:    "红果短剧",
+		Album:    "一集",
 		Duration: w.player.Duration(),
 		Position: w.player.Position(),
 		Rate:     w.app.lib.Speed,

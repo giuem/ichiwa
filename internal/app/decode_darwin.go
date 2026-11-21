@@ -3,7 +3,7 @@ package app
 import (
 	"image"
 
-	"hongguo/internal/mac"
+	"ichiwa/internal/mac"
 )
 
 func decodePoster(data []byte, maxWidth int) (*image.RGBA, error) {

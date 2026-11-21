@@ -12,8 +12,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"hongguo/internal/catalog"
-	"hongguo/internal/library"
+	"ichiwa/internal/catalog"
+	"ichiwa/internal/library"
 )
 
 // danmakuStep is a step of a danmaku setting: what it says, and what it

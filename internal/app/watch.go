@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
 
-	"hongguo/internal/catalog"
+	"ichiwa/internal/catalog"
 )
 
 // speedSteps are the speeds to choose from, in order, for the panel and

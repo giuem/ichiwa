@@ -7,7 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"hongguo/internal/catalog"
+	"ichiwa/internal/catalog"
 )
 
 // pages adapts a catalog call returning a page of shows to a feed's fetch.

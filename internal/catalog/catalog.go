@@ -21,7 +21,7 @@ import (
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 
-	"hongguo/internal/cenc"
+	"ichiwa/internal/cenc"
 )
 
 // Show is one drama as the grids and lists show it.

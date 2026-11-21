@@ -1,4 +1,4 @@
-module hongguo
+module ichiwa
 
 go 1.27.3
 

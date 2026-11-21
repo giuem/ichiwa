@@ -6,14 +6,14 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
-
-	"hongguo/internal/catalog"
-	"hongguo/internal/library"
 	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"ichiwa/internal/catalog"
+	"ichiwa/internal/library"
 )
 
 const sidebarWidth = 220
@@ -175,7 +175,7 @@ func (app *App) sidebar(c *ui.Context) {
 		ui.Spacer(c)
 		ui.Row(c).Padding(0, 8, 6).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
-			ui.Text(c, "红果短剧").FontSize(15).Bold().TextColor(p.text)
+			ui.Text(c, "一集").FontSize(15).Bold().TextColor(p.text)
 		})
 		if v := mygo.App.Version(); v != "" {
 			ui.Text(c, "v"+v).FontSize(10.5).TextColor(p.faint).Padding(0, 10)
@@ -287,7 +287,7 @@ func Run() {
 		}
 		app.be = be
 		app.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:                "红果短剧",
+			Title:                "一集",
 			Width:                1280,
 			Height:               820,
 			MinWidth:             minWindowWidth,

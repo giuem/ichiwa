@@ -7,8 +7,8 @@ import (
 	"github.com/egoist/mygo/ui"
 	"time"
 
-	"hongguo/internal/catalog"
-	"hongguo/internal/library"
+	"ichiwa/internal/catalog"
+	"ichiwa/internal/library"
 )
 
 func fixedWidth([]ui.Span) float32 { return 100 }

@@ -8,13 +8,13 @@ import (
 
 	"github.com/egoist/mygo"
 
-	"hongguo/internal/catalog"
+	"ichiwa/internal/catalog"
 )
 
 // tour walks the pages and saves a screenshot of each into the directory
-// HONGGUO_TOUR names, then quits. It is for checking the interface.
+// ICHIWA_TOUR names, then quits. It is for checking the interface.
 func (app *App) tour() {
-	dir := os.Getenv("HONGGUO_TOUR")
+	dir := os.Getenv("ICHIWA_TOUR")
 	if dir == "" {
 		return
 	}

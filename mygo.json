@@ -1,7 +1,7 @@
 {
-  "name": "Hongguo",
-  "slug": "hongguo",
-  "identifier": "dev.giuem.hongguo",
+  "name": "Ichiwa",
+  "slug": "ichiwa",
+  "identifier": "com.giuem.ichiwa",
   "version": "0.0.0-dev",
   "copyright": "© 2026 giuem",
   "license": "AGPL-3.0-only",
@@ -12,22 +12,22 @@
   "out": "build",
   "updates": {
     "publicKey": "+xPSkQXzHcJ9dSxuMzHRdmb8rPJx40gLl4uJ9X9TlUU=",
-    "github": "giuem/hongguo-mygo"
+    "github": "giuem/ichiwa"
   },
   "macos": {
     "minimumSystemVersion": "13.0",
     "infoPlist": {
-      "CFBundleDisplayName": "红果短剧",
+      "CFBundleDisplayName": "一集",
       "LSApplicationCategoryType": "public.app-category.entertainment"
     }
   },
   "windows": {
-    "displayName": "红果短剧",
-    "installDirName": "Hongguo"
+    "displayName": "一集",
+    "installDirName": "Ichiwa"
   },
   "linux": {
     "webview": false,
-    "comment": "红果短剧桌面客户端",
+    "comment": "原生、无广告的短剧客户端",
     "categories": [
       "AudioVideo",
       "Video"

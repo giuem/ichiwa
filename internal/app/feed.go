@@ -10,7 +10,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"hongguo/internal/catalog"
+	"ichiwa/internal/catalog"
 )
 
 // feedPage is one page of a feed as its source returns it.

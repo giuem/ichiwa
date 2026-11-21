@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hongguo/internal/catalog"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,6 +14,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/plugins/sqlite"
+
+	"ichiwa/internal/catalog"
 )
 
 // Record is where the user is in a drama.

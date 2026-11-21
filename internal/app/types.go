@@ -1,8 +1,8 @@
 package app
 
 import (
-	"hongguo/internal/catalog"
-	"hongguo/internal/library"
+	"ichiwa/internal/catalog"
+	"ichiwa/internal/library"
 )
 
 // The catalog's and the library's types, by the names the views use.

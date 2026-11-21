@@ -1,6 +1,6 @@
 # 发布
 
-红果短剧常常发布，有东西可发就发，一天几次也可以。没人手动构建：推送到 `main` 的人写好说明、跑一条命令，[`.github/workflows/release.yml`](.github/workflows/release.yml) 完成其余的，已安装的应用随后自动更新。
+一集常常发布，有东西可发就发，一天几次也可以。没人手动构建：推送到 `main` 的人写好说明、跑一条命令，[`.github/workflows/release.yml`](.github/workflows/release.yml) 完成其余的，已安装的应用随后自动更新。
 
 ## 什么时候发布
 

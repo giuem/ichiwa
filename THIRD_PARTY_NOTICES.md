@@ -1,6 +1,6 @@
 # Third-party notices
 
-红果短剧 includes the following software. Each is distributed under its own license, reproduced below.
+一集 includes the following software. Each is distributed under its own license, reproduced below.
 
 ## github.com/beilunyang/openhongguo v0.2.1-0.20261112015315-015a388112ee
 
