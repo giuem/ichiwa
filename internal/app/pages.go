@@ -367,7 +367,8 @@ func (app *App) rankPage(c *ui.Context) {
 				}
 			}
 		})
-		if r.content < len(contents) {
+		// The actor ranking stopped listing boards (2026-11-17).
+		if r.content < len(contents) && len(contents[r.content].Boards) > 0 {
 			boards := contents[r.content].Boards
 			choices(c, "榜单").Gap(8).Wrap().Children(func() {
 				for j, b := range boards {
