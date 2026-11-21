@@ -1,21 +1,29 @@
-# Pushing a tag such as v0.2.0 builds the macOS apps (Apple silicon and
-# Intel), signs their updates, and uploads them to a draft release of the
-# tag, which is published by hand: installed apps update to it then.
+# 推送形如 v2026.1107.1 的 tag 就是发布：构建 macOS 应用（Apple 芯片和
+# Intel），给更新包签名，上传到这个 tag 的 release 并发布，已安装的应用
+# 随即更新。tag 由 scripts/release.sh tag -push 带着 CHANGELOG 的提交一起
+# 推送；RELEASING.md 说明整个流程。
 name: Release
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 要重新发布的 tag（v2026.1107.1）
+        required: true
 
 permissions:
-  contents: write # the draft release and the uploads to it
+  contents: write # release 和上传
 
-# One release at a time: a tag pushed again waits rather than uploads over
-# a build still running.
+# 一次只发一个：重推的 tag 等着，不会盖掉还在构建的那个。
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
@@ -24,24 +32,27 @@ jobs:
       HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.TAG }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Check the tag
-        id: tag
+      - name: Check the tag and stamp the version
+        # 版本号不写在源码里：mygo.json 的 version 是 0.0.0-dev，发布时
+        # 按 tag 写进去。
         run: |
-          tag="v$(jq -r .version mygo.json)"
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
-            echo "::error::$GITHUB_REF_NAME doesn't match the version of mygo.json, $tag"
+          version="${TAG#v}"
+          if ! echo "$version" | grep -Eq '^[0-9]{4}\.[1-9][0-9]{2,3}\.[1-9][0-9]*$'; then
+            echo "::error::$TAG isn't a release version, YYYY.MDD.N (v2026.1107.1)"
             exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          jq --arg v "$version" '.version = $v' mygo.json > mygo.json.new
+          mv mygo.json.new mygo.json
       - name: Test
         run: go test ./...
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             # The notes are the version's section of CHANGELOG.md.
@@ -84,3 +95,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: go tool mygo build -platform darwin/arm64,darwin/amd64 -upload
+      - name: Publish the release
+        run: gh release edit "$TAG" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ github.token }}

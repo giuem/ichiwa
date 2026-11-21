@@ -1,40 +1,36 @@
 # 发布
 
-发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 完成。已安装的应用会在 release 发布后自动更新。
+红果短剧常常发布，有东西可发就发，一天几次也可以。没人手动构建：推送到 `main` 的人写好说明、跑一条命令，[`.github/workflows/release.yml`](.github/workflows/release.yml) 完成其余的，已安装的应用随后自动更新。
+
+## 什么时候发布
+
+推送到 `main` 的人决定这次推送是不是一次发布：
+
+- **发布**：改动会改变用户得到的东西，比如修复、新功能、行为或界面文字的变化、安装包里的内容。
+- **不发布**：只改文档、测试、CI、开发工具，或者不改变行为的重构。这些改动搭下一次发布的便车。
+- 拿不准就发布，发布很便宜。
+
+## 版本号
+
+版本号是 `YYYY.MDD.N`：发布当天的日期（Asia/Shanghai；月份不补零，日期两位）加当天的第几次发布（从 1 开始）。例如 `2026.1107.1`、`2026.1107.2`、`2027.105.1`。每一段都是没有前导零的整数，所以是合法的 semver，也适合 macOS 的 bundle 版本。tag 是 `v<版本>`。
+
+版本号从不手写，也不写在源码里：`mygo.json` 里的 `version` 永远是 `0.0.0-dev`，发布时 workflow 按 tag 写进去。从源码构建（`mygo run`、`go build`）显示 `0.0.0-dev`，不会检查更新。`scripts/release.sh next` 打印下一个版本号，会数本地和 origin 上今天已有的 tag。
 
 ## 发一个版本
 
-1. 确认测试通过：`go test ./...`
-2. 在 [`CHANGELOG.md`](CHANGELOG.md) 顶部加上新版本的一节，标题必须正好是 `## 0.1.1`，否则 release 说明会改用 GitHub 自动生成的内容。
-3. 修改 [`mygo.json`](mygo.json) 里的 `version`。
-4. 提交、打 tag、推送：
+1. 把说明写在 [`CHANGELOG.md`](CHANGELOG.md) 顶部的 `## Unreleased` 下（没有这个标题就加上；之前几次推送的说明可能已经在那里等着）。写给用户看的短句：对他们来说变了什么，而不是怎么改的。
+2. 测试通过（`go test ./...`），在最新的 `main` 上、没有别的待提交内容时运行：
 
    ```sh
-   git commit -am "0.1.1"
-   git tag v0.1.1
-   git push origin main v0.1.1
+   scripts/release.sh tag -push
    ```
 
-   tag 必须和 `mygo.json` 的版本一致，否则 workflow 会停下。
-5. 等 workflow 跑完（`gh run watch`）。它会建一个 **draft** release，以 CHANGELOG 里这一版的内容作为说明，上传 Apple 芯片和 Intel 两个架构的 `.dmg`、更新包和清单。
-6. 检查 draft，然后发布：
+   它把 `## Unreleased` 改成新版本号，提交（提交说明就是版本号），打 tag `v<版本>`，再用 `git push --atomic` 把 `main` 和 tag 一起推送。`-n` 只显示会做什么；`-trailer "Co-Authored-By: …"` 给提交说明加一行结尾。`CHANGELOG.md` 里 Unreleased 下没有内容、工作区不干净、或者 `main` 落后于 `origin/main` 时它会拒绝。推送被拒绝时它会撤销提交和 tag，`git pull --rebase origin main` 之后再来一次。
+3. tag 启动 release workflow：检查 tag、跑测试、建 release（说明是 CHANGELOG 里这一版的内容）、构建 Apple 芯片和 Intel 两个架构的 `.dmg`、更新包和清单，上传并**自动发布**为最新版本。用 `gh run watch` 看进度。
 
-   ```sh
-   gh release edit v0.1.1 --draft=false --latest
-   ```
+不推送的改动不碰 `## Unreleased`。不要改已发布版本的标题，不要移动或复用 tag，也不要绕过脚本手推 `v*` tag。
 
-## 发一个预发布版本
-
-版本号带 `-` 的是预发布版本，例如 `0.2.0-beta.1`。步骤和上面的 1～5 相同（CHANGELOG 的小节写 `## 0.2.0-beta.1`），CI 同样只生成 draft。检查 draft 后这样发布：
-
-```sh
-gh release view v0.2.0-beta.1 --json isDraft,isPrerelease,assets
-gh release edit v0.2.0-beta.1 --draft=false --prerelease
-```
-
-- **必须带 `--prerelease`，不要带 `--latest`**，否则普通用户也会收到这个版本。
-- 普通用户不会收到预发布版本。已装预发布版本的用户会在下一个正式版发布后自动更新，收到后续预发布版本则需要应用调用 `mygo.Updater.SetPrereleases(true)`。
-- 发现问题就发新的版本（`beta.2`），不要覆盖已发布的 tag。
+workflow 失败后，修好问题再用 `gh workflow run release.yml -f tag=v<版本>` 重新发布同一个 tag（它用这个 tag 指向的提交构建，所以 CHANGELOG 必须已经在那个提交里）；如果问题要改代码，就发一个新的版本。
 
 ## 仓库 Secrets
 
@@ -61,3 +57,5 @@ gh release edit v0.2.0-beta.1 --draft=false --prerelease
 ## 注意
 
 自动更新从 `updates.github` 指向的仓库读取最新 release，**这个仓库必须是公开的**。
+
+以前的版本是 `0.2.0-beta.N`（带 `-` 的是预发布版本，普通用户收不到）。改成日期版本号后每个版本都是正式版本，所有用户都会收到，所以发布前要像对待正式版本一样确认。
