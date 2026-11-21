@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>一集 · 原生、无广告的短剧桌面客户端</title>
+  <meta name="description" content="在电脑上看短剧，没有广告，也没有弹窗。原生应用，纯 Go、GPU 绘制，安装包只有 6–7 MB。">
+  <meta name="theme-color" content="#fbfaf9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0b0d" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="一集">
+  <meta property="og:description" content="原生、无广告的短剧桌面客户端。打开就是剧，再看一集。">
+  <meta property="og:image" content="icon.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="nav" aria-label="站点">
+    <a class="brand" href="#"><img src="icon.png" width="28" height="28" alt="">一集</a>
+    <div class="nav-links">
+      <a href="https://github.com/giuem/ichiwa/issues">反馈</a>
+      <a class="gh" href="https://github.com/giuem/ichiwa" aria-label="GitHub">
+        <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+    </div>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <h1>再看一集。</h1>
+      <p class="lede">原生的短剧桌面客户端。<br>没有广告，没有弹窗，不需要账号。</p>
+
+      <div class="download" id="download">
+        <button class="button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="download-menu">
+          下载 macOS 版
+          <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="menu" id="download-menu" role="menu" hidden>
+          <a role="menuitem" data-asset="arm64.dmg" href="https://github.com/giuem/ichiwa/releases/latest"><b>Apple 芯片</b><span>M1 及更新</span></a>
+          <a role="menuitem" data-asset="amd64.dmg" href="https://github.com/giuem/ichiwa/releases/latest"><b>Intel 芯片</b><span>.dmg</span></a>
+          <a role="menuitem" href="#install"><b>用终端安装</b><span>自动识别</span></a>
+        </div>
+      </div>
+      <p class="fine">免费、开源 · macOS 13+<span id="version"></span> · Windows 和 Linux 开发中</p>
+    </header>
+
+    <figure class="showcase">
+      <div class="app" id="app" tabindex="0" role="region" aria-roledescription="演示" aria-label="一集的播放页，可以操作：空格播放或暂停，D 开关弹幕，左右方向键快退快进，按住右方向键 2 倍速，上下方向键换集，F 全屏">
+        <div class="stage" id="stage">
+          <div class="picture" id="picture">
+            <div class="video" id="video">
+              <div class="scene" id="scene"><i class="sky"></i><i class="sun"></i><i class="city"></i><i class="hill"></i><i class="hill two"></i></div>
+              <p class="subtitle" id="subtitle"></p>
+            </div>
+          </div>
+          <div class="dm-layer" id="dm-layer" aria-hidden="true"></div>
+          <div class="boost" id="boost" hidden><svg viewBox="0 0 24 24"><path d="M2 6.5v11a1 1 0 0 0 1.6.8L11 13v4.5a1 1 0 0 0 1.6.8l8-5.5a1 1 0 0 0 0-1.6l-8-5.5A1 1 0 0 0 11 6.5V11L3.6 5.7A1 1 0 0 0 2 6.5z"/></svg>2x 快进中</div>
+          <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+          <div class="titlebar chrome">
+            <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+            <button class="rb" type="button" data-tip="返回 (Esc)" data-tip-below aria-label="返回"><svg viewBox="0 0 24 24" class="stroke"><path d="M15 5l-7 7 7 7"/></svg></button>
+            <div class="titles">
+              <b>今夜再看一集</b>
+              <span id="ep-line">第13集 · 共80集</span>
+            </div>
+            <button class="rb" type="button" id="panel-btn" data-tip="选集面板" data-tip-below aria-label="选集面板" aria-expanded="true"><svg viewBox="0 0 24 24" class="stroke thin"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M15 5v14"/></svg></button>
+          </div>
+
+          <div class="controls chrome">
+            <div class="seek" id="seek" role="slider" tabindex="0" aria-label="进度" aria-valuemin="0" aria-valuemax="125" aria-valuenow="72">
+              <div class="track"><i id="seek-fill"></i></div>
+              <span class="knob" id="seek-knob"></span>
+              <span class="seek-tip" id="seek-tip">00:00</span>
+            </div>
+            <div class="row">
+              <button class="rb wide-only" type="button" id="prev" data-tip="上一集 (↑)" aria-label="上一集"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="2.6" height="14" rx="1"/><path d="M19 6.3v11.4a1 1 0 0 1-1.56.83l-8.1-5.47a1.3 1.3 0 0 1 0-2.16l8.1-5.43A1 1 0 0 1 19 6.3z"/></svg></button>
+              <button class="rb big" type="button" id="play" data-tip="播放 (空格)" aria-label="播放">
+                <svg viewBox="0 0 24 24" class="pp play"><path d="M6.5 4.8v14.4a1 1 0 0 0 1.53.85l11.5-7.2a1 1 0 0 0 0-1.7L8.03 3.95A1 1 0 0 0 6.5 4.8z"/></svg>
+                <svg viewBox="0 0 24 24" class="pp pause"><rect x="5.5" y="4" width="4.5" height="16" rx="1.2"/><rect x="14" y="4" width="4.5" height="16" rx="1.2"/></svg>
+              </button>
+              <button class="rb wide-only" type="button" id="next" data-tip="下一集 (↓)" aria-label="下一集"><svg viewBox="0 0 24 24"><rect x="16.4" y="5" width="2.6" height="14" rx="1"/><path d="M5 6.3v11.4a1 1 0 0 0 1.56.83l8.1-5.47a1.3 1.3 0 0 0 0-2.16l-8.1-5.43A1 1 0 0 0 5 6.3z"/></svg></button>
+              <span class="time"><b id="time-now">01:12</b> <span id="time-all">/ 02:05</span></span>
+              <span class="spacer"></span>
+              <div class="pop-anchor">
+                <button class="speed" type="button" id="speed" data-tip="播放速度 ([ / ])" aria-label="播放速度" aria-expanded="false">1x</button>
+                <div class="pop speed-pop" id="speed-pop" role="listbox" aria-label="播放速度" hidden></div>
+              </div>
+              <button class="rb wide-only" type="button" id="mute" data-tip="音量 (M 静音)" aria-label="音量">
+                <svg viewBox="0 0 24 24" class="vol-on"><path d="M3 9.6v4.8a1 1 0 0 0 1 1h3.2l4.3 3.6a.9.9 0 0 0 1.5-.7V5.7a.9.9 0 0 0-1.5-.7L7.2 8.6H4a1 1 0 0 0-1 1z"/><path class="wave" d="M15.8 8.7a4.6 4.6 0 0 1 0 6.6M18.4 6.1a8.3 8.3 0 0 1 0 11.8"/></svg>
+                <svg viewBox="0 0 24 24" class="vol-off"><path d="M3 9.6v4.8a1 1 0 0 0 1 1h3.2l4.3 3.6a.9.9 0 0 0 1.5-.7V5.7a.9.9 0 0 0-1.5-.7L7.2 8.6H4a1 1 0 0 0-1 1z"/><path class="wave" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+              </button>
+              <button class="rb on" type="button" id="dm-btn" data-tip="弹幕 (D)" aria-label="弹幕" aria-pressed="true"><svg viewBox="0 0 24 24"><path fill-rule="evenodd" d="M5.5 4h13A3.5 3.5 0 0 1 22 7.5v7a3.5 3.5 0 0 1-3.5 3.5h-6l-4.4 3.3A.7.7 0 0 1 7 20.7V18H5.5A3.5 3.5 0 0 1 2 14.5v-7A3.5 3.5 0 0 1 5.5 4zM7 8.3v1.8h10V8.3zm0 3.7v1.8h7V12z"/></svg></button>
+              <div class="pop-anchor wide-only" id="dm-set-wrap">
+                <button class="rb" type="button" id="dm-set" data-tip="弹幕设置" aria-label="弹幕设置" aria-expanded="false"><svg viewBox="0 0 24 24" class="stroke thin"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="15" cy="6" r="2.2" class="knobc"/><circle cx="8" cy="12" r="2.2" class="knobc"/><circle cx="13" cy="18" r="2.2" class="knobc"/></svg></button>
+                <div class="pop dm-pop" id="dm-pop" role="dialog" aria-label="弹幕设置" hidden>
+                  <div class="dm-head"><b>弹幕设置</b><button type="button" id="dm-reset">恢复默认</button></div>
+                  <div id="dm-sliders"></div>
+                </div>
+              </div>
+              <button class="rb" type="button" data-tip="更多" aria-label="更多"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18.5" cy="12" r="1.9"/></svg></button>
+              <button class="rb wide-only" type="button" id="pin" data-tip="窗口置顶 (T)" aria-label="窗口置顶" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M8.5 3h7a1 1 0 0 1 .97 1.24L15.6 8l3.06 3.3a1 1 0 0 1 .34.75V13a1 1 0 0 1-1 1h-5v5.5l-1 2-1-2V14H6a1 1 0 0 1-1-1v-.95a1 1 0 0 1 .34-.75L8.4 8l-.87-3.76A1 1 0 0 1 8.5 3z"/></svg></button>
+              <button class="rb" type="button" id="full" data-tip="全屏 (F)" aria-label="全屏"><svg viewBox="0 0 24 24" class="stroke"><path d="M14 4h6v6M10 20H4v-6M20 4l-6 6M4 20l6-6"/></svg></button>
+            </div>
+          </div>
+        </div>
+
+        <aside class="panel" id="panel" aria-label="剧集">
+          <div class="about">
+            <div class="poster"><i></i></div>
+            <div class="about-text">
+              <b class="show-title">今夜再看一集</b>
+              <span class="meta">全80集 · 2868.6万热度</span>
+              <span class="tags"><i>都市</i><i>逆袭</i><i>甜宠</i></span>
+              <button class="follow" type="button" id="follow"><svg viewBox="0 0 24 24"><path d="M12 20.3l-1.3-1.2C6 14.9 3 12.2 3 8.8 3 6.1 5.1 4 7.8 4c1.5 0 3 .7 4.2 1.9C13.2 4.7 14.7 4 16.2 4 18.9 4 21 6.1 21 8.8c0 3.4-3 6.1-7.7 10.3z"/></svg><span>追剧</span></button>
+            </div>
+          </div>
+          <p class="desc" id="desc">加班到深夜的她，每晚都告诉自己“再看一集就睡”。直到某天，剧里的人隔着屏幕回了她一句话。一个关于熬夜、心动和下一集的故事。</p>
+
+          <div class="eps-head"><b>选集</b><span id="eps-now">第13集 / 共80集</span></div>
+          <div class="ranges" id="ranges"><button type="button" class="on" data-range="0">1-50</button><button type="button" data-range="1">51-80</button></div>
+          <div class="eps" id="eps"></div>
+
+          <div class="eps-head related-head"><b>相关推荐</b></div>
+          <div class="related"><i class="r1"></i><i class="r2"></i><i class="r3"></i></div>
+        </aside>
+      </div>
+      <figcaption>可以点点看：空格暂停，D 开关弹幕，按住 → 2 倍速，点选集换一集。</figcaption>
+    </figure>
+
+    <section class="list" aria-labelledby="list-title">
+      <h2 id="list-title" class="visually-hidden">一集能做什么</h2>
+      <ol>
+        <li><span class="no">01</span><div><h3>没有广告</h3><p>不用看广告解锁，也没有弹窗打断。打开就是剧。</p></div></li>
+        <li><span class="no">02</span><div><h3>接着看</h3><p>每集记住看到哪里，自动连播，下一集提前加载好。</p></div></li>
+        <li><span class="no">03</span><div><h3>弹幕</h3><p>刷屏的同一句合成一条，标出几个人发的；表情显示成 emoji。</p></div></li>
+        <li><span class="no">04</span><div><h3>小窗</h3><p>窗口置顶、竖屏小窗，边干活边看。</p></div></li>
+        <li><span class="no">05</span><div><h3>原生</h3><p>纯 Go、GPU 绘制，没有 WebView，安装包 6–7 MB。</p></div></li>
+        <li><span class="no">06</span><div><h3>只在本机</h3><p>不需要账号，记录只存在这台电脑上。</p></div></li>
+      </ol>
+    </section>
+
+    <section class="install" id="install" aria-labelledby="install-title">
+      <h2 id="install-title">一行命令装好</h2>
+      <div class="code">
+        <code>curl -fsSL https://github.com/giuem/ichiwa/releases/latest/download/install.sh | sh</code>
+        <button class="copy" type="button">复制</button>
+      </div>
+      <p class="fine">自动选择芯片，校验签名后装进“应用程序”，之后在应用里自动更新。</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>
+      <a href="https://github.com/giuem/ichiwa">GitHub</a>
+      <a href="https://github.com/giuem/ichiwa/blob/main/CHANGELOG.md">更新日志</a>
+      <a href="https://github.com/giuem/ichiwa/issues">反馈</a>
+      <span>AGPL-3.0 · 用 <a href="https://github.com/egoist/mygo">MyGo</a> 写成</span>
+    </p>
+    <p class="disclaimer">目前的片源是红果短剧。本项目仅供学习和研究，禁止用于商业用途，与红果短剧及其运营方无关；所有内容的版权归原平台和版权方所有。播放页演示里的剧名、画面和弹幕都是虚构的。</p>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
