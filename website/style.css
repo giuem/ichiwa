@@ -71,6 +71,9 @@ h1 {
   background-clip: text;
   color: transparent;
   padding-bottom: 4px;
+  /* The full stop's ink sits in the left half of its box: leave the empty
+     half out of the centering. */
+  margin-right: -0.5em;
 }
 .lede { margin: 16px 0 0; color: var(--muted); font-size: 20px; line-height: 1.6; }
 .fine { margin: 14px 0 0; color: var(--faint); font-size: 13px; }
