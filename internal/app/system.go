@@ -2,8 +2,6 @@ package app
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"image/jpeg"
 	"time"
 
@@ -30,7 +28,7 @@ func (app *App) setMenu() {
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 		{Label: name, Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleAbout, Label: "关于" + name},
-			{Label: "检查更新…", Click: run(func() { go checkForUpdates(true) })},
+			{Label: "检查更新…", Click: run(func() { go app.checkForUpdates(true) })},
 			mygo.Separator(),
 			{Role: mygo.RoleServices, Label: "服务"},
 			mygo.Separator(),
@@ -137,43 +135,4 @@ func (w *Watching) syncNowPlaying() {
 		state = mygo.PlaybackPlaying
 	}
 	mygo.NowPlaying.SetPlayback(state, w.player.Position())
-}
-
-// checkForUpdates looks for a newer version and offers to install it.
-// manual says the user asked, who then hears that there is none too.
-func checkForUpdates(manual bool) {
-	if !mygo.Updater.Enabled() {
-		if manual {
-			mygo.Dialog.Message(mygo.MessageOptions{Message: "此版本不支持自动更新", Detail: "开发版本或没有写入权限的位置不能自动更新。"})
-		}
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	up, err := mygo.Updater.Check(ctx)
-	if err != nil || up == nil {
-		if manual {
-			msg, detail := "已是最新版本", "当前版本 "+mygo.App.Version()+" 是最新的。"
-			if err != nil && !errors.Is(err, context.Canceled) {
-				msg, detail = "检查更新失败", err.Error()
-			}
-			mygo.Dialog.Message(mygo.MessageOptions{Message: msg, Detail: detail})
-		}
-		return
-	}
-	res, _ := mygo.Dialog.Message(mygo.MessageOptions{
-		Message: "发现新版本 " + up.Version,
-		Detail:  up.Notes,
-		Buttons: []string{"安装并重启", "以后再说"},
-	})
-	if res.Button != 0 {
-		return
-	}
-	ictx, icancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer icancel()
-	if err := up.Install(ictx, nil); err != nil {
-		mygo.Dialog.Message(mygo.MessageOptions{Message: "更新失败", Detail: err.Error()})
-		return
-	}
-	mygo.App.Relaunch()
 }

@@ -91,6 +91,10 @@ type App struct {
 	told string
 
 	warmed bool // the first pages of the other pages were asked for
+
+	// upd is a newer version found, which the sidebar marks, and its
+	// dialog.
+	upd updateState
 }
 
 // async runs work on a goroutine and then done with its result on the main
@@ -137,6 +141,7 @@ func (app *App) view(c *ui.Context) {
 		app.toast = ""
 	}
 
+	app.updateDialog(c)
 	if app.watch != nil {
 		app.watchView(c)
 		return
@@ -178,13 +183,24 @@ func (app *App) sidebar(c *ui.Context) {
 			ui.Text(c, "一集").FontSize(15).Bold().TextColor(p.text)
 		})
 		if v := mygo.App.Version(); v != "" {
-			ui.Text(c, "v"+v).FontSize(10.5).TextColor(p.faint).Padding(0, 10)
+			ui.Row(c).Padding(0, 10).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "v"+v).FontSize(10.5).TextColor(p.faint)
+				if up := app.upd.up; up != nil {
+					b := ui.ButtonBase(c.Key("new-version")).Height(18).PaddingX(7).Radius(999).Center().FocusRing(false).
+						Label("新版本 " + up.Version).Description("点击查看并安装")
+					pressable(b, p.accent.Alpha(0.12), p.accent.Alpha(0.2), 0.95)
+					b.Children(func() { ui.Text(c, "新版本").FontSize(10.5).FontWeight(600).TextColor(p.accent).SingleLine() })
+					if b.Clicked() {
+						app.upd.open = true
+					}
+				}
+			})
 		}
 		if runtime.GOOS != "darwin" { // a hidden title bar hides the menu bar
 			b := ui.ButtonBase(c.Key("updates")).Padding(4, 10).Justify(ui.Start).FocusRing(false).Label("检查更新")
 			b.Children(func() { ui.Text(c, "检查更新").FontSize(10.5).TextColor(ternary(b.Hovered(), p.muted, p.faint)) })
 			if b.Clicked() {
-				go checkForUpdates(true)
+				go app.checkForUpdates(true)
 			}
 		}
 	})
@@ -337,10 +353,7 @@ func Run() {
 				mygo.RunOnMain(func() { app.lib.Flush(); app.saveFeeds(false) })
 			}
 		}()
-		go func() {
-			time.Sleep(5 * time.Second)
-			checkForUpdates(false)
-		}()
+		go app.watchUpdates()
 		app.tour()
 	})
 	if err := mygo.App.Run(); err != nil {
