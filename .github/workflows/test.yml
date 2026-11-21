@@ -1,13 +1,14 @@
 # Builds and tests on every push to main and every pull request, on each
-# system the app is built for. Changes to documents alone run nothing.
+# system the app is built for. Changes to documents or the website alone
+# run nothing.
 name: Test
 
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "LICENSE", "resources/**", "scripts/**"]
+    paths-ignore: ["**.md", "LICENSE", "resources/**", "scripts/**", "website/**"]
   pull_request:
-    paths-ignore: ["**.md", "LICENSE", "resources/**", "scripts/**"]
+    paths-ignore: ["**.md", "LICENSE", "resources/**", "scripts/**", "website/**"]
 
 permissions:
   contents: read
