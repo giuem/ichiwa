@@ -2,7 +2,7 @@
 
 每个版本给用户带来的变化，新的在前。版本号是发布当天（Asia/Shanghai）的日期加当天的第几次发布：2026.1107.2 是 2026 年 11 月 7 日的第二次发布。还没发布的内容写在 `## Unreleased` 下，发布时由 `scripts/release.sh tag` 改成版本号；见 [RELEASING.md](RELEASING.md)。
 
-## Unreleased
+## 2026.1121.2
 
 - 改名为“一集”，换了新图标
 
