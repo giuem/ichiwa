@@ -95,6 +95,22 @@ func (m *Manager) Episode(ctx context.Context, sourceID, mediaID, episodeID stri
 		_ = os.Chtimes(path, now, now)
 		return path, nil
 	}
+	if sourceID == "hongguo" && isSafeLegacyID(episodeID) {
+		legacy := filepath.Join(m.cacheDir, episodeID+".mp4")
+		if legacy != path {
+			if err := os.Rename(legacy, path); err == nil {
+				now := time.Now()
+				_ = os.Chtimes(path, now, now)
+				return path, nil
+			}
+			// A concurrent caller may have renamed legacy to path first.
+			if _, err := os.Stat(path); err == nil {
+				now := time.Now()
+				_ = os.Chtimes(path, now, now)
+				return path, nil
+			}
+		}
+	}
 	return m.runSingle(ctx, key, func() (string, error) {
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
@@ -104,6 +120,10 @@ func (m *Manager) Episode(ctx context.Context, sourceID, mediaID, episodeID stri
 		}
 		return m.downloadPlayback(fetchCtx, path, pb, Prefer())
 	})
+}
+
+func isSafeLegacyID(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)
 }
 
 // Fetch downloads and caches an episode using an already-resolved Playback.

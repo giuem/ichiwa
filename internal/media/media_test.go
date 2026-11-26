@@ -196,3 +196,62 @@ func TestPreloadCanceledBeforeDelay(t *testing.T) {
 		t.Fatal("preload ran despite canceled context")
 	}
 }
+
+func TestEpisodeMigratesLegacyCache(t *testing.T) {
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(mgr.cacheDir, "ep123.mp4")
+	wantData := []byte("cached-mp4-bytes")
+	if err := os.WriteFile(legacyPath, wantData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var resolved atomic.Int32
+	failResolve := func(context.Context, source.PlayPrefer) (*source.Playback, error) {
+		resolved.Add(1)
+		return nil, source.NewError(source.ErrUnavailable, "should not resolve", nil)
+	}
+
+	// Non-hongguo source does not migrate legacy episode files.
+	if _, err := mgr.Episode(context.Background(), "other", "m1", "ep123", failResolve); err == nil {
+		t.Fatal("non-hongguo source unexpectedly migrated legacy cache")
+	}
+	if resolved.Load() != 1 {
+		t.Fatalf("resolved = %d, want 1", resolved.Load())
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("legacy file should still exist after non-hongguo miss: %v", err)
+	}
+
+	// Unsafe episode IDs never access parent directories.
+	outside := filepath.Join(filepath.Dir(mgr.cacheDir), "escape.mp4")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Episode(context.Background(), "hongguo", "m1", "../escape", failResolve); err == nil {
+		t.Fatal("unsafe episode ID unexpectedly hit outside file")
+	}
+
+	// Hongguo migrates <episodeID>.mp4 -> <sha256>.mp4 and hits without resolving.
+	resolved.Store(0)
+	gotPath, err := mgr.Episode(context.Background(), "hongguo", "m1", "ep123", failResolve)
+	if err != nil {
+		t.Fatalf("legacy migration failed: %v", err)
+	}
+	if resolved.Load() != 0 {
+		t.Fatalf("resolve was called %d times on legacy hit", resolved.Load())
+	}
+	wantPath := filepath.Join(mgr.cacheDir, CacheKey("hongguo", "m1", "ep123")+".mp4")
+	if gotPath != wantPath {
+		t.Fatalf("path = %q, want %q", gotPath, wantPath)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy file should be renamed away, stat err = %v", err)
+	}
+	gotData, err := os.ReadFile(gotPath)
+	if err != nil || !bytes.Equal(gotData, wantData) {
+		t.Fatalf("migrated data = %q, err = %v", gotData, err)
+	}
+}
