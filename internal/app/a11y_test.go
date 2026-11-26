@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
+
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 func a11yApp(t *testing.T) *App {
@@ -26,8 +27,8 @@ func accessOf(t *testing.T, tt *ui.Tester, r ui.Role, name string) ui.AccessInfo
 // title, and the control in its corner is a button of its own beside it.
 func TestCardsAreButtons(t *testing.T) {
 	app := a11yApp(t)
-	s := Show{ID: "a", Title: "长安", Episodes: 80}
-	app.lib.Progress(s, 2, 30, 100)
+	s := Card{Kind: source.CardMedia, ID: "a", Title: "长安", Badges: []string{"全80集"}}
+	app.lib.Progress("hongguo", s, "e2", 2, 80, 30, 100)
 	tt := ui.NewTester(app.historyPage, 900, 600)
 	tt.Frame()
 	card := accessOf(t, tt, ui.RoleButton, "长安")
@@ -62,7 +63,7 @@ func TestCardsAreButtons(t *testing.T) {
 func TestPlayerControlsSpeak(t *testing.T) {
 	app := a11yApp(t)
 	app.lib.OnTop, app.lib.Volume, app.lib.Speed = true, 0.5, 1.5
-	w := &Watching{app: app, panel: true, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	w := &Watching{app: app, panel: true, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 1200, 600) // room for the volume slider beside the panel
 	tt.Frame()
 	if a := accessOf(t, tt, ui.RoleButton, "播放"); a.Description != "" || a.KeyShortcuts == "" {
@@ -96,7 +97,15 @@ func TestPlayerControlsSpeak(t *testing.T) {
 func TestFilterOptionsAreRadios(t *testing.T) {
 	app := a11yApp(t)
 	app.filter.rowsOK = true
-	app.filter.rows = []FilterRow{{Key: "k", Name: "题材", Options: []model.FilterOption{{Name: "甜宠", Value: "v"}}}}
+	app.filter.rows = []FilterRow{{
+		Key:   "k",
+		Title: "题材",
+		Options: []source.FilterOption{
+			{Value: "", Title: "题材"},
+			{Value: "v", Title: "甜宠"},
+		},
+		Value: "v",
+	}}
 	app.filter.chosen = map[string]string{"k": "v"}
 	tt := ui.NewTester(app.filterPanel, 900, 600)
 	tt.Frame()
@@ -145,8 +154,8 @@ func TestContrastedPalette(t *testing.T) {
 // the end, and each card says which.
 func TestHistoryFilter(t *testing.T) {
 	app := a11yApp(t)
-	app.lib.Progress(Show{ID: "a", Title: "长安", Episodes: 3}, 1, 30, 100)
-	app.lib.Progress(Show{ID: "b", Title: "洛阳", Episodes: 3}, 2, 100, 100)
+	app.lib.Progress("hongguo", Card{Kind: source.CardMedia, ID: "a", Title: "长安"}, "e1", 1, 3, 30, 100)
+	app.lib.Progress("hongguo", Card{Kind: source.CardMedia, ID: "b", Title: "洛阳"}, "e2", 2, 3, 100, 100)
 	tt := ui.NewTester(app.historyPage, 900, 600)
 	tt.Frame()
 	if err := tt.Click("看完"); err != nil {
@@ -164,11 +173,11 @@ func TestHistoryFilter(t *testing.T) {
 // The episodes say which were watched to the end and how far others got.
 func TestEpisodesSayProgress(t *testing.T) {
 	app := a11yApp(t)
-	s := Show{ID: "a", Title: "长安", Episodes: 3}
-	app.lib.Progress(s, 0, 60, 60)
-	app.lib.Progress(s, 1, 15, 60)
-	eps := []model.Episode{{ID: "e0", Playable: true}, {ID: "e1", Playable: true}, {ID: "e2", Playable: true}}
-	w := &Watching{app: app, show: s, index: 2, detail: &Detail{Show: s, Episodes: eps}}
+	s := Card{Kind: source.CardMedia, ID: "a", Title: "长安"}
+	app.lib.Progress("hongguo", s, "e0", 0, 3, 60, 60)
+	app.lib.Progress("hongguo", s, "e1", 1, 3, 15, 60)
+	eps := []source.Episode{{ID: "e0"}, {ID: "e1"}, {ID: "e2"}}
+	w := &Watching{app: app, sourceID: "hongguo", show: s, index: 2, detail: &Media{ID: "a", Title: "长安", Episodes: eps}}
 	tt := ui.NewTester(func(c *ui.Context) { app.episodes(c, w) }, 400, 400)
 	tt.Frame()
 	if a := accessOf(t, tt, ui.RoleButton, "第1集"); a.Description != "已看完" {

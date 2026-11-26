@@ -1,4 +1,4 @@
-package cenc
+package media
 
 import (
 	"bytes"
@@ -27,16 +27,11 @@ func u32(v ...uint32) []byte {
 
 func u16(v uint16) []byte { return []byte{byte(v >> 8), byte(v)} }
 
-// sample is one sample in the clear and how it is split into subsamples:
-// pairs of clear and protected byte counts, none for a whole-sample one.
 type sample struct {
 	data []byte
 	subs [][2]int
 }
 
-// buildMP4 lays out a progressive MP4 of one track with the samples given,
-// encrypted with key as the cenc scheme does, its sample entry named
-// entry ("encv" or "enca") over the original format orig.
 func buildMP4(t *testing.T, key []byte, entry, orig string, samples []sample) (enc, clear []byte) {
 	t.Helper()
 	block, err := aes.NewCipher(key)
@@ -45,7 +40,7 @@ func buildMP4(t *testing.T, key []byte, entry, orig string, samples []sample) (e
 	}
 	var mdat, clearMdat []byte
 	var sizes []uint32
-	senc := u32(0x2, uint32(len(samples))) // flags: subsamples present
+	senc := u32(0x2, uint32(len(samples)))
 	if len(samples[0].subs) == 0 {
 		senc = u32(0, uint32(len(samples)))
 	}
@@ -86,7 +81,6 @@ func buildMP4(t *testing.T, key []byte, entry, orig string, samples []sample) (e
 	}
 	stsd := mkbox("stsd", u32(0, 1), mkbox(entry, head, sinf))
 	stsz := mkbox("stsz", u32(0, 0, uint32(len(sizes))), u32(sizes...))
-	// Two chunks: the first sample alone, then the rest.
 	stsc := mkbox("stsc", u32(0, 2), u32(1, 1, 1), u32(2, uint32(len(samples)-1), 1))
 	build := func(mdatAt uint32) []byte {
 		stco := mkbox("stco", u32(0, 2), u32(mdatAt+8, mdatAt+8+sizes[0]))
@@ -120,19 +114,17 @@ func samplesOf(n int, subs [][2]int) []sample {
 	return out
 }
 
-// Decrypt restores every protected byte of video samples split into
-// subsamples, and leaves the clear bytes between them alone.
 func TestDecryptSubsamples(t *testing.T) {
 	key, _ := hex.DecodeString("53891e0a11528165bac48415cdc614c2")
 	enc, clear := buildMP4(t, key, "encv", "hvc1", samplesOf(4, [][2]int{{5, 32}, {3, 17}}))
-	if !IsEncrypted(enc) {
-		t.Fatal("IsEncrypted = false for a protected file")
+	if !IsCENCEncrypted(enc) {
+		t.Fatal("IsCENCEncrypted = false for a protected file")
 	}
-	if err := Decrypt(enc, hex.EncodeToString(key)); err != nil {
+	if err := DecryptCENC(enc, hex.EncodeToString(key)); err != nil {
 		t.Fatal(err)
 	}
-	if IsEncrypted(enc) {
-		t.Fatal("still encrypted after Decrypt")
+	if IsCENCEncrypted(enc) {
+		t.Fatal("still encrypted after DecryptCENC")
 	}
 	at := bytes.Index(enc, []byte("mdat"))
 	if !bytes.Equal(enc[at:], clear[at:]) {
@@ -146,11 +138,10 @@ func TestDecryptSubsamples(t *testing.T) {
 	}
 }
 
-// Decrypt handles audio samples encrypted whole, without subsamples.
 func TestDecryptWholeSamples(t *testing.T) {
 	key, _ := hex.DecodeString("000102030405060708090a0b0c0d0e0f")
 	enc, clear := buildMP4(t, key, "enca", "mp4a", samplesOf(3, nil))
-	if err := Decrypt(enc, hex.EncodeToString(key)); err != nil {
+	if err := DecryptCENC(enc, hex.EncodeToString(key)); err != nil {
 		t.Fatal(err)
 	}
 	at := bytes.Index(enc, []byte("mdat"))
@@ -162,13 +153,12 @@ func TestDecryptWholeSamples(t *testing.T) {
 	}
 }
 
-// A key that isn't 16 bytes of hex is refused before anything changes.
 func TestDecryptBadKey(t *testing.T) {
 	key, _ := hex.DecodeString("000102030405060708090a0b0c0d0e0f")
 	enc, _ := buildMP4(t, key, "encv", "avc1", samplesOf(2, [][2]int{{4, 16}}))
 	before := append([]byte(nil), enc...)
-	if err := Decrypt(enc, "abc"); err == nil {
-		t.Fatal("Decrypt accepted a short key")
+	if err := DecryptCENC(enc, "abc"); err == nil {
+		t.Fatal("DecryptCENC accepted a short key")
 	}
 	if !bytes.Equal(enc, before) {
 		t.Fatal("a refused key changed the file")

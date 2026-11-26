@@ -1,4 +1,4 @@
-package catalog
+package hongguo
 
 import (
 	"context"
@@ -6,49 +6,35 @@ import (
 	"time"
 
 	"github.com/beilunyang/openhongguo/sdk"
+
+	"github.com/giuem/ichiwa/internal/source"
 )
 
-// Danmaku is one comment flying over an episode: its text and when in the
-// episode it appears.
-type Danmaku struct {
-	ID   string
-	Text string
-	At   time.Duration
-}
-
-// DanmakuPage is one page of an episode's danmaku: the comments, sorted by
-// when they appear, and the cursor of the next page, empty after the last.
-type DanmakuPage struct {
-	Items []Danmaku
-	Next  string
-}
-
-// Danmaku loads a page of the danmaku of an episode of a drama, from its
-// start when cursor is empty. A page is a stretch of the episode, which
-// can hold none, so a caller pages on until Next is empty.
-func (b *Backend) Danmaku(ctx context.Context, seriesID, episodeID, cursor string) (*DanmakuPage, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+func (s *Source) Danmaku(ctx context.Context, r source.DanmakuRequest) (*source.DanmakuPage, error) {
+	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-	page, err := b.client.ListDanmaku(ctx, seriesID, episodeID, sdk.DanmakuOptions{Cursor: cursor})
+	page, err := s.client.ListDanmaku(ctx, r.MediaID, r.EpisodeID, sdk.DanmakuOptions{Cursor: r.Cursor})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
-	out := &DanmakuPage{Items: make([]Danmaku, 0, len(page.Items))}
+	out := &source.DanmakuPage{Items: make([]source.Danmaku, 0, len(page.Items))}
 	for _, d := range page.Items {
 		text := emojify(strings.Join(strings.Fields(d.Text), " "))
 		if text == "" || d.OffsetMS < 0 {
 			continue
 		}
-		out.Items = append(out.Items, Danmaku{ID: d.ID, Text: text, At: time.Duration(d.OffsetMS) * time.Millisecond})
+		out.Items = append(out.Items, source.Danmaku{
+			ID:   d.ID,
+			Text: text,
+			Time: float64(d.OffsetMS) / 1000.0,
+		})
 	}
-	if page.HasMore && page.Cursor != "" && page.Cursor != cursor {
-		out.Next = page.Cursor
+	if page.HasMore && page.Cursor != "" && page.Cursor != r.Cursor {
+		out.Cursor = page.Cursor
 	}
 	return out, nil
 }
 
-// danmakuEmoji are the service's emoji codes, which its own player shows
-// as small pictures, and the system emoji closest to each.
 var danmakuEmoji = map[string]string{
 	"[笑哭]": "😂", "[捂脸]": "🤦", "[赞]": "👍", "[爱慕]": "🥰", "[吃瓜]": "🍉",
 	"[偷笑]": "🤭", "[爽]": "😎", "[奸笑]": "😏", "[微笑]": "🙂", "[送花]": "💐",
@@ -65,8 +51,6 @@ var danmakuEmoji = map[string]string{
 	"[石化]": "🗿",
 }
 
-// emojify turns the emoji codes in a line into emoji, leaving codes it
-// does not know as they are.
 func emojify(s string) string {
 	if !strings.Contains(s, "[") {
 		return s
@@ -82,7 +66,6 @@ func emojify(s string) string {
 			break
 		}
 		b.WriteString(s[:i])
-		// A code inside another bracket, as in "[[笑]", starts at the last.
 		if k := strings.LastIndexByte(s[i:i+j], '['); k > 0 {
 			b.WriteString(s[i : i+k])
 			i += k

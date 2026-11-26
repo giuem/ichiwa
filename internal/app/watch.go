@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
 
-	"ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 // speedSteps are the speeds to choose from, in order, for the panel and
@@ -48,14 +48,9 @@ const miniFixFor = 1500 * time.Millisecond
 // keyLinger is how long the controls show after a key acted on the video.
 const keyLinger = 1500 * time.Millisecond
 
-// maxSkips is how many episodes in a row autoplay skips because the
-// anonymous device cannot play them before it gives up and says so.
+// maxSkips is how many episodes in a row autoplay skips when unavailable
+// before it gives up and says so.
 const maxSkips = 3
-
-// retryCooldown is how long the retry button waits after the server
-// limited anonymous playback: the SDK already tried fresh devices, and
-// retrying at once only registers more of them.
-const retryCooldown = 30 * time.Second
 
 // episodesPerRange is how many episodes the episode grid shows at once.
 const episodesPerRange = 50
@@ -71,25 +66,27 @@ const chromeLinger = 3 * time.Second
 // Watching is the player page: a drama, the episode playing and the
 // player playing it.
 type Watching struct {
-	app  *App
-	show Show
+	app      *App
+	sourceID string
+	show     Card
 
-	detail    *Detail
+	detail    *Media
 	detailErr string
-	recs      []Show
+	recs      []Card
 
-	index   int
-	gen     int // counts episodes started, to drop stale results
-	player  *ui.VideoPlayer
-	stop    chan struct{}
-	loading bool
-	err     string
-	ended   bool
-	paused  bool // the user paused
-	auto    bool // the next play call comes from autoplay
-	skipped int  // episodes autoplay skipped in a row
-	retryAt time.Time
-	awake   func() // releases the display, while it is kept on
+	index         int
+	gen           int // counts episodes started, to drop stale results
+	player        *ui.VideoPlayer
+	stop          chan struct{}
+	preloadCancel context.CancelFunc
+	loading       bool
+	err           string
+	ended         bool
+	paused        bool // the user paused
+	auto          bool // the next play call comes from autoplay
+	skipped       int  // episodes autoplay skipped in a row
+	retryAt       time.Time
+	awake         func() // releases the display, while it is kept on
 
 	seek     float64
 	dragging bool
@@ -134,59 +131,127 @@ type Watching struct {
 	switchSeason func(s Season, ep int)
 }
 
+func (w *Watching) ref() source.Ref {
+	srcID := w.sourceID
+	if srcID == "" && w.app != nil {
+		srcID = w.app.sourceID()
+	}
+	return source.Ref{Source: srcID, ID: w.show.ID}
+}
+
+func seasonCard(next Season) Card {
+	title := next.Name
+	if title == "" {
+		title = next.Title
+	}
+	return Card{
+		Kind:  source.CardMedia,
+		ID:    next.ID,
+		Title: title,
+		Image: next.Image,
+		Shape: source.ShapePortrait,
+	}
+}
+
+func episodeIDs(eps []source.Episode) []string {
+	ids := make([]string, len(eps))
+	for i, ep := range eps {
+		ids[i] = ep.ID
+	}
+	return ids
+}
+
+func episodeIndex(eps []source.Episode, id string) int {
+	for i, ep := range eps {
+		if ep.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func lockMessage(lock source.Lock) string {
+	switch lock {
+	case source.LockLogin:
+		return "该集需要登录才能观看"
+	case source.LockVIP:
+		return "该集需要会员才能观看"
+	case source.LockPaid:
+		return "该集需要付费才能观看"
+	default:
+		return "该集暂不可播放"
+	}
+}
+
 // open shows the player page for a drama, at episode ep, or where the
 // user left it when ep is -1.
-func (app *App) open(s Show, ep int) { app.openIn(s, ep, nil) }
+func (app *App) open(sourceID string, s Card, ep int) { app.openIn(sourceID, s, ep, nil) }
 
 // openIn opens a drama among seasons already known, which the page keeps
-// rather than asks for again.
-func (app *App) openIn(s Show, ep int, seasons []Season) {
+// until Media returns.
+func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
+	if sourceID == "" {
+		sourceID = app.sourceID()
+	}
 	var awake func()
 	if app.watch != nil {
 		app.watch.close()
 		// A season going on to the next keeps the display on throughout.
 		awake, app.watch.awake = app.watch.awake, nil
 	}
-	w := &Watching{app: app, show: s, index: max(ep, 0), loading: true, panel: !app.lib.OnTop, unpin: app.lib.OnTop, awake: awake}
-	w.switchSeason = func(next Season, ep int) { app.openIn(next.Show, ep, w.seasons) }
-	app.watch = w
-	go w.keepAwake()
+	w := &Watching{app: app, sourceID: sourceID, show: s, index: max(ep, 0), loading: true, panel: !app.lib.OnTop, unpin: app.lib.OnTop, awake: awake}
+	w.switchSeason = func(next Season, ep int) { app.openIn(w.sourceID, seasonCard(next), ep, w.seasons) }
 	if seasonOf(seasons, s.ID) >= 0 {
 		w.seasons = seasons
-	} else {
-		async(app, func() ([]Season, error) { return app.be.Seasons(s.ID) }, func(ss []Season, err error) {
-			if app.watch != w || err != nil || seasonOf(ss, s.ID) < 0 {
-				return
-			}
-			w.seasons = ss
-			// Then what the 上新 calendar says of the seasons to come, for
-			// whichever season of them shows by then.
-			async(app, func() ([]Season, error) { return app.be.Announce(ss), nil }, func(ss []Season, _ error) {
-				if cur := app.watch; cur != nil && len(cur.seasons) == len(ss) && seasonOf(cur.seasons, ss[0].ID) == 0 {
-					cur.seasons = ss
-				}
-			})
-		})
 	}
-	async(app, func() (*Detail, error) { return app.be.Series(s.ID) }, func(d *Detail, err error) {
+	app.watch = w
+	go w.keepAwake()
+
+	src := app.src
+	async(app, func() (*Media, error) { return src.Media(context.Background(), s.ID) }, func(d *Media, err error) {
 		if app.watch != w {
 			return
 		}
 		if err != nil {
-			w.loading, w.detailErr = false, errText(err)
+			w.loading = false
+			w.detailErr = errText(err)
 			return
 		}
 		w.detail = d
 		// Keep what the grid knew when the detail lacks it.
-		if d.Cover == "" {
-			d.Cover = s.Cover
+		img := d.Image
+		if img == "" {
+			img = s.Image
 		}
-		w.show = d.Show
+		w.show = Card{
+			Kind:     source.CardMedia,
+			ID:       d.ID,
+			Title:    d.Title,
+			Subtitle: d.Description,
+			Image:    img,
+			Shape:    source.ShapePortrait,
+			Badges:   d.Badges,
+			Note:     s.Note,
+		}
+		if len(d.Seasons) > 0 && seasonOf(d.Seasons, d.ID) >= 0 {
+			w.seasons = d.Seasons
+		}
+		app.lib.ResolveEpisodes(w.ref(), episodeIDs(d.Episodes))
+
 		start, at := ep, 0.0
 		if ep < 0 {
 			start = 0
-			if rec := app.lib.History[s.ID]; rec != nil {
-				start, at = rec.Episode, rec.Position
+			if rec := app.lib.History[w.ref()]; rec != nil {
+				if rec.EpisodeID != "" {
+					if idx := episodeIndex(d.Episodes, rec.EpisodeID); idx >= 0 {
+						start = idx
+					} else {
+						start = rec.Episode
+					}
+				} else {
+					start = rec.Episode
+				}
+				at = rec.Position
 				if rec.Duration > 0 && at > rec.Duration-3 { // finished: the next one
 					start, at = start+1, 0
 				}
@@ -194,10 +259,24 @@ func (app *App) openIn(s Show, ep int, seasons []Season) {
 		}
 		start = min(max(start, 0), len(d.Episodes)-1)
 		w.play(start, at)
-	})
-	async(app, func() ([]Show, error) { return app.be.Recommend(s.ID) }, func(r []Show, err error) {
-		if app.watch == w && err == nil {
-			w.recs = r
+
+		// Load related section from Media.Sections.
+		for _, sec := range d.Sections {
+			if len(sec.Items) > 0 {
+				w.recs = sec.Items
+				break
+			}
+			if sec.Collection != "" {
+				colID := sec.Collection
+				async(app, func() (*source.CollectionPage, error) {
+					return src.Collection(context.Background(), source.CollectionRequest{ID: colID})
+				}, func(p *source.CollectionPage, err error) {
+					if app.watch == w && err == nil && p != nil {
+						w.recs = p.Items
+					}
+				})
+				break
+			}
 		}
 	})
 }
@@ -217,6 +296,10 @@ func (app *App) closeWatch() {
 
 func (w *Watching) stopPlayer() {
 	w.dropDanmaku()
+	if w.preloadCancel != nil {
+		w.preloadCancel()
+		w.preloadCancel = nil
+	}
 	if w.stop != nil {
 		close(w.stop)
 		w.stop = nil
@@ -236,10 +319,11 @@ func (w *Watching) close() {
 }
 
 func (w *Watching) saveProgress() {
-	if w.player == nil || w.detail == nil {
+	if w.player == nil || w.detail == nil || w.index < 0 || w.index >= len(w.detail.Episodes) {
 		return
 	}
-	w.app.lib.Progress(w.show, w.index, w.player.Position().Seconds(), w.player.Duration().Seconds())
+	ep := w.detail.Episodes[w.index]
+	w.app.lib.Progress(w.ref().Source, w.show, ep.ID, w.index, len(w.detail.Episodes), w.player.Position().Seconds(), w.player.Duration().Seconds())
 }
 
 // play starts episode i at second at.
@@ -259,18 +343,25 @@ func (w *Watching) play(i int, at float64) {
 	w.boost = false
 	w.epRange = i / episodesPerRange
 	ep := w.detail.Episodes[i]
-	if !ep.Playable {
+	if ep.Lock != source.LockNone {
 		if auto && i+1 < len(w.detail.Episodes) {
 			w.auto = true
 			w.play(i+1, 0)
 			return
 		}
-		w.loading, w.err = false, "该集暂不可播放"
+		w.loading, w.err = false, lockMessage(ep.Lock)
 		return
 	}
-	app.lib.Progress(w.show, i, at, 0)
+	ref := w.ref()
+	app.lib.Progress(ref.Source, w.show, ep.ID, i, len(w.detail.Episodes), at, 0)
+	src, mgr := app.src, app.media
+	if src == nil || mgr == nil {
+		return
+	}
 	go func() {
-		path, err := app.be.Episode(context.Background(), ep.ID)
+		path, err := mgr.Episode(context.Background(), ref.Source, ref.ID, ep.ID, func(ctx context.Context, prefer source.PlayPrefer) (*source.Playback, error) {
+			return src.Play(ctx, source.PlayRequest{MediaID: ref.ID, EpisodeID: ep.ID, Prefer: prefer})
+		})
 		app.win.Update(func() {
 			if app.watch != w || w.gen != gen {
 				return
@@ -302,12 +393,13 @@ func (w *Watching) play(i int, at float64) {
 				})
 			})
 			// The next episode downloads meanwhile, so it starts at once.
-			if i+1 < len(w.detail.Episodes) && w.detail.Episodes[i+1].Playable {
-				next := w.detail.Episodes[i+1].ID
-				go func() {
-					time.Sleep(2 * time.Second)
-					_, _ = app.be.Episode(context.Background(), next)
-				}()
+			if i+1 < len(w.detail.Episodes) && w.detail.Episodes[i+1].Lock == source.LockNone {
+				nextID := w.detail.Episodes[i+1].ID
+				pCtx, pCancel := context.WithCancel(context.Background())
+				w.preloadCancel = pCancel
+				mgr.Preload(pCtx, ref.Source, ref.ID, nextID, 2*time.Second, func(ctx context.Context, prefer source.PlayPrefer) (*source.Playback, error) {
+					return src.Play(ctx, source.PlayRequest{MediaID: ref.ID, EpisodeID: nextID, Prefer: prefer})
+				})
 			}
 		})
 	}()
@@ -387,12 +479,11 @@ func (w *Watching) keepAwake() {
 	}
 }
 
-// failed shows why episode i did not play. Autoplay skips an episode the
-// anonymous device cannot play, up to maxSkips in a row, as the
-// openhongguo CLI does.
+// failed shows why episode i did not play. Autoplay skips an unavailable
+// episode, up to maxSkips in a row.
 func (w *Watching) failed(i int, auto bool, err error) {
 	app := w.app
-	if auto && catalog.Unavailable(err) && i+1 < len(w.detail.Episodes) {
+	if auto && source.Is(err, source.ErrUnavailable) && i+1 < len(w.detail.Episodes) {
 		w.skipped++
 		if w.skipped < maxSkips {
 			app.toast = fmt.Sprintf("第%d集暂时无法播放，已跳过", i+1)
@@ -405,8 +496,8 @@ func (w *Watching) failed(i int, auto bool, err error) {
 	if w.skipped >= maxSkips {
 		w.err = fmt.Sprintf("连续%d集无法播放：%s", w.skipped, w.err)
 	}
-	if catalog.Limited(err) {
-		w.retryAt = time.Now().Add(retryCooldown)
+	if wait := source.RetryAfter(err); wait > 0 {
+		w.retryAt = time.Now().Add(wait)
 		until := w.retryAt
 		go func() { // redraw the countdown each second
 			for time.Now().Before(until) {
@@ -452,10 +543,10 @@ func (w *Watching) lastEpisode() bool {
 // out, and tells whether it did.
 func (w *Watching) toNextSeason() bool {
 	next, ok := w.nextSeason()
-	if !ok || !next.Online {
+	if !ok || !next.IsAvailable() {
 		return false
 	}
-	w.app.toast = fmt.Sprintf("接着看第%d季", next.Index)
+	w.app.toast = "接着看" + next.Title
 	w.switchSeason(next, 0)
 	return true
 }
@@ -466,7 +557,7 @@ func (w *Watching) hasNext() bool {
 		return true
 	}
 	next, ok := w.nextSeason()
-	return ok && next.Online
+	return ok && next.IsAvailable()
 }
 
 // sleepOptions are the sleep timer's choices, in minutes.
@@ -742,7 +833,7 @@ func (w *Watching) step(d int) {
 	}
 	i := w.index + d
 	if i >= 0 && i < len(w.detail.Episodes) {
-		w.play(i, w.app.lib.EpisodeStart(w.show.ID, i))
+		w.play(i, w.app.lib.EpisodeStart(w.ref(), w.detail.Episodes[i].ID))
 	} else if d > 0 {
 		w.toNextSeason()
 	}
@@ -780,7 +871,10 @@ func (w *Watching) resumeAt() float64 {
 	if w.player != nil {
 		return w.player.Position().Seconds()
 	}
-	return w.app.lib.EpisodeStart(w.show.ID, w.index)
+	if w.detail != nil && w.index >= 0 && w.index < len(w.detail.Episodes) {
+		return w.app.lib.EpisodeStart(w.ref(), w.detail.Episodes[w.index].ID)
+	}
+	return 0
 }
 
 func (w *Watching) setVolume(v float64) {
@@ -894,7 +988,9 @@ func (app *App) watchView(c *ui.Context) {
 	}
 	c.OnShortcut(0, ui.KeyE, func() { w.toggleEpisodes(width, full) })
 	c.OnShortcut(0, ui.KeyA, w.toggleAutoplay)
-	c.OnShortcut(0, ui.KeyD, w.toggleDanmaku)
+	if app.hasCap(source.CapDanmaku) {
+		c.OnShortcut(0, ui.KeyD, w.toggleDanmaku)
+	}
 	c.OnShortcut(0, ui.KeyV, w.toggleMini)
 	c.OnShortcut(0, ui.KeyM, w.toggleMute)
 	c.OnShortcut(0, ui.KeyMinus, func() { w.nudgeVolume(-0.1) })
@@ -1041,7 +1137,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 			}
 			app.danmakuLayer(c, w)
 			if w.player == nil || !w.player.Ready() {
-				if bmp := app.posters.Get(w.show.Cover); bmp != nil {
+				if bmp := app.posters.Get(w.show.Image); bmp != nil {
 					ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Opacity(0.3).Blur(40)
 				}
 			}
@@ -1093,7 +1189,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 			ui.Row(c).Gap(2).Children(func() {
 				hasPrev := w.detail != nil && w.index > 0
 				next, hasNextSeason := w.nextSeason()
-				hasNextSeason = hasNextSeason && next.Online && w.lastEpisode()
+				hasNextSeason = hasNextSeason && next.IsAvailable() && w.lastEpisode()
 				hasNext := w.detail != nil && w.index+1 < len(w.detail.Episodes) || hasNextSeason
 				if !tiny && symbolButton(c, "backward.end.fill", 15, white, "上一集 (↑)").KeyShortcuts(0, ui.KeyUp).Disabled(!hasPrev).Clicked() {
 					w.step(-1)
@@ -1119,15 +1215,19 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				} else {
 					w.volOpen = false
 				}
-				if symbolButton(c, "text.bubble.fill", 14, ternary(app.lib.Danmaku, app.pal.accent, white), "弹幕 (D)").KeyShortcuts(0, ui.KeyD).Role(ui.RoleToggleButton).Checked(app.lib.Danmaku).Clicked() {
-					w.toggleDanmaku()
-				}
-				if app.lib.Danmaku && !tiny {
-					sb := symbolButton(c.Key("dm-settings"), "slider.horizontal.3", 14, ternary(w.dmOpen, app.pal.accent, white), "弹幕设置").Expanded(w.dmOpen)
-					if sb.Clicked() {
-						w.dmOpen = !w.dmOpen
+				if app.hasCap(source.CapDanmaku) {
+					if symbolButton(c, "text.bubble.fill", 14, ternary(app.lib.Danmaku, app.pal.accent, white), "弹幕 (D)").KeyShortcuts(0, ui.KeyD).Role(ui.RoleToggleButton).Checked(app.lib.Danmaku).Clicked() {
+						w.toggleDanmaku()
 					}
-					app.danmakuSettings(c, w, sb)
+					if app.lib.Danmaku && !tiny {
+						sb := symbolButton(c.Key("dm-settings"), "slider.horizontal.3", 14, ternary(w.dmOpen, app.pal.accent, white), "弹幕设置").Expanded(w.dmOpen)
+						if sb.Clicked() {
+							w.dmOpen = !w.dmOpen
+						}
+						app.danmakuSettings(c, w, sb)
+					} else {
+						w.dmOpen = false
+					}
 				} else {
 					w.dmOpen = false
 				}
@@ -1173,8 +1273,10 @@ func (app *App) playerMenu(w *Watching, full bool) func(m *ui.Menu) {
 		if m.Item("自动连播").Checked(app.lib.Autoplay).Trailing("A").Chosen() {
 			w.toggleAutoplay()
 		}
-		if m.Item("弹幕").Checked(app.lib.Danmaku).Trailing("D").Chosen() {
-			w.toggleDanmaku()
+		if app.hasCap(source.CapDanmaku) {
+			if m.Item("弹幕").Checked(app.lib.Danmaku).Trailing("D").Chosen() {
+				w.toggleDanmaku()
+			}
 		}
 		sleep := m.Submenu("定时停止", func(m *ui.Menu) {
 			for _, o := range sleepOptions {
@@ -1226,7 +1328,7 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 			})
 			if w.detail != nil && w.index+1 < len(w.detail.Episodes) {
 				app.primary(c, nil, "下一集").OnClick(func() { w.step(1) })
-			} else if next, ok := w.nextSeason(); ok && next.Online {
+			} else if next, ok := w.nextSeason(); ok && next.IsAvailable() {
 				app.primary(c, nil, "下一季").OnClick(func() { w.step(1) })
 			}
 		})
@@ -1252,17 +1354,18 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 			return
 		}
 		cur := w.seasons[seasonOf(w.seasons, w.show.ID)]
-		ui.Text(c, fmt.Sprintf("第%d季完", cur.Index)).FontSize(24).Bold().TextColor(white)
+		ui.Text(c, cur.Title+"完").FontSize(24).Bold().TextColor(white)
 		ui.Text(c, seasonLine(next)).FontSize(13).TextColor(dim)
+		nextRef := source.Ref{Source: w.ref().Source, ID: next.ID}
 		ui.Row(c).Gap(10).Margin(8, 0, 0).Children(func() {
 			app.secondary(c, iconRefresh, "从头再看").OnClick(func() { w.play(0, 0) })
 			switch {
-			case next.Online:
-				app.primary(c, nil, fmt.Sprintf("看第%d季", next.Index)).OnClick(func() { w.switchSeason(next, -1) })
-			case app.lib.Following(next.ID):
-				app.secondary(c, nil, fmt.Sprintf("已追第%d季", next.Index)).OnClick(func() { app.toggleFollow(next.Show) })
+			case next.IsAvailable():
+				app.primary(c, nil, "看"+next.Title).OnClick(func() { w.switchSeason(next, -1) })
+			case app.lib.Following(nextRef):
+				app.secondary(c, nil, "已追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(next)) })
 			default:
-				app.primary(c, iconHeart, fmt.Sprintf("追第%d季", next.Index)).OnClick(func() { app.toggleFollow(next.Show) })
+				app.primary(c, iconHeart, "追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(next)) })
 			}
 		})
 	case w.paused && w.player != nil:
@@ -1455,15 +1558,22 @@ func (app *App) sidePanel(c *ui.Context, w *Watching) {
 
 func (app *App) about(c *ui.Context, w *Watching) {
 	p := app.pal
+	ref := w.ref()
 	ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
-		app.poster(c, w.show.Cover, w.show.Title, 10).Width(96).Shrink(0)
+		app.poster(c, w.show.Image, w.show.Title, 10).Width(96).Shrink(0)
 		ui.Column(c).Grow(1).Gap(7).Children(func() {
 			ui.Text(c, w.show.Title).FontSize(17).Bold().MaxLines(3).TextColor(p.text).Role(ui.RoleHeading).Level(2)
 			var meta []string
 			if w.detail != nil {
-				meta = append(meta, fmt.Sprintf("全%d集", len(w.detail.Episodes)))
-				if w.detail.Heat != "" {
-					meta = append(meta, w.detail.Heat)
+				for _, m := range w.detail.Meta {
+					if m.Label != "" {
+						meta = append(meta, m.Label+" "+m.Value)
+					} else if m.Value != "" {
+						meta = append(meta, m.Value)
+					}
+				}
+				if len(meta) == 0 && len(w.detail.Episodes) > 0 {
+					meta = append(meta, fmt.Sprintf("全%d集", len(w.detail.Episodes)))
 				}
 			}
 			if len(meta) > 0 {
@@ -1481,7 +1591,7 @@ func (app *App) about(c *ui.Context, w *Watching) {
 					}
 				})
 			}
-			following := app.lib.Following(w.show.ID)
+			following := app.lib.Following(ref)
 			var b ui.Element
 			if following {
 				b = app.secondary(c, nil, "已追剧")
@@ -1490,16 +1600,20 @@ func (app *App) about(c *ui.Context, w *Watching) {
 			}
 			b.Margin(4, 0, 0).AlignSelf(ui.Start)
 			if b.Clicked() {
-				app.toggleFollow(w.show)
+				app.toggleFollow(ref.Source, w.show)
 			}
 		})
 	})
-	if w.show.Desc != "" {
+	desc := w.show.Subtitle
+	if w.detail != nil && w.detail.Description != "" {
+		desc = w.detail.Description
+	}
+	if desc != "" {
 		// A button reads no text inside it: its Description reads the synopsis.
 		d := ui.ButtonBase(c.Key("desc")).AlignItems(ui.Start).Justify(ui.Start).Shrink(1).Cursor(ui.CursorPointer).
-			Label("简介").Description(w.show.Desc).Expanded(w.descOpen)
+			Label("简介").Description(desc).Expanded(w.descOpen)
 		d.Children(func() {
-			t := ui.Text(c, w.show.Desc).FontSize(12.5).LineHeight(1.55).TextColor(p.muted).Grow(1).Shrink(1)
+			t := ui.Text(c, desc).FontSize(12.5).LineHeight(1.55).TextColor(p.muted).Grow(1).Shrink(1)
 			if !w.descOpen {
 				t.MaxLines(3)
 			}
@@ -1512,6 +1626,7 @@ func (app *App) about(c *ui.Context, w *Watching) {
 
 func (app *App) episodes(c *ui.Context, w *Watching) {
 	p := app.pal
+	ref := w.ref()
 	eps := w.detail.Episodes
 	ui.Column(c).Gap(12).Children(func() {
 		ui.Row(c).Children(func() {
@@ -1538,15 +1653,16 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 			for i := from; i < min(from+episodesPerRange, len(eps)); i++ {
 				ep := eps[i]
 				current := i == w.index
-				done := app.lib.Watched(w.show.ID, i)
+				locked := ep.Lock != source.LockNone
+				done := app.lib.Watched(ref, ep.ID)
 				part := 0.0
-				if e := app.lib.Episode(w.show.ID, i); e != nil && !done && !current {
+				if e := app.lib.Episode(ref, ep.ID); e != nil && !done && !current {
 					part = e.Fraction()
 				}
 				note := ""
 				switch {
-				case !ep.Playable:
-					note = "暂不可播放"
+				case locked:
+					note = lockMessage(ep.Lock)
 				case done:
 					note = "已看完"
 				case part > 0:
@@ -1567,7 +1683,7 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 					switch {
 					case current:
 						n.TextColor(white)
-					case !ep.Playable:
+					case locked:
 						n.TextColor(p.faint)
 					case done:
 						n.TextColor(p.muted)
@@ -1575,7 +1691,7 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 						n.TextColor(p.text)
 					}
 					switch {
-					case !ep.Playable:
+					case locked:
 						sfIcon(c, "lock.fill").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
 					case done && !current:
 						sfIcon(c, "checkmark").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
@@ -1588,7 +1704,7 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 				})
 				if cell.Clicked() && !current {
 					w.drawer = false
-					w.play(i, app.lib.EpisodeStart(w.show.ID, i))
+					w.play(i, app.lib.EpisodeStart(ref, ep.ID))
 				}
 			}
 		})
@@ -1606,23 +1722,24 @@ func (app *App) related(c *ui.Context, w *Watching) {
 			if i >= 12 {
 				break
 			}
+			badge := cardBadge(s)
 			row := ui.ButtonBase(c.Key("rec-" + s.ID)).Gap(12).Padding(6).Radius(10).AlignItems(ui.Start).Label(s.Title).
-				Description(joinNonEmpty(ternary(s.Episodes > 0, fmt.Sprintf("全%d集", s.Episodes), ""), s.Desc))
+				Description(joinNonEmpty(badge, s.Subtitle))
 			pressable(row, ui.Transparent, p.hover, 0.98)
 			row.Children(func() {
-				app.poster(c, s.Cover, s.Title, 7).Width(56).Shrink(0)
+				app.poster(c, s.Image, s.Title, 7).Width(56).Shrink(0)
 				ui.Column(c).Grow(1).Gap(4).Padding(2, 0).Children(func() {
 					ui.Text(c, s.Title).FontSize(13).FontWeight(600).MaxLines(2).TextColor(p.text)
-					if s.Episodes > 0 {
-						ui.Text(c, fmt.Sprintf("全%d集", s.Episodes)).FontSize(11.5).TextColor(p.muted)
+					if badge != "" {
+						ui.Text(c, badge).FontSize(11.5).TextColor(p.muted)
 					}
-					if s.Desc != "" {
-						ui.Text(c, s.Desc).FontSize(11.5).TextColor(p.faint).MaxLines(2)
+					if s.Subtitle != "" {
+						ui.Text(c, s.Subtitle).FontSize(11.5).TextColor(p.faint).MaxLines(2)
 					}
 				})
 			})
 			if row.Clicked() {
-				app.open(s, -1)
+				app.open(w.ref().Source, s, -1)
 			}
 		}
 	})
@@ -1631,15 +1748,12 @@ func (app *App) related(c *ui.Context, w *Watching) {
 // seasonLine says where a season stands: when it comes out, that it is
 // new, how many wait for it.
 func seasonLine(s Season) string {
-	parts := []string{fmt.Sprintf("第%d季", s.Index)}
+	parts := []string{s.Title}
 	switch {
-	case !s.Online:
+	case !s.IsAvailable():
 		parts = append(parts, ternary(s.Note != "", s.Note, "即将上线"))
-	case s.New:
-		parts = append(parts, ternary(s.Note != "", s.Note, "新上线"))
-	}
-	if s.Heat != "" {
-		parts = append(parts, s.Heat)
+	case s.Note != "":
+		parts = append(parts, s.Note)
 	}
 	return strings.Join(parts, " · ")
 }
@@ -1658,11 +1772,11 @@ func (app *App) seasonRow(c *ui.Context, w *Watching) {
 		})
 		ui.ScrollHorizontal(c.Key("seasons")).Gap(6).Children(func() {
 			for _, s := range w.seasons {
-				label := fmt.Sprintf("第%d季", s.Index)
+				label := s.Title
 				switch {
-				case !s.Online:
+				case !s.IsAvailable():
 					label += " · 预告"
-				case s.New:
+				case s.Note != "":
 					label += " · 新"
 				}
 				current := s.ID == w.show.ID
@@ -1673,14 +1787,14 @@ func (app *App) seasonRow(c *ui.Context, w *Watching) {
 				if !chip.Clicked() || current {
 					continue
 				}
-				if s.Online {
+				if s.IsAvailable() {
 					w.switchSeason(s, -1)
 				} else {
 					app.toast = seasonLine(s)
 				}
 			}
 		})
-		if latest.New || !latest.Online {
+		if !latest.IsAvailable() || latest.Note != "" {
 			ui.Text(c, seasonLine(latest)).FontSize(12).TextColor(p.muted)
 		}
 	})

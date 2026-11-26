@@ -3,6 +3,6 @@
 // with the system's media framework and their frames are drawn by MyGo.
 package main
 
-import "ichiwa/internal/app"
+import "github.com/giuem/ichiwa/internal/app"
 
 func main() { app.Run() }

@@ -1,13 +1,15 @@
 package app
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
 
-	"ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/source"
+	"github.com/giuem/ichiwa/internal/source/sourcetest"
 )
 
 // Times show as minutes and seconds, and hours only past an hour.
@@ -38,7 +40,7 @@ func TestColumns(t *testing.T) {
 func TestVisibleWholeRows(t *testing.T) {
 	f := &Feed{more: true}
 	for i := range 13 {
-		f.add([]Show{{ID: itoa(i)}})
+		f.add([]Card{{Kind: source.CardMedia, ID: itoa(i)}})
 	}
 	if got := len(visible(f, 5)); got != 10 {
 		t.Errorf("more: shows %d, want 10", got)
@@ -51,7 +53,7 @@ func TestVisibleWholeRows(t *testing.T) {
 	if got := len(visible(f, 5)); got != 13 {
 		t.Errorf("ended: shows %d, want 13", got)
 	}
-	short := &Feed{more: true, items: make([]Show, 3)}
+	short := &Feed{more: true, items: make([]Card, 3)}
 	if got := len(visible(short, 5)); got != 3 {
 		t.Errorf("short: shows %d, want 3", got)
 	}
@@ -61,13 +63,13 @@ func TestVisibleWholeRows(t *testing.T) {
 // apart from new ones.
 func TestFeedReset(t *testing.T) {
 	f := newFeed(func(string) (feedPage, error) { return feedPage{}, nil })
-	f.add([]Show{{ID: "a"}})
+	f.add([]Card{{Kind: source.CardMedia, ID: "a"}})
 	f.cursor, f.more, f.loading = "c", false, true
 	f.reset()
 	if f.fetch == nil || !f.more || f.loading || len(f.items) != 0 || f.cursor != "" || f.gen != 1 {
 		t.Fatalf("reset = %+v", f)
 	}
-	f.add([]Show{{ID: "a"}})
+	f.add([]Card{{Kind: source.CardMedia, ID: "a"}})
 	if len(f.items) != 1 {
 		t.Fatal("seen survived the reset")
 	}
@@ -78,7 +80,7 @@ func TestFeedReset(t *testing.T) {
 func TestStageButtonsTakeClicks(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
-		detail: &Detail{Episodes: make([]model.Episode, 3)}}
+		detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	if err := tt.Click("选集面板"); err != nil {
@@ -98,7 +100,7 @@ func TestStageButtonsTakeClicks(t *testing.T) {
 func TestPinFoldsPanel(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
-		detail: &Detail{Episodes: make([]model.Episode, 3)}}
+		detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	pin := func() {
@@ -138,11 +140,11 @@ func TestPinFoldsPanel(t *testing.T) {
 // the season it switches to.
 func seasonsWatching(t *testing.T, secondOnline bool) (*Watching, *[]Season, *[]int) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, panel: true, index: 2, show: Show{ID: "s1"},
-		detail: &Detail{Episodes: make([]model.Episode, 3)},
+	w := &Watching{app: app, sourceID: "hongguo", panel: true, index: 2, show: Card{Kind: source.CardMedia, ID: "s1"},
+		detail: &Media{Episodes: make([]source.Episode, 3)},
 		seasons: []Season{
-			{Show: Show{ID: "s1", Title: "剧 第1季"}, Index: 1, Online: true},
-			{Show: Show{ID: "s2", Title: "剧 第2季"}, Index: 2, Online: secondOnline, Note: "预计11月10日上线"},
+			{ID: "s1", Title: "第1季", Current: true, Available: source.Bool(true)},
+			{ID: "s2", Title: "第2季", Available: source.Bool(secondOnline), Note: "预计11月10日上线"},
 		}}
 	var to []Season
 	var eps []int
@@ -184,6 +186,7 @@ func TestEndedWaitsForAnnouncedSeason(t *testing.T) {
 // The season row switches to a season where the user left it.
 func TestSeasonRowSwitches(t *testing.T) {
 	w, to, eps := seasonsWatching(t, true)
+	w.seasons[1].Note = ""
 	tt := ui.NewTester(func(c *ui.Context) { w.app.seasonRow(c, w) }, 368, 200)
 	tt.Frame()
 	if err := tt.Click("第2季"); err != nil {
@@ -356,7 +359,7 @@ func TestMiniSize(t *testing.T) {
 // them closes them without reaching the picture.
 func TestDrawerClosesOnClickBeside(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}, drawer: true}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: []source.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}, drawer: true}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, true) }, 1200, 700)
 	tt.Frame()
 	tt.ClickAt(100, 300)
@@ -373,7 +376,7 @@ func TestDrawerClosesOnClickBeside(t *testing.T) {
 // still takes its own: nothing in the flow may cover them.
 func TestPictureTakesClicks(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: []source.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	tt.ClickAt(200, 300)
@@ -395,7 +398,7 @@ func TestPictureTakesClicks(t *testing.T) {
 // The controls of the narrowest stage still build, for the small window.
 func TestStageBuildsNarrow(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, miniMinWidth, miniMinHeight)
 	tt.Frame()
 	tt.Frame()
@@ -492,7 +495,7 @@ func testLibrary(t *testing.T) *library.Library {
 func TestSpeedPicker(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	app.lib.Speed = 1
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	if err := tt.Click("播放速度"); err != nil {
@@ -511,5 +514,140 @@ func TestSpeedPicker(t *testing.T) {
 	tt.Frame()
 	if w.speedOpen || app.lib.Speed != 1.5 {
 		t.Fatalf("chose 1.5倍: open %v, speed %v", w.speedOpen, app.lib.Speed)
+	}
+}
+
+// Sidebar search and player danmaku controls follow source capabilities.
+func TestCapabilityHiding(t *testing.T) {
+	noCaps := &sourcetest.Source{InfoData: source.Info{ID: "plain", Name: "Plain"}}
+	app := &App{
+		src:     noCaps,
+		nav:     []source.NavItem{{ID: "home", Title: "首页", Icon: source.IconHome}},
+		pal:     darkPalette(),
+		posters: newPosters(t.TempDir(), func() {}),
+		lib:     testLibrary(t),
+	}
+	tt := ui.NewTester(app.sidebar, 220, 600)
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleButton, "搜索"); ok {
+		t.Error("search nav item shown without CapSearch")
+	}
+
+	w := &Watching{app: app, index: 0, detail: &Media{Episodes: []source.Episode{{ID: "e1"}}}}
+	ttStage := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
+	ttStage.Frame()
+	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); ok {
+		t.Error("danmaku toggle shown without CapDanmaku")
+	}
+
+	withCaps := &sourcetest.Source{InfoData: source.Info{
+		ID:           "full",
+		Name:         "Full",
+		Capabilities: []source.Capability{source.CapSearch, source.CapDanmaku},
+	}}
+	app.src = withCaps
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleButton, "搜索"); !ok {
+		t.Error("search nav item hidden with CapSearch")
+	}
+	ttStage.Frame()
+	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); !ok {
+		t.Error("danmaku toggle hidden with CapDanmaku")
+	}
+}
+
+func TestSeasonCardUsesRealNameAndImage(t *testing.T) {
+	named := Season{
+		ID:        "s2",
+		Title:     "第2季",
+		Name:      "某剧 第二季",
+		Image:     "https://cdn.example.com/s2.jpg",
+		Available: source.Bool(false),
+	}
+	c := seasonCard(named)
+	if c.ID != "s2" || c.Title != "某剧 第二季" || c.Image != "https://cdn.example.com/s2.jpg" || c.Kind != source.CardMedia {
+		t.Fatalf("seasonCard(named) = %+v", c)
+	}
+
+	// Omitting Name falls back to Season.Title, never concatenating the current drama title.
+	unnamed := Season{ID: "s3", Title: "第3季", Available: source.Bool(false)}
+	c2 := seasonCard(unnamed)
+	if c2.Title != "第3季" || c2.Image != "" {
+		t.Fatalf("seasonCard(unnamed) = %+v", c2)
+	}
+
+	// Following an announced season from the ended overlay stores its real name and poster.
+	w, _, _ := seasonsWatching(t, false)
+	w.show = Card{Kind: source.CardMedia, ID: "s1", Title: "某剧 第一季", Image: "https://cdn.example.com/s1.jpg"}
+	w.seasons[1].Name = "某剧 第二季"
+	w.seasons[1].Image = "https://cdn.example.com/s2.jpg"
+	w.ended = true
+	tt := ui.NewTester(func(c *ui.Context) { w.app.stageMessage(c, w) }, 800, 500)
+	tt.Frame()
+	if err := tt.Click("追第2季"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	followed := w.app.lib.Followed()
+	if len(followed) != 1 || followed[0].Card.Title != "某剧 第二季" || followed[0].Card.Image != "https://cdn.example.com/s2.jpg" {
+		t.Fatalf("followed announced season = %+v", followed)
+	}
+}
+
+// The app never cancels its calls to the source (it drops stale results by
+// generation instead), so a context.Canceled reaching it is the source
+// failing: it must show an error and leave a retry, not spin or stay blank.
+func TestSourceCancellationShowsError(t *testing.T) {
+	done := make(chan func(), 8)
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "demo", Capabilities: []source.Capability{source.CapSearch, source.CapSearchHome}},
+		OnCollection: func(context.Context, source.CollectionRequest) (*source.CollectionPage, error) {
+			return nil, context.Canceled
+		},
+		OnSearchHome: func(context.Context) (*source.CollectionPage, error) {
+			return nil, context.Canceled
+		},
+	}
+	app := &App{
+		src:   src,
+		feeds: map[string]*Feed{},
+		lib:   testLibrary(t),
+		post:  func(fn func()) { done <- fn },
+	}
+	drain := func() {
+		t.Helper()
+		select {
+		case fn := <-done:
+			fn()
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for async callback")
+		}
+	}
+
+	f := app.feed(pageRecommend)
+	app.loadMore(f)
+	drain()
+	if f.err == "" || f.loading || !f.loaded {
+		t.Fatalf("canceled feed: err=%q loading=%v loaded=%v", f.err, f.loading, f.loaded)
+	}
+
+	app.loadHot()
+	drain()
+	if app.search.hotErr == "" || app.search.hotBusy {
+		t.Fatalf("canceled hot: err=%q busy=%v", app.search.hotErr, app.search.hotBusy)
+	}
+
+	ps := &personState{actor: Card{Kind: source.CardCollection, ID: "person:1", Title: "演员"}}
+	app.person = ps
+	app.loadPerson(ps)
+	drain()
+	if ps.headerErr == "" || ps.headerBusy {
+		t.Fatalf("canceled person: err=%q busy=%v", ps.headerErr, ps.headerBusy)
+	}
+
+	w := &Watching{app: app, detail: &Media{Episodes: []source.Episode{{ID: "e1"}, {ID: "e2"}}}}
+	w.failed(0, false, context.Canceled)
+	if w.err == "" || w.skipped != 0 {
+		t.Fatalf("canceled playback failed(): err=%q skipped=%d", w.err, w.skipped)
 	}
 }

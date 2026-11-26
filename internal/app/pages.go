@@ -1,12 +1,16 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 const (
@@ -118,29 +122,46 @@ func firstRune(s string) string {
 // cardExtras is what a page adds to a drama's card.
 type cardExtras struct {
 	badge string // over the cover
-	// under draws below the title, in place of the tag, and returns what
+	// under draws below the title, in place of the note, and returns what
 	// screen readers read of it.
 	under func() string
 	// corner draws controls of their own at the card's bottom right, which
 	// a card, being one button, could not hold inside it.
 	corner func()
+	// onClick overrides the default click action (e.g. for cross-source records).
+	onClick func()
 }
 
-func episodesExtras(_ int, s Show) cardExtras { return cardExtras{badge: episodesBadge(s)} }
+func cardBadge(s Card) string {
+	if len(s.Badges) > 0 {
+		return s.Badges[0]
+	}
+	return ""
+}
 
-// card is a drama in a grid: its cover and title, and the page's extras. A
+func episodesExtras(_ int, s Card) cardExtras { return cardExtras{badge: cardBadge(s)} }
+
+func (app *App) openCard(sourceID string, s Card) {
+	if s.Kind == source.CardCollection {
+		app.openPerson(s)
+		return
+	}
+	app.open(sourceID, s, -1)
+}
+
+// card is a media card in a grid: its cover and title, and the page's extras. A
 // click opens it.
-func (app *App) card(c *ui.Context, s Show, width float32, x cardExtras) {
+func (app *App) card(c *ui.Context, s Card, width float32, x cardExtras) {
 	p := app.pal
 	ui.Box(c.Key(s.ID)).Width(width).Children(func() {
 		b := ui.ButtonBase(c).Width(width).AlignItems(ui.Start).Cursor(ui.CursorPointer).Label(s.Title)
 		hover := b.Hovered() || b.FocusVisible()
 		lift := b.AnimateTo("lift", boolf(hover), ui.Smooth)
 		b.AnimatePose(ui.Pose{Scale: 1 - 0.02*boolf(b.Pressed())}, ui.Snappy)
-		note := s.Tag
+		note := s.Note
 		b.Children(func() {
 			ui.Column(c).Width(width).Gap(9).Children(func() {
-				poster := app.poster(c, s.Cover, s.Title, 10)
+				poster := app.poster(c, s.Image, s.Title, 10)
 				poster.Shadow(0, 2+8*lift, 6+18*lift, 0, p.shade.Alpha(0.10+0.16*lift)).Translate(0, -3*lift)
 				poster.Children(func() {
 					if x.badge != "" {
@@ -162,15 +183,19 @@ func (app *App) card(c *ui.Context, s Show, width float32, x cardExtras) {
 						TextColor(b.AnimateColor("title", ternary(hover, p.accent, p.text), quick))
 					if x.under != nil {
 						note = x.under()
-					} else if s.Tag != "" {
-						ui.Text(c, s.Tag).FontSize(11.5).TextColor(p.muted).SingleLine()
+					} else if s.Note != "" {
+						ui.Text(c, s.Note).FontSize(11.5).TextColor(p.muted).SingleLine()
 					}
 				})
 			})
 		})
 		b.Description(joinNonEmpty(x.badge, note))
 		if b.Clicked() {
-			app.open(s, -1)
+			if x.onClick != nil {
+				x.onClick()
+			} else {
+				app.openCard(app.sourceID(), s)
+			}
 		}
 		if x.corner != nil {
 			ui.Box(c).Absolute().Right(0).Bottom(0).Children(x.corner)
@@ -190,21 +215,14 @@ func ternary[T any](cond bool, a, b T) T {
 	return b
 }
 
-func episodesBadge(s Show) string {
-	if s.Episodes > 0 {
-		return fmt.Sprintf("全%d集", s.Episodes)
-	}
-	return ""
-}
-
 // grid lays cards out in rows that fill the width.
-func (app *App) grid(c *ui.Context, shows []Show, extras func(i int, s Show) cardExtras) {
+func (app *App) grid(c *ui.Context, cards []Card, extras func(i int, s Card) cardExtras) {
 	n, w := columns(app.contentWidth(c))
 	ui.Column(c).Gap(28).Children(func() {
-		for start := 0; start < len(shows); start += n {
+		for start := 0; start < len(cards); start += n {
 			ui.Row(c.Key(start)).Gap(cardGap).AlignItems(ui.Start).Children(func() {
-				for i := start; i < min(start+n, len(shows)); i++ {
-					app.card(c, shows[i], w, extras(i, shows[i]))
+				for i := start; i < min(start+n, len(cards)); i++ {
+					app.card(c, cards[i], w, extras(i, cards[i]))
 				}
 			})
 		}
@@ -253,8 +271,17 @@ func (app *App) feedFooter(c *ui.Context, loading bool, err string, more bool, r
 	})
 }
 
-func (app *App) feedPage(c *ui.Context, channel string) {
-	f := app.feed(channel)
+func (app *App) navTitle(id string) string {
+	for _, it := range app.nav {
+		if it.ID == id {
+			return it.Title
+		}
+	}
+	return strings.TrimPrefix(id, "channel:")
+}
+
+func (app *App) feedPage(c *ui.Context, colID string) {
+	f := app.feed(colID)
 	if !f.loaded && f.err == "" {
 		app.loadMore(f)
 	}
@@ -262,8 +289,8 @@ func (app *App) feedPage(c *ui.Context, channel string) {
 		pageRecommend: "为你精选的热门短剧",
 		pageLive:      "真人出演，好戏连台",
 		pageComic:     "动态漫剧，脑洞大开",
-	}[channel]
-	app.header(c, channel, subtitle, func() {
+	}[colID]
+	app.header(c, app.navTitle(colID), subtitle, func() {
 		if iconButton(c, iconRefresh, 16, app.pal.muted, "刷新").Clicked() {
 			f.reset()
 			app.loadMore(f)
@@ -279,7 +306,7 @@ func (app *App) feedPage(c *ui.Context, channel string) {
 		return
 	}
 	n, _ := columns(app.contentWidth(c))
-	ui.Scroll(c.Key("feed-"+channel)).TrackScroll(&f.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
+	ui.Scroll(c.Key("feed-"+colID)).TrackScroll(&f.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
 		app.grid(c, visible(f, n), episodesExtras)
 		app.feedFooter(c, f.loading, f.err, f.more, retry)
 	})
@@ -289,54 +316,55 @@ func (app *App) feedPage(c *ui.Context, channel string) {
 // ---- Ranking ----
 
 type rankState struct {
-	page    *RankPage // the last page loaded: the boards, and which is shown
+	filters []FilterRow // the boards and current selection
+	chosen  map[string]string
 	list    Feed
-	actors  []Actor // on the actors' boards, which list no dramas
-	content int
-	board   int
 }
 
-// loadRank loads a ranking from its start: content and board are IDs, empty
-// for the default.
-func (app *App) loadRank(content, board string) {
+// loadRank loads a ranking from its start with the given filter selections.
+func (app *App) loadRank(filters map[string]string) {
 	r := &app.rank
-	r.list.reset()
-	r.actors = nil
-	r.list.fetch = func(cursor string) (feedPage, error) {
-		p, err := app.be.Rank(content, board, cursor)
-		if err != nil {
-			return feedPage{}, err
+	if len(r.filters) > 1 {
+		key0 := r.filters[0].Key
+		prev0 := r.chosen[key0]
+		if prev0 == "" {
+			prev0 = r.filters[0].Value
 		}
-		return feedPage{items: p.Items, cursor: p.Cursor, more: p.HasMore, extra: p}, nil
+		if next0 := filters[key0]; next0 != "" && next0 != prev0 {
+			// Switching the primary category immediately hides the previous
+			// category's sub-boards until the new page returns its own.
+			r.filters = r.filters[:1]
+		}
+	}
+	r.chosen = maps.Clone(filters)
+	r.list.reset()
+	reqFilters := maps.Clone(filters)
+	r.list.fetch = func(cursor string) (feedPage, error) {
+		return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
+			ID:      pageRank,
+			Filters: reqFilters,
+			Cursor:  cursor,
+		}))
 	}
 	r.list.onPage = r.loaded
 	app.loadMore(&r.list)
 }
 
-// loaded takes in a page of the ranking: its boards, and its actors.
+// loaded takes in a page of the ranking and updates its filter rows.
 func (r *rankState) loaded(fp feedPage) {
-	p := fp.extra.(*RankPage)
-	r.page = p
-	if len(p.Actors) > 0 {
-		before := len(r.actors)
-		r.addActors(p.Actors)
-		// The feed holds dramas and took a page of only actors for its
-		// end; it ends when a page brings no new actors.
-		fresh := len(r.actors) > before
-		r.list.more = fresh && p.HasMore && p.Cursor != ""
-		if fresh {
-			r.list.stalls = 0
-		}
-	}
-	for i, ct := range p.Contents {
-		if ct.ID == p.Content {
-			r.content = i
-			for j, b := range ct.Boards {
-				if b.ID == p.Board {
-					r.board = j
-				}
+	if fp.page != nil && len(fp.page.Filters) > 0 {
+		r.filters = fp.page.Filters
+		next := map[string]string{}
+		for _, row := range r.filters {
+			if row.Value != "" {
+				next[row.Key] = row.Value
 			}
 		}
+		r.chosen = next
+	}
+	// Actor rankings report the true end immediately without extra stall retries.
+	if len(r.list.items) > 0 && r.list.items[0].Shape == source.ShapeCircle && r.list.stalls > 0 {
+		r.list.more = false
 	}
 }
 
@@ -345,11 +373,11 @@ func (app *App) rankPage(c *ui.Context) {
 	l := &r.list
 	p := app.pal
 	if l.fetch == nil {
-		app.loadRank("", "")
+		app.loadRank(nil)
 	}
 	retry := func() { l.err = ""; app.loadMore(l) }
 	app.header(c, "排行榜", "看看大家都在追什么", nil)
-	if r.page == nil {
+	if len(r.filters) == 0 && !l.loaded {
 		if l.err != "" {
 			app.centered(c, iconX, "加载失败", l.err, retry)
 		} else {
@@ -357,48 +385,59 @@ func (app *App) rankPage(c *ui.Context) {
 		}
 		return
 	}
-	contents := r.page.Contents
-	ui.Column(c).Padding(0, pagePad, 18).Gap(14).Children(func() {
-		ui.Row(c).Gap(22).Role(ui.RoleTabList).Label("榜单类别").FocusGroup(ui.Horizontal).Children(func() {
-			for i, ct := range contents {
-				if app.tab(c.Key("tab-"+ct.ID), ct.Name, i == r.content).Clicked() && i != r.content {
-					r.content, r.board = i, 0
-					app.loadRank(ct.ID, "")
-				}
+	if len(r.filters) > 0 {
+		ui.Column(c).Padding(0, pagePad, 18).Gap(14).Children(func() {
+			row0 := r.filters[0]
+			cur0 := r.chosen[row0.Key]
+			if cur0 == "" {
+				cur0 = row0.Value
 			}
-		})
-		// The actor ranking stopped listing boards (2026-11-17).
-		if r.content < len(contents) && len(contents[r.content].Boards) > 0 {
-			boards := contents[r.content].Boards
-			choices(c, "榜单").Gap(8).Wrap().Children(func() {
-				for j, b := range boards {
-					if radio(app.chip(c.Key(b.ID), b.Name, j == r.board), j == r.board).Clicked() && j != r.board {
-						r.board = j
-						app.loadRank(contents[r.content].ID, b.ID)
+			ui.Row(c).Gap(22).Role(ui.RoleTabList).Label(row0.Title).FocusGroup(ui.Horizontal).Children(func() {
+				for _, opt := range row0.Options {
+					selected := opt.Value == cur0
+					if app.tab(c.Key("tab-"+opt.Value), opt.Title, selected).Clicked() && !selected {
+						app.loadRank(map[string]string{row0.Key: opt.Value})
 					}
 				}
 			})
-		}
-	})
-	if len(r.actors) > 0 {
-		ui.Scroll(c.Key("rank-actors")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
-			app.actorGrid(c, r.actors)
-			app.feedFooter(c, l.loading, l.err, l.more, retry)
+			if len(r.filters) > 1 && len(r.filters[1].Options) > 0 {
+				row1 := r.filters[1]
+				cur1 := r.chosen[row1.Key]
+				if cur1 == "" {
+					cur1 = row1.Value
+				}
+				choices(c, row1.Title).Gap(8).Wrap().Children(func() {
+					for _, opt := range row1.Options {
+						selected := opt.Value == cur1
+						if radio(app.chip(c.Key(opt.Value), opt.Title, selected), selected).Clicked() && !selected {
+							app.loadRank(map[string]string{row0.Key: cur0, row1.Key: opt.Value})
+						}
+					}
+				})
+			}
 		})
-		app.pump(c, l)
-		return
 	}
 	if len(l.items) == 0 {
 		if l.err != "" {
 			app.centered(c, iconX, "加载失败", l.err, retry)
+		} else if l.loaded && !l.more {
+			app.centered(c, iconTrophy, "暂无排行", "", nil)
 		} else {
 			app.skeletonGrid(c, 2)
 		}
 		return
 	}
+	if l.items[0].Shape == source.ShapeCircle {
+		ui.Scroll(c.Key("rank-actors")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
+			app.actorGrid(c, l.items)
+			app.feedFooter(c, l.loading, l.err, l.more, retry)
+		})
+		app.pump(c, l)
+		return
+	}
 	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("rank")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
-		app.grid(c, visible(l, n), func(i int, s Show) cardExtras {
+		app.grid(c, visible(l, n), func(i int, s Card) cardExtras {
 			return cardExtras{under: func() string {
 				ui.Row(c).Gap(6).Children(func() {
 					n := ui.Text(c, "TOP "+itoa(i+1)).FontSize(11).Bold()
@@ -407,25 +446,16 @@ func (app *App) rankPage(c *ui.Context) {
 					} else {
 						n.TextColor(p.muted)
 					}
-					if s.Tag != "" {
-						ui.Text(c, s.Tag).FontSize(11).TextColor(p.muted).SingleLine()
+					if s.Note != "" {
+						ui.Text(c, s.Note).FontSize(11).TextColor(p.muted).SingleLine()
 					}
 				})
-				return joinNonEmpty(fmt.Sprintf("第%d名", i+1), s.Tag)
+				return joinNonEmpty(fmt.Sprintf("第%d名", i+1), s.Note)
 			}}
 		})
 		app.feedFooter(c, l.loading, l.err, l.more, retry)
 	})
 	app.pump(c, l)
-}
-
-// addActors adds the actors not listed yet.
-func (r *rankState) addActors(actors []Actor) {
-	for _, a := range actors {
-		if !slices.ContainsFunc(r.actors, func(b Actor) bool { return b.ID == a.ID }) {
-			r.actors = append(r.actors, a)
-		}
-	}
 }
 
 // ---- Search ----
@@ -434,7 +464,7 @@ type searchState struct {
 	query   string
 	shown   string // the query the results are for
 	results Feed
-	hot     []HotBoard
+	hot     []Section
 	hotErr  string
 	hotBusy bool
 	focus   bool
@@ -454,28 +484,37 @@ func (app *App) runSearch(q string) {
 		return
 	}
 	f.fetch = func(cursor string) (feedPage, error) {
-		items, next, more, err := app.be.Search(q, cursor)
-		return feedPage{items: items, cursor: next, more: more}, err
+		return pageResult(app.src.Search(context.Background(), source.SearchRequest{
+			Query:  q,
+			Cursor: cursor,
+		}))
 	}
 	app.loadMore(f)
 }
 
-// loadHot loads the hot-search boards, once.
+// loadHot loads the search home sections, once.
 func (app *App) loadHot() {
+	if !app.hasCap(source.CapSearchHome) {
+		return
+	}
 	s := &app.search
 	if s.hot != nil || s.hotBusy || s.hotErr != "" {
 		return
 	}
 	s.hotBusy = true
-	async(app, app.be.Hot, func(h []HotBoard, err error) {
+	src := app.src
+	async(app, func() (*source.CollectionPage, error) {
+		return src.SearchHome(context.Background())
+	}, func(p *source.CollectionPage, err error) {
 		s.hotBusy = false
 		if err != nil {
 			s.hotErr = errText(err)
 			return
 		}
-		s.hot = h
-		if s.hot == nil {
-			s.hot = []HotBoard{}
+		if p != nil && p.Sections != nil {
+			s.hot = p.Sections
+		} else {
+			s.hot = []Section{}
 		}
 	})
 }
@@ -534,6 +573,10 @@ func (app *App) searchPage(c *ui.Context) {
 func (app *App) hotBoards(c *ui.Context) {
 	s := &app.search
 	p := app.pal
+	if !app.hasCap(source.CapSearchHome) {
+		app.centered(c, iconSearch, "搜索短剧", "输入剧名后按回车", nil)
+		return
+	}
 	if s.hot == nil {
 		if s.hotErr != "" {
 			app.centered(c, iconSearch, "搜索短剧", "输入剧名后按回车", nil)
@@ -553,24 +596,24 @@ func (app *App) hotBoards(c *ui.Context) {
 				ui.Column(c.Key(bi)).Width(320).Padding(18, 14, 12).Radius(16).Background(p.surface).Gap(2).Children(func() {
 					ui.Row(c).Gap(7).Padding(0, 6, 10).Children(func() {
 						ui.Icon(c, iconFlame).Size(16, 16).TextColor(p.accent)
-						ui.Text(c, b.Name).FontSize(15).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(2)
+						ui.Text(c, b.Title).FontSize(15).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(2)
 					})
 					for i, it := range b.Items {
 						if i >= 10 {
 							break
 						}
-						row := ui.ButtonBase(c.Key(it.ID)).Gap(12).Padding(8, 8).Radius(9).AlignItems(ui.Center).Label(it.Title).Description(joinNonEmpty(fmt.Sprintf("第%d名", i+1), it.Tag))
+						row := ui.ButtonBase(c.Key(it.ID)).Gap(12).Padding(8, 8).Radius(9).AlignItems(ui.Center).Label(it.Title).Description(joinNonEmpty(fmt.Sprintf("第%d名", i+1), it.Note))
 						pressable(row, ui.Transparent, p.hover.Mix(p.text, 0.02), 0.98)
 						row.Children(func() {
 							n := ui.Text(c, itoa(i+1)).FontSize(15).Bold().Width(18).TextAlign(ui.Center)
 							n.TextColor(ternary(i < 3, p.accent, p.faint))
 							ui.Text(c, it.Title).FontSize(13.5).SingleLine().Grow(1).TextColor(p.text)
-							if it.Tag != "" {
-								ui.Text(c, it.Tag).FontSize(11).TextColor(p.muted).NoWrap()
+							if it.Note != "" {
+								ui.Text(c, it.Note).FontSize(11).TextColor(p.muted).NoWrap()
 							}
 						})
 						if row.Clicked() {
-							app.open(it, -1)
+							app.openCard(app.sourceID(), it)
 						}
 					}
 				})
@@ -611,7 +654,7 @@ func watchBadge(r *Record) string {
 func (app *App) watchBar(c *ui.Context, r *Record) {
 	p := app.pal
 	frac := float32(0)
-	if n := r.Show.Episodes; n > 0 {
+	if n := r.Episodes; n > 0 {
 		done := float64(r.Episode)
 		if r.Duration > 0 {
 			done += min(r.Position/r.Duration, 1)
@@ -648,12 +691,12 @@ func (app *App) historyPage(c *ui.Context) {
 		app.centered(c, iconClock, ternary(app.historyFilter == 2, "还没有看完的剧", "没有在看的剧"), "", nil)
 		return
 	}
-	shows := make([]Show, len(recent))
+	cards := make([]Card, len(recent))
 	for i, w := range recent {
-		shows[i] = w.Show
+		cards[i] = w.Card
 	}
 	ui.Scroll(c.Key("history")).TrackScroll(&app.shelf).Grow(1).Padding(4, pagePad, 24).Children(func() {
-		app.grid(c, shows, func(i int, s Show) cardExtras {
+		app.grid(c, cards, func(i int, s Card) cardExtras {
 			w := recent[i]
 			return cardExtras{
 				badge: watchBadge(w),
@@ -668,42 +711,56 @@ func (app *App) historyPage(c *ui.Context) {
 						ui.Text(c, "移除").FontSize(11).TextColor(x.AnimateColor("fg", ternary(x.Hovered(), p.accent, p.faint), quick))
 					})
 					if x.Clicked() {
-						app.lib.Forget(s.ID)
+						app.lib.Forget(w.Ref())
 					}
 				},
+				onClick: func() { app.open(w.Source, w.Card, -1) },
 			}
 		})
 	})
 }
 
 func (app *App) followsPage(c *ui.Context) {
-	shows := app.lib.Followed()
+	followed := app.lib.Followed()
 	app.header(c, "追剧", "收藏的短剧都在这里", nil)
-	if len(shows) == 0 {
+	if len(followed) == 0 {
 		app.centered(c, iconHeart, "还没有追的剧", "在播放页点“追剧”即可收藏", nil)
 		return
 	}
+	cards := make([]Card, len(followed))
+	for i, fl := range followed {
+		cards[i] = fl.Card
+	}
 	ui.Scroll(c.Key("follows")).Grow(1).Padding(4, pagePad, 24).Children(func() {
-		app.grid(c, shows, func(i int, s Show) cardExtras {
-			w := app.lib.History[s.ID]
+		app.grid(c, cards, func(i int, s Card) cardExtras {
+			fl := followed[i]
+			w := app.lib.History[fl.Ref()]
 			if w == nil {
-				return cardExtras{badge: episodesBadge(s), under: func() string {
-					ui.Text(c, "还没看").FontSize(11).TextColor(app.pal.muted)
-					return "还没看"
-				}}
+				return cardExtras{
+					badge: cardBadge(s),
+					under: func() string {
+						ui.Text(c, "还没看").FontSize(11).TextColor(app.pal.muted)
+						return "还没看"
+					},
+					onClick: func() { app.open(fl.Source, fl.Card, -1) },
+				}
 			}
-			return cardExtras{badge: watchBadge(w), under: func() string {
-				app.watchBar(c, w)
-				ui.Text(c, ago(w)).FontSize(11).TextColor(app.pal.muted)
-				return ago(w)
-			}}
+			return cardExtras{
+				badge: watchBadge(w),
+				under: func() string {
+					app.watchBar(c, w)
+					ui.Text(c, ago(w)).FontSize(11).TextColor(app.pal.muted)
+					return ago(w)
+				},
+				onClick: func() { app.open(fl.Source, fl.Card, -1) },
+			}
 		})
 	})
 }
 
-func (app *App) toggleFollow(s Show) {
-	app.lib.ToggleFollow(s)
-	if app.lib.Following(s.ID) {
+func (app *App) toggleFollow(sourceID string, s Card) {
+	app.lib.ToggleFollow(sourceID, s)
+	if app.lib.Following(source.Ref{Source: sourceID, ID: s.ID}) {
 		app.toast = "已加入追剧"
 	} else {
 		app.toast = "已取消追剧"

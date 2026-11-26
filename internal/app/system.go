@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 // setMenu gives the app its menu bar: the app menu with updates, the
@@ -24,6 +26,21 @@ func (app *App) setMenu() {
 			}
 		}
 	}
+	editSubmenu := []*mygo.MenuItem{
+		{Role: mygo.RoleUndo, Label: "撤销"},
+		{Role: mygo.RoleRedo, Label: "重做"},
+		mygo.Separator(),
+		{Role: mygo.RoleCut, Label: "剪切"},
+		{Role: mygo.RoleCopy, Label: "拷贝"},
+		{Role: mygo.RolePaste, Label: "粘贴"},
+		{Role: mygo.RoleSelectAll, Label: "全选"},
+	}
+	if app.hasCap(source.CapSearch) {
+		editSubmenu = append(editSubmenu,
+			mygo.Separator(),
+			&mygo.MenuItem{Label: "搜索", Accelerator: "CmdOrCtrl+F", Click: run(func() { app.go2(pageSearch); app.search.focus = true })},
+		)
+	}
 	name := "一集"
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 		{Label: name, Submenu: []*mygo.MenuItem{
@@ -38,17 +55,7 @@ func (app *App) setMenu() {
 			mygo.Separator(),
 			{Role: mygo.RoleQuit, Label: "退出" + name},
 		}},
-		{Label: "编辑", Submenu: []*mygo.MenuItem{
-			{Role: mygo.RoleUndo, Label: "撤销"},
-			{Role: mygo.RoleRedo, Label: "重做"},
-			mygo.Separator(),
-			{Role: mygo.RoleCut, Label: "剪切"},
-			{Role: mygo.RoleCopy, Label: "拷贝"},
-			{Role: mygo.RolePaste, Label: "粘贴"},
-			{Role: mygo.RoleSelectAll, Label: "全选"},
-			mygo.Separator(),
-			{Label: "搜索", Accelerator: "CmdOrCtrl+F", Click: run(func() { app.go2(pageSearch); app.search.focus = true })},
-		}},
+		{Label: "编辑", Submenu: editSubmenu},
 		{Label: "播放", Submenu: []*mygo.MenuItem{
 			{Label: "播放/暂停", Click: run(onWatch(func(w *Watching) { w.togglePlay() }))},
 			{Label: "上一集", Accelerator: "CmdOrCtrl+Up", Click: run(onWatch(func(w *Watching) { w.step(-1) }))},
@@ -57,7 +64,7 @@ func (app *App) setMenu() {
 			{Label: "快进 10 秒", Accelerator: "CmdOrCtrl+Right", Click: run(onWatch(func(w *Watching) { w.seekBy(10) }))},
 			{Label: "快退 10 秒", Accelerator: "CmdOrCtrl+Left", Click: run(onWatch(func(w *Watching) { w.seekBy(-10) }))},
 			mygo.Separator(),
-			{Label: "追剧/取消追剧", Accelerator: "CmdOrCtrl+D", Click: run(onWatch(func(w *Watching) { app.toggleFollow(w.show) }))},
+			{Label: "追剧/取消追剧", Accelerator: "CmdOrCtrl+D", Click: run(onWatch(func(w *Watching) { app.toggleFollow(w.sourceID, w.show) }))},
 			{Label: "返回", Accelerator: "CmdOrCtrl+[", Click: run(app.closeWatch)},
 		}},
 		{Label: "窗口", Submenu: []*mygo.MenuItem{
@@ -116,7 +123,7 @@ func (w *Watching) nowPlaying() {
 		State:    mygo.PlaybackPlaying,
 		Commands: mygo.MediaPlay | mygo.MediaPause | mygo.MediaSeek | mygo.MediaNext | mygo.MediaPrevious,
 	}
-	if img := w.app.posters.Image(w.show.Cover); img != nil {
+	if img := w.app.posters.Image(w.show.Image); img != nil {
 		var buf bytes.Buffer
 		if jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}) == nil {
 			info.Artwork = buf.Bytes()

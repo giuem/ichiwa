@@ -1,12 +1,13 @@
-// Package cenc decrypts a progressive (non-fragmented) MP4 protected with
-// the CENC "cenc" scheme (AES-128 CTR) in place.
+package media
+
+// Progressive (non-fragmented) MP4 CENC ("cenc" scheme, AES-128 CTR) in-place
+// decryption.
 //
 // Decryption keeps every box the same size, so no offset changes:
 // each encrypted sample is decrypted where it sits in mdat, the protected
 // sample entry (encv/enca) takes back its original format from frma, and
 // the protection boxes (sinf, senc, saio, saiz, seig sample groups) are
 // renamed to "free" so players ignore them.
-package cenc
 
 import (
 	"crypto/aes"
@@ -62,7 +63,7 @@ func child(buf []byte, b box, typ string) (box, bool) {
 	return box{}, false
 }
 
-func path(buf []byte, b box, types ...string) (box, bool) {
+func boxPath(buf []byte, b box, types ...string) (box, bool) {
 	cur := b
 	for _, t := range types {
 		var ok bool
@@ -73,10 +74,10 @@ func path(buf []byte, b box, types ...string) (box, bool) {
 	return cur, true
 }
 
-func rename(buf []byte, b box, typ string) { copy(buf[b.start+4:b.start+8], typ) }
+func renameBox(buf []byte, b box, typ string) { copy(buf[b.start+4:b.start+8], typ) }
 
-// IsEncrypted reports whether the MP4 has a protected sample entry.
-func IsEncrypted(buf []byte) bool {
+// IsCENCEncrypted reports whether the MP4 has a protected sample entry.
+func IsCENCEncrypted(buf []byte) bool {
 	top, err := readBoxes(buf, 0, len(buf))
 	if err != nil {
 		return false
@@ -90,7 +91,7 @@ func IsEncrypted(buf []byte) bool {
 			if t.typ != "trak" {
 				continue
 			}
-			if stsd, ok := path(buf, t, "mdia", "minf", "stbl", "stsd"); ok && stsd.body+16 <= stsd.end {
+			if stsd, ok := boxPath(buf, t, "mdia", "minf", "stbl", "stsd"); ok && stsd.body+16 <= stsd.end {
 				typ := string(buf[stsd.body+12 : stsd.body+16])
 				if typ == "encv" || typ == "enca" {
 					return true
@@ -101,8 +102,8 @@ func IsEncrypted(buf []byte) bool {
 	return false
 }
 
-// Decrypt decrypts buf in place with the 16-byte key given as hex.
-func Decrypt(buf []byte, keyHex string) error {
+// DecryptCENC decrypts buf in place with the 16-byte key given as hex.
+func DecryptCENC(buf []byte, keyHex string) error {
 	key, err := hex.DecodeString(keyHex)
 	if err != nil || len(key) != 16 {
 		return errors.New("cenc: key must be 32 hex characters")
@@ -144,7 +145,7 @@ func Decrypt(buf []byte, keyHex string) error {
 }
 
 func decryptTrack(buf []byte, trak box, block cipher.Block) error {
-	stbl, ok := path(buf, trak, "mdia", "minf", "stbl")
+	stbl, ok := boxPath(buf, trak, "mdia", "minf", "stbl")
 	if !ok {
 		return nil
 	}
@@ -195,7 +196,7 @@ func decryptTrack(buf []byte, trak box, block cipher.Block) error {
 			return fmt.Errorf("cenc: unsupported scheme %q", s)
 		}
 	}
-	tenc, ok := path(buf, sinf, "schi", "tenc")
+	tenc, ok := boxPath(buf, sinf, "schi", "tenc")
 	if !ok || tenc.body+24 > tenc.end {
 		return errors.New("cenc: missing tenc")
 	}
@@ -272,16 +273,16 @@ func decryptTrack(buf []byte, trak box, block cipher.Block) error {
 
 	// Make the track look clear.
 	copy(buf[entry.start+4:entry.start+8], buf[frma.body:frma.body+4])
-	rename(buf, sinf, "free")
+	renameBox(buf, sinf, "free")
 	stblKids, _ := readBoxes(buf, stbl.body, stbl.end)
 	for _, k := range stblKids {
 		switch k.typ {
 		case "senc", "saio", "saiz":
-			rename(buf, k, "free")
+			renameBox(buf, k, "free")
 		case "sgpd", "sbgp":
 			// grouping_type follows the fullbox header.
 			if k.body+8 <= k.end && string(buf[k.body+4:k.body+8]) == "seig" {
-				rename(buf, k, "free")
+				renameBox(buf, k, "free")
 			}
 		}
 	}
