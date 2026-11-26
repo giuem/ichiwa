@@ -676,6 +676,20 @@ func rawString(raw json.RawMessage) (string, bool) {
 	}
 }
 
+// rawLock reads an episode's lock. Like a lock value the host does not
+// know, a lock of the wrong type is still a lock: anything present that is
+// neither null nor a string locks the episode.
+func rawLock(raw json.RawMessage) Lock {
+	if len(raw) == 0 || rawIsNull(raw) {
+		return LockNone
+	}
+	s, ok := rawString(raw)
+	if !ok {
+		return LockUnavailable
+	}
+	return Lock(s)
+}
+
 func rawOptString(obj map[string]json.RawMessage, key string) string {
 	s, _ := rawString(obj[key])
 	return s
@@ -1041,7 +1055,7 @@ func DecodeMedia(raw []byte, opts CleanOptions) (*Media, error) {
 			Image:    rawOptString(obj, "image"),
 			Badges:   rawStringSlice(obj["badges"]),
 			Aspect:   Aspect(rawOptString(obj, "aspect")),
-			Lock:     Lock(rawOptString(obj, "lock")),
+			Lock:     rawLock(obj["lock"]),
 		})
 	}
 

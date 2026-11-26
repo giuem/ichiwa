@@ -249,7 +249,10 @@ func TestDecodeMedia(t *testing.T) {
 			{"id": "e1", "title": "重复的第一集", "duration": 99},
 			{"id": "", "title": "bad"},
 			{"id": "e2", "duration": 62.5, "lock": " vip "},
-			{"id": "e3", "lock": ""}
+			{"id": "e3", "lock": ""},
+			{"id": "e4", "lock": true},
+			{"id": "e5", "lock": 0},
+			{"id": "e6", "lock": null}
 		]
 	}`
 	m, err := DecodeMedia([]byte(raw), opts)
@@ -269,8 +272,10 @@ func TestDecodeMedia(t *testing.T) {
 		t.Fatalf("season[1] = %+v", m.Seasons[1])
 	}
 	// An unknown lock is still a lock; " vip " is trimmed, not read as playable.
-	if len(m.Episodes) != 3 || m.Episodes[0].Title != "第一集" || m.Episodes[0].Duration != 0 ||
-		m.Episodes[0].Lock != LockUnavailable || m.Episodes[1].Lock != LockVIP || m.Episodes[2].Lock != LockNone {
+	// A lock of the wrong type locks too; null and "" do not.
+	if len(m.Episodes) != 6 || m.Episodes[0].Title != "第一集" || m.Episodes[0].Duration != 0 ||
+		m.Episodes[0].Lock != LockUnavailable || m.Episodes[1].Lock != LockVIP || m.Episodes[2].Lock != LockNone ||
+		m.Episodes[3].Lock != LockUnavailable || m.Episodes[4].Lock != LockUnavailable || m.Episodes[5].Lock != LockNone {
 		t.Fatalf("episodes = %+v", m.Episodes)
 	}
 }
@@ -511,5 +516,23 @@ func TestCleanRefreshDropsCollectionAndDedups(t *testing.T) {
 	}
 	if len(cards) != 2 || cards[0].ID != "m1" || cards[0].Title != "剧一" || cards[1].ID != "2" {
 		t.Fatalf("refresh cards = %+v", cards)
+	}
+}
+
+func TestEnumsAreTrimmed(t *testing.T) {
+	if got := cleanShape(" circle "); got != ShapeCircle {
+		t.Errorf("shape = %q", got)
+	}
+	if got := cleanLayout(" ranked "); got != LayoutRanked {
+		t.Errorf("layout = %q", got)
+	}
+	if got := cleanSectionLayout(" grid "); got != SectionGrid {
+		t.Errorf("section layout = %q", got)
+	}
+	if got := cleanIcon(" fire "); got != IconFire {
+		t.Errorf("icon = %q", got)
+	}
+	if e, ok := cleanEncryption(&Encryption{Scheme: " cenc ", Key: "00112233445566778899aabbccddeeff"}); !ok || e.Scheme != EncryptionCENC {
+		t.Errorf("encryption = %+v, %v", e, ok)
 	}
 }
