@@ -12,8 +12,8 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"ichiwa/internal/catalog"
-	"ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/library"
 )
 
 const sidebarWidth = 220

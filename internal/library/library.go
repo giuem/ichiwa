@@ -15,7 +15,7 @@ import (
 
 	"github.com/egoist/mygo/plugins/sqlite"
 
-	"ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/catalog"
 )
 
 // Record is where the user is in a drama.

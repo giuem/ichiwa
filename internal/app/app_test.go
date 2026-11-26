@@ -7,7 +7,7 @@ import (
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
 
-	"ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/library"
 )
 
 // Times show as minutes and seconds, and hours only past an hour.

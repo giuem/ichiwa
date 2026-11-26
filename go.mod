@@ -1,4 +1,4 @@
-module ichiwa
+module github.com/giuem/ichiwa
 
 go 1.27.3
 

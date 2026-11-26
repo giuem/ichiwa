@@ -1,8 +1,8 @@
 package app
 
 import (
-	"ichiwa/internal/catalog"
-	"ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/library"
 )
 
 // The catalog's and the library's types, by the names the views use.

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/catalog"
 
 	"github.com/egoist/mygo/plugins/sqlite"
 )

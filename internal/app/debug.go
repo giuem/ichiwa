@@ -8,7 +8,7 @@ import (
 
 	"github.com/egoist/mygo"
 
-	"ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/catalog"
 )
 
 // tour walks the pages and saves a screenshot of each into the directory

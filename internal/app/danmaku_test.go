@@ -7,8 +7,8 @@ import (
 	"github.com/egoist/mygo/ui"
 	"time"
 
-	"ichiwa/internal/catalog"
-	"ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/library"
 )
 
 func fixedWidth([]ui.Span) float32 { return 100 }
