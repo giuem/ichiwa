@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -37,9 +38,12 @@ const (
 type Source struct {
 	client *sdk.Client
 
-	mu     sync.Mutex
-	days   map[string]calDay // the 上新 calendar's days read lately
-	panels map[string]panelCache
+	calendarBudget time.Duration // max wait for calendar notes in Media; defaults to defaultCalendarBudget
+
+	mu          sync.Mutex
+	days        map[string]calDay // the 上新 calendar's days read lately
+	calInflight map[string]*calFlight
+	panels      map[string]panelCache
 }
 
 type panelCache struct {
@@ -122,7 +126,9 @@ func (s *Source) Collection(ctx context.Context, r source.CollectionRequest) (*s
 	case r.ID == ColFilter:
 		return s.filter(ctx, r.Filters, r.Cursor)
 	case strings.HasPrefix(r.ID, "person:"):
-		return s.person(ctx, strings.TrimPrefix(r.ID, "person:"), r.Cursor)
+		return s.person(ctx, strings.TrimPrefix(r.ID, "person:"))
+	case strings.HasPrefix(r.ID, "person-works:"):
+		return s.personWorks(ctx, strings.TrimPrefix(r.ID, "person-works:"), r.Cursor)
 	case strings.HasPrefix(r.ID, "related:"):
 		return s.related(ctx, strings.TrimPrefix(r.ID, "related:"))
 	default:
@@ -156,11 +162,14 @@ func (s *Source) discover(ctx context.Context, channel, cursor string) (*source.
 func (s *Source) rank(ctx context.Context, filters map[string]string, cursor string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-	r, err := s.client.ShortRank(ctx, sdk.ShortRankQuery{
-		Content: strings.TrimSpace(filters["content"]),
-		Board:   strings.TrimSpace(filters["board"]),
-		Cursor:  cursor,
-	})
+	var query sdk.ShortRankQuery
+	if cursor == "" {
+		query.Content = strings.TrimSpace(filters["content"])
+		query.Board = strings.TrimSpace(filters["board"])
+	} else {
+		query.Cursor = cursor
+	}
+	r, err := s.client.ShortRank(ctx, query)
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -267,25 +276,30 @@ func (s *Source) filterPanel(ctx context.Context, genre string) ([]model.FilterR
 	return rows, nil
 }
 
+const genreKey = "genre"
+
 func (s *Source) filter(ctx context.Context, chosen map[string]string, cursor string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var filterRows []source.FilterRow
-	effective := chosen
+	var query sdk.ShortFilterQuery
 	if cursor == "" {
-		genre := strings.TrimSpace(chosen["genre"])
+		genre := strings.TrimSpace(chosen[genreKey])
 		rows, err := s.filterPanel(ctx, genre)
 		if err != nil {
 			return nil, wrapErr(err)
 		}
+		var effective map[string]string
 		effective, filterRows = buildFilterRows(rows, chosen)
+		query.Selections = selections(effective)
+	} else {
+		// Pagination resumes the filter embedded in cursor; sending selections
+		// alongside cursor causes openhongguo to reject mismatched filters.
+		query.Cursor = cursor
 	}
 
-	page, err := s.client.ShortFilter(ctx, sdk.ShortFilterQuery{
-		Selections: selections(effective),
-		Cursor:     cursor,
-	})
+	page, err := s.client.ShortFilter(ctx, query)
 	if errors.Is(err, sdk.ErrContentUnavailable) && cursor == "" {
 		return &source.CollectionPage{
 			Title:   "筛选",
@@ -294,6 +308,13 @@ func (s *Source) filter(ctx context.Context, chosen map[string]string, cursor st
 		}, nil
 	}
 	if err != nil {
+		if cursor == "" && len(filterRows) > 0 {
+			return &source.CollectionPage{
+				Title:   "筛选",
+				Layout:  source.LayoutGrid,
+				Filters: filterRows,
+			}, wrapErr(err)
+		}
 		return nil, wrapErr(err)
 	}
 	items := make([]source.Card, 0, len(page.Items))
@@ -313,32 +334,62 @@ func (s *Source) filter(ctx context.Context, chosen map[string]string, cursor st
 	}, nil
 }
 
-// buildFilterRows converts Hongguo's filter rows to protocol FilterRows and
-// drops any chosen values that do not exist in the current genre's options.
+// buildFilterRows converts Hongguo's filter rows to protocol FilterRows. Non-
+// genre option values are prefixed with "<genre>:" so changing genre drops
+// selections from every other row statelessly.
 func buildFilterRows(rows []model.FilterRow, chosen map[string]string) (map[string]string, []source.FilterRow) {
 	effective := make(map[string]string, len(chosen))
-	out := make([]source.FilterRow, 0, len(rows))
+	genre := ""
 	for _, row := range rows {
-		val := strings.TrimSpace(chosen[row.Key])
-		valid := false
-		opts := make([]source.FilterOption, 0, len(row.Options)+1)
-		opts = append(opts, source.FilterOption{Value: "", Title: row.Name})
-		for _, o := range row.Options {
-			opts = append(opts, source.FilterOption{Value: o.Value, Title: o.Name})
-			if val != "" && o.Value == val {
-				valid = true
+		if row.Key != genreKey {
+			continue
+		}
+		if val := strings.TrimSpace(chosen[genreKey]); val != "" {
+			for _, o := range row.Options {
+				if o.Value == val {
+					genre = val
+					break
+				}
 			}
 		}
-		if valid {
-			effective[row.Key] = val
-		} else {
-			val = ""
+		break
+	}
+	prefix := genre + ":"
+	out := make([]source.FilterRow, 0, len(rows))
+	for _, row := range rows {
+		opts := make([]source.FilterOption, 0, len(row.Options)+1)
+		opts = append(opts, source.FilterOption{Value: "", Title: row.Name})
+		if row.Key == genreKey {
+			for _, o := range row.Options {
+				opts = append(opts, source.FilterOption{Value: o.Value, Title: o.Name})
+			}
+			if genre != "" {
+				effective[row.Key] = genre
+			}
+			out = append(out, source.FilterRow{
+				Key:     row.Key,
+				Title:   row.Name,
+				Options: opts,
+				Value:   genre,
+			})
+			continue
+		}
+		val := strings.TrimSpace(chosen[row.Key])
+		rawVal, hasPrefix := strings.CutPrefix(val, prefix)
+		selected := ""
+		for _, o := range row.Options {
+			encoded := prefix + o.Value
+			opts = append(opts, source.FilterOption{Value: encoded, Title: o.Name})
+			if hasPrefix && rawVal != "" && o.Value == rawVal {
+				effective[row.Key] = rawVal
+				selected = encoded
+			}
 		}
 		out = append(out, source.FilterRow{
 			Key:     row.Key,
 			Title:   row.Name,
 			Options: opts,
-			Value:   val,
+			Value:   selected,
 		})
 	}
 	return effective, out
@@ -354,62 +405,44 @@ func selections(chosen map[string]string) map[string][]string {
 	return out
 }
 
-func (s *Source) person(ctx context.Context, userID, cursor string) (*source.CollectionPage, error) {
+func (s *Source) person(ctx context.Context, userID string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-
-	var (
-		header    *source.Header
-		headerErr error
-		worksPage *model.WorkPage
-		worksErr  error
-	)
-	if cursor == "" {
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			p, err := s.client.Person(ctx, userID)
-			if err != nil {
-				headerErr = err
-				return
-			}
-			header = personHeader(p)
-		}()
-		go func() {
-			defer wg.Done()
-			worksPage, worksErr = s.client.PersonWorks(ctx, userID, "")
-		}()
-		wg.Wait()
-		if worksErr != nil && headerErr != nil {
-			return nil, wrapErr(worksErr)
-		}
-	} else {
-		worksPage, worksErr = s.client.PersonWorks(ctx, userID, cursor)
-		if worksErr != nil {
-			return nil, wrapErr(worksErr)
-		}
+	p, err := s.client.Person(ctx, userID)
+	if err != nil {
+		return nil, wrapErr(err)
 	}
-
-	out := &source.CollectionPage{
+	header := personHeader(p)
+	return &source.CollectionPage{
+		Title:  header.Title,
 		Header: header,
 		Layout: source.LayoutGrid,
+		Sections: []source.Section{{
+			Title:      "作品",
+			Layout:     source.SectionGrid,
+			Collection: "person-works:" + userID,
+		}},
+	}, nil
+}
+
+func (s *Source) personWorks(ctx context.Context, userID, cursor string) (*source.CollectionPage, error) {
+	ctx, cancel := withTimeout(ctx, 30*time.Second)
+	defer cancel()
+	worksPage, err := s.client.PersonWorks(ctx, userID, cursor)
+	if err != nil {
+		return nil, wrapErr(err)
 	}
-	if header != nil {
-		out.Title = header.Title
+	out := &source.CollectionPage{
+		Title:  "作品",
+		Layout: source.LayoutGrid,
 	}
-	if worksPage != nil {
-		for _, w := range worksPage.Items {
-			if w.SeriesID != "" {
-				out.Items = append(out.Items, cardOfWork(w))
-			}
+	for _, w := range worksPage.Items {
+		if w.SeriesID != "" {
+			out.Items = append(out.Items, cardOfWork(w))
 		}
-		if worksPage.HasMore && worksPage.Cursor != "" {
-			out.Cursor = worksPage.Cursor
-		}
 	}
-	if worksErr != nil && len(out.Items) == 0 && header == nil {
-		return nil, wrapErr(worksErr)
+	if worksPage.HasMore && worksPage.Cursor != "" {
+		out.Cursor = worksPage.Cursor
 	}
 	return out, nil
 }
@@ -490,11 +523,13 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 	defer cancel()
 
 	var (
-		series   *model.Series
-		serErr   error
-		episodes []model.Episode
-		epErr    error
-		seasons  []source.Season
+		series       *model.Series
+		serErr       error
+		episodes     []model.Episode
+		epErr        error
+		baseSeasons  []seasonEntry
+		annotatedCh  chan []seasonEntry
+		calStartedAt time.Time
 	)
 
 	var wg sync.WaitGroup
@@ -524,10 +559,26 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		// Seasons and calendar notes are best-effort so they never block or fail playback.
+		// Fetch season list alongside details; calendar annotation runs
+		// separately with a short budget so slow calendars never stall playback.
 		sCtx, sCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer sCancel()
-		seasons = s.loadSeasons(sCtx, id)
+		album, err := s.client.Seasons(sCtx, id)
+		if err != nil {
+			return
+		}
+		entries := seasonsOf(album.Seasons)
+		if len(entries) < 2 {
+			return
+		}
+		baseSeasons = entries
+		calStartedAt = time.Now()
+		annotatedCh = make(chan []seasonEntry, 1)
+		go func(in []seasonEntry) {
+			bgCtx, bgCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer bgCancel()
+			annotatedCh <- s.announce(bgCtx, in)
+		}(slices.Clone(entries))
 	}()
 	wg.Wait()
 
@@ -539,6 +590,39 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 	}
 	if len(episodes) == 0 {
 		return nil, source.NewError(source.ErrUnavailable, "这部剧暂时没有可看的剧集", nil)
+	}
+
+	var seasons []source.Season
+	if len(baseSeasons) >= 2 {
+		entries := baseSeasons
+		if annotatedCh != nil {
+			budget := s.calendarBudget
+			if budget <= 0 {
+				budget = defaultCalendarBudget
+			}
+			remaining := budget - time.Since(calStartedAt)
+			if remaining <= 0 {
+				select {
+				case got := <-annotatedCh:
+					entries = got
+				default:
+				}
+			} else {
+				timer := time.NewTimer(remaining)
+				select {
+				case got := <-annotatedCh:
+					timer.Stop()
+					entries = got
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+				}
+			}
+		}
+		seasons = make([]source.Season, 0, len(entries))
+		for _, e := range entries {
+			seasons = append(seasons, toProtocolSeason(e, e.ID == id))
+		}
 	}
 
 	meta := []source.Meta{{Value: fmt.Sprintf("全%d集", len(episodes))}}

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beilunyang/openhongguo/sdk"
@@ -14,9 +15,12 @@ import (
 	"github.com/giuem/ichiwa/internal/source"
 )
 
+const defaultCalendarBudget = time.Second
+
 type seasonEntry struct {
 	ID     string
 	Title  string
+	Cover  string
 	Index  int
 	Online bool
 	New    bool
@@ -24,21 +28,10 @@ type seasonEntry struct {
 	Heat   string
 }
 
-func (s *Source) loadSeasons(ctx context.Context, id string) []source.Season {
-	album, err := s.client.Seasons(ctx, id)
-	if err != nil {
-		return nil
-	}
-	entries := seasonsOf(album.Seasons)
-	if len(entries) < 2 {
-		return nil
-	}
-	entries = s.announce(ctx, entries)
-	out := make([]source.Season, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, toProtocolSeason(e, e.ID == id))
-	}
-	return out
+type calFlight struct {
+	done chan struct{}
+	day  calDay
+	err  error
 }
 
 func toProtocolSeason(e seasonEntry, current bool) source.Season {
@@ -61,6 +54,8 @@ func toProtocolSeason(e seasonEntry, current bool) source.Season {
 	return source.Season{
 		ID:        e.ID,
 		Title:     fmt.Sprintf("第%d季", e.Index),
+		Name:      e.Title,
+		Image:     e.Cover,
 		Current:   current,
 		Available: source.Bool(e.Online),
 		Note:      strings.Join(parts, " · "),
@@ -80,6 +75,7 @@ func seasonsOf(in []model.Season) []seasonEntry {
 		out = append(out, seasonEntry{
 			ID:     s.SeriesID,
 			Title:  s.Title,
+			Cover:  s.CoverURL,
 			Index:  s.Index,
 			Online: s.EpisodeCount > 0,
 		})
@@ -103,6 +99,12 @@ func seasonsOf(in []model.Season) []seasonEntry {
 
 func annotate(s *seasonEntry, r *model.NewRelease, loc *time.Location) {
 	s.Heat = r.Heat
+	if s.Cover == "" {
+		s.Cover = r.CoverURL
+	}
+	if s.Title == "" {
+		s.Title = r.Title
+	}
 	if r.Online {
 		s.New = true
 		if !r.PublishAt.IsZero() {
@@ -151,14 +153,38 @@ func (s *Source) announce(ctx context.Context, seasons []seasonEntry) []seasonEn
 		return slices.ContainsFunc(pending, func(i int) bool { return out[i].Online == online })
 	}
 	look(today.items)
+	if len(pending) == 0 {
+		return out
+	}
+
+	var days []string
 	for _, online := range []bool{false, true} {
-		for _, day := range calendarDates(today.dates, today.date, online) {
-			if !waiting(online) {
-				break
-			}
-			if d, err := s.calendar(ctx, day); err == nil {
-				look(d.items)
-			}
+		if waiting(online) {
+			days = append(days, calendarDates(today.dates, today.date, online)...)
+		}
+	}
+	if len(days) == 0 {
+		return out
+	}
+
+	results := make([]calDay, len(days))
+	errs := make([]error, len(days))
+	var wg sync.WaitGroup
+	for i, day := range days {
+		wg.Add(1)
+		go func(i int, day string) {
+			defer wg.Done()
+			results[i], errs[i] = s.calendar(ctx, day)
+		}(i, day)
+	}
+	wg.Wait()
+
+	for i := range days {
+		if len(pending) == 0 {
+			break
+		}
+		if errs[i] == nil {
+			look(results[i].items)
 		}
 	}
 	return out
@@ -173,32 +199,63 @@ type calDay struct {
 
 func (s *Source) calendar(ctx context.Context, day string) (calDay, error) {
 	s.mu.Lock()
-	c, ok := s.days[day]
-	s.mu.Unlock()
-	if ok && time.Since(c.at) < 10*time.Minute {
+	if c, ok := s.days[day]; ok && time.Since(c.at) < 10*time.Minute {
+		s.mu.Unlock()
 		return c, nil
 	}
+	if fl, ok := s.calInflight[day]; ok {
+		s.mu.Unlock()
+		select {
+		case <-fl.done:
+			return fl.day, fl.err
+		case <-ctx.Done():
+			return calDay{}, ctx.Err()
+		}
+	}
+	fl := &calFlight{done: make(chan struct{})}
+	if s.calInflight == nil {
+		s.calInflight = map[string]*calFlight{}
+	}
+	s.calInflight[day] = fl
+	s.mu.Unlock()
+
+	c, complete, err := s.fetchCalendarDay(ctx, day)
+
+	s.mu.Lock()
+	delete(s.calInflight, day)
+	if err == nil && complete {
+		if s.days == nil {
+			s.days = map[string]calDay{}
+		}
+		s.days[day] = c
+	}
+	s.mu.Unlock()
+
+	fl.day, fl.err = c, err
+	close(fl.done)
+	return c, err
+}
+
+func (s *Source) fetchCalendarDay(ctx context.Context, day string) (calDay, bool, error) {
 	page, err := s.client.NewReleases(ctx, sdk.NewReleaseQuery{Date: day})
 	if err != nil {
-		return calDay{}, err
+		return calDay{}, false, err
 	}
-	c = calDay{date: page.Date, dates: page.Dates, items: page.Items, at: time.Now()}
+	c := calDay{date: page.Date, dates: page.Dates, items: page.Items}
 	for range calendarPages - 1 {
 		if !page.HasMore || page.Cursor == "" {
 			break
 		}
-		if page, err = s.client.NewReleases(ctx, sdk.NewReleaseQuery{Cursor: page.Cursor}); err != nil {
-			break
+		next, err := s.client.NewReleases(ctx, sdk.NewReleaseQuery{Cursor: page.Cursor})
+		if err != nil {
+			// A half-read day must not be cached.
+			return c, false, nil
 		}
+		page = next
 		c.items = append(c.items, page.Items...)
 	}
-	s.mu.Lock()
-	if s.days == nil {
-		s.days = map[string]calDay{}
-	}
-	s.days[day] = c
-	s.mu.Unlock()
-	return c, nil
+	c.at = time.Now()
+	return c, true, nil
 }
 
 func calendarDates(dates []string, today string, online bool) []string {
