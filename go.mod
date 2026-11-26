@@ -3,7 +3,7 @@ module ichiwa
 go 1.27.3
 
 require (
-	github.com/beilunyang/openhongguo v0.4.0
+	github.com/beilunyang/openhongguo v0.4.1
 	github.com/ebitengine/purego v0.11.3
 	github.com/egoist/mygo v0.10.0
 	github.com/gen2brain/heic v0.7.2
