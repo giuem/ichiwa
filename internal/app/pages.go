@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -324,6 +325,18 @@ type rankState struct {
 // loadRank loads a ranking from its start with the given filter selections.
 func (app *App) loadRank(filters map[string]string) {
 	r := &app.rank
+	if len(r.filters) > 1 {
+		key0 := r.filters[0].Key
+		prev0 := r.chosen[key0]
+		if prev0 == "" {
+			prev0 = r.filters[0].Value
+		}
+		if next0 := filters[key0]; next0 != "" && next0 != prev0 {
+			// Switching the primary category immediately hides the previous
+			// category's sub-boards until the new page returns its own.
+			r.filters = r.filters[:1]
+		}
+	}
 	r.chosen = maps.Clone(filters)
 	r.list.reset()
 	reqFilters := maps.Clone(filters)
@@ -342,14 +355,17 @@ func (app *App) loadRank(filters map[string]string) {
 func (r *rankState) loaded(fp feedPage) {
 	if fp.page != nil && len(fp.page.Filters) > 0 {
 		r.filters = fp.page.Filters
-		if r.chosen == nil {
-			r.chosen = map[string]string{}
-		}
+		next := map[string]string{}
 		for _, row := range r.filters {
 			if row.Value != "" {
-				r.chosen[row.Key] = row.Value
+				next[row.Key] = row.Value
 			}
 		}
+		r.chosen = next
+	}
+	// Actor rankings report the true end immediately without extra stall retries.
+	if len(r.list.items) > 0 && r.list.items[0].Shape == source.ShapeCircle && r.list.stalls > 0 {
+		r.list.more = false
 	}
 }
 
@@ -362,7 +378,7 @@ func (app *App) rankPage(c *ui.Context) {
 	}
 	retry := func() { l.err = ""; app.loadMore(l) }
 	app.header(c, "排行榜", "看看大家都在追什么", nil)
-	if len(r.filters) == 0 {
+	if len(r.filters) == 0 && !l.loaded {
 		if l.err != "" {
 			app.centered(c, iconX, "加载失败", l.err, retry)
 		} else {
@@ -370,39 +386,43 @@ func (app *App) rankPage(c *ui.Context) {
 		}
 		return
 	}
-	ui.Column(c).Padding(0, pagePad, 18).Gap(14).Children(func() {
-		row0 := r.filters[0]
-		cur0 := r.chosen[row0.Key]
-		if cur0 == "" {
-			cur0 = row0.Value
-		}
-		ui.Row(c).Gap(22).Role(ui.RoleTabList).Label(row0.Title).FocusGroup(ui.Horizontal).Children(func() {
-			for _, opt := range row0.Options {
-				selected := opt.Value == cur0
-				if app.tab(c.Key("tab-"+opt.Value), opt.Title, selected).Clicked() && !selected {
-					app.loadRank(map[string]string{row0.Key: opt.Value})
-				}
+	if len(r.filters) > 0 {
+		ui.Column(c).Padding(0, pagePad, 18).Gap(14).Children(func() {
+			row0 := r.filters[0]
+			cur0 := r.chosen[row0.Key]
+			if cur0 == "" {
+				cur0 = row0.Value
 			}
-		})
-		if len(r.filters) > 1 && len(r.filters[1].Options) > 0 {
-			row1 := r.filters[1]
-			cur1 := r.chosen[row1.Key]
-			if cur1 == "" {
-				cur1 = row1.Value
-			}
-			choices(c, row1.Title).Gap(8).Wrap().Children(func() {
-				for _, opt := range row1.Options {
-					selected := opt.Value == cur1
-					if radio(app.chip(c.Key(opt.Value), opt.Title, selected), selected).Clicked() && !selected {
-						app.loadRank(map[string]string{row0.Key: cur0, row1.Key: opt.Value})
+			ui.Row(c).Gap(22).Role(ui.RoleTabList).Label(row0.Title).FocusGroup(ui.Horizontal).Children(func() {
+				for _, opt := range row0.Options {
+					selected := opt.Value == cur0
+					if app.tab(c.Key("tab-"+opt.Value), opt.Title, selected).Clicked() && !selected {
+						app.loadRank(map[string]string{row0.Key: opt.Value})
 					}
 				}
 			})
-		}
-	})
+			if len(r.filters) > 1 && len(r.filters[1].Options) > 0 {
+				row1 := r.filters[1]
+				cur1 := r.chosen[row1.Key]
+				if cur1 == "" {
+					cur1 = row1.Value
+				}
+				choices(c, row1.Title).Gap(8).Wrap().Children(func() {
+					for _, opt := range row1.Options {
+						selected := opt.Value == cur1
+						if radio(app.chip(c.Key(opt.Value), opt.Title, selected), selected).Clicked() && !selected {
+							app.loadRank(map[string]string{row0.Key: cur0, row1.Key: opt.Value})
+						}
+					}
+				})
+			}
+		})
+	}
 	if len(l.items) == 0 {
 		if l.err != "" {
 			app.centered(c, iconX, "加载失败", l.err, retry)
+		} else if l.loaded && !l.more {
+			app.centered(c, iconTrophy, "暂无排行", "", nil)
 		} else {
 			app.skeletonGrid(c, 2)
 		}
@@ -489,7 +509,9 @@ func (app *App) loadHot() {
 	}, func(p *source.CollectionPage, err error) {
 		s.hotBusy = false
 		if err != nil {
-			s.hotErr = errText(err)
+			if !errors.Is(err, context.Canceled) {
+				s.hotErr = errText(err)
+			}
 			return
 		}
 		if p != nil && p.Sections != nil {

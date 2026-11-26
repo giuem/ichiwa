@@ -1,7 +1,9 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/giuem/ichiwa/internal/source"
@@ -100,5 +102,51 @@ func TestFeedCache(t *testing.T) {
 	}
 	if f := (&App{src: srcA, feeds: map[string]*Feed{}, cacheDir: cacheDir}).feed(pageRank); f.cache != "" {
 		t.Fatal("only the channels are kept")
+	}
+}
+
+func TestFeedCacheMigratesLegacy(t *testing.T) {
+	cacheDir := t.TempDir()
+	legacyDir := filepath.Join(cacheDir, "feeds")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(legacyDir, "recommend.json")
+	legacyJSON := `[
+		{"ID":"s1","Title":"旧缓存剧","Desc":"简介内容","Cover":"https://ex/1.jpg","Episodes":80,"Tag":"甜宠"}
+	]`
+	if err := os.WriteFile(legacyPath, []byte(legacyJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-hongguo source ignores the legacy file.
+	otherSrc := &sourcetest.Source{InfoData: source.Info{ID: "other"}}
+	otherApp := &App{src: otherSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}
+	if of := otherApp.feed(pageRecommend); of.stale || len(of.items) != 0 {
+		t.Fatalf("non-hongguo read legacy cache: %+v", of)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("non-hongguo removed legacy cache: %v", err)
+	}
+
+	// Hongguo reads, converts fields, deletes the old file, and saves the new path.
+	hgSrc := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
+	app := &App{src: hgSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}
+	f := app.feed(pageRecommend)
+	if !f.stale || len(f.items) != 1 {
+		t.Fatalf("migrated feed = %+v", f)
+	}
+	c := f.items[0]
+	if c.Kind != source.CardMedia || c.ID != "s1" || c.Title != "旧缓存剧" || c.Subtitle != "简介内容" ||
+		c.Image != "https://ex/1.jpg" || !slices.Equal(c.Badges, []string{"全80集"}) || c.Note != "甜宠" {
+		t.Fatalf("converted card = %+v", c)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy feed cache was not removed: %v", err)
+	}
+	// A subsequent launch (even offline) reads from the new partitioned path.
+	app2 := &App{src: hgSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}
+	if f2 := app2.feed(pageRecommend); !f2.stale || len(f2.items) != 1 || f2.items[0].Title != "旧缓存剧" {
+		t.Fatalf("second launch feed = %+v", f2)
 	}
 }

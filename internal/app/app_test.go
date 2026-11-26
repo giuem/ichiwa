@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -552,5 +553,98 @@ func TestCapabilityHiding(t *testing.T) {
 	ttStage.Frame()
 	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); !ok {
 		t.Error("danmaku toggle hidden with CapDanmaku")
+	}
+}
+
+func TestSeasonCardUsesRealNameAndImage(t *testing.T) {
+	named := Season{
+		ID:        "s2",
+		Title:     "第2季",
+		Name:      "某剧 第二季",
+		Image:     "https://cdn.example.com/s2.jpg",
+		Available: source.Bool(false),
+	}
+	c := seasonCard(named)
+	if c.ID != "s2" || c.Title != "某剧 第二季" || c.Image != "https://cdn.example.com/s2.jpg" || c.Kind != source.CardMedia {
+		t.Fatalf("seasonCard(named) = %+v", c)
+	}
+
+	// Omitting Name falls back to Season.Title, never concatenating the current drama title.
+	unnamed := Season{ID: "s3", Title: "第3季", Available: source.Bool(false)}
+	c2 := seasonCard(unnamed)
+	if c2.Title != "第3季" || c2.Image != "" {
+		t.Fatalf("seasonCard(unnamed) = %+v", c2)
+	}
+
+	// Following an announced season from the ended overlay stores its real name and poster.
+	w, _, _ := seasonsWatching(t, false)
+	w.show = Card{Kind: source.CardMedia, ID: "s1", Title: "某剧 第一季", Image: "https://cdn.example.com/s1.jpg"}
+	w.seasons[1].Name = "某剧 第二季"
+	w.seasons[1].Image = "https://cdn.example.com/s2.jpg"
+	w.ended = true
+	tt := ui.NewTester(func(c *ui.Context) { w.app.stageMessage(c, w) }, 800, 500)
+	tt.Frame()
+	if err := tt.Click("追第2季"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	followed := w.app.lib.Followed()
+	if len(followed) != 1 || followed[0].Card.Title != "某剧 第二季" || followed[0].Card.Image != "https://cdn.example.com/s2.jpg" {
+		t.Fatalf("followed announced season = %+v", followed)
+	}
+}
+
+func TestCanceledCallShowsNoError(t *testing.T) {
+	done := make(chan func(), 8)
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "demo", Capabilities: []source.Capability{source.CapSearch, source.CapSearchHome}},
+		OnCollection: func(context.Context, source.CollectionRequest) (*source.CollectionPage, error) {
+			return nil, context.Canceled
+		},
+		OnSearchHome: func(context.Context) (*source.CollectionPage, error) {
+			return nil, context.Canceled
+		},
+	}
+	app := &App{
+		src:   src,
+		feeds: map[string]*Feed{},
+		lib:   testLibrary(t),
+		post:  func(fn func()) { done <- fn },
+	}
+	drain := func() {
+		t.Helper()
+		select {
+		case fn := <-done:
+			fn()
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for async callback")
+		}
+	}
+
+	f := app.feed(pageRecommend)
+	app.loadMore(f)
+	drain()
+	if f.err != "" || f.loading || f.loaded {
+		t.Fatalf("canceled feed: err=%q loading=%v loaded=%v", f.err, f.loading, f.loaded)
+	}
+
+	app.loadHot()
+	drain()
+	if app.search.hotErr != "" || app.search.hotBusy {
+		t.Fatalf("canceled hot: err=%q busy=%v", app.search.hotErr, app.search.hotBusy)
+	}
+
+	ps := &personState{actor: Card{Kind: source.CardCollection, ID: "person:1", Title: "演员"}}
+	app.person = ps
+	app.loadPerson(ps)
+	drain()
+	if ps.headerErr != "" || ps.headerBusy {
+		t.Fatalf("canceled person: err=%q busy=%v", ps.headerErr, ps.headerBusy)
+	}
+
+	w := &Watching{app: app, detail: &Media{Episodes: []source.Episode{{ID: "e1"}, {ID: "e2"}}}}
+	w.failed(0, true, context.Canceled)
+	if w.err != "" || w.skipped != 0 {
+		t.Fatalf("canceled playback failed(): err=%q skipped=%d", w.err, w.skipped)
 	}
 }

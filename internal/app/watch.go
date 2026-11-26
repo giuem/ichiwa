@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -139,16 +140,16 @@ func (w *Watching) ref() source.Ref {
 	return source.Ref{Source: srcID, ID: w.show.ID}
 }
 
-func seasonCard(cur Card, next Season) Card {
-	title := next.Title
-	if cur.Title != "" && !strings.Contains(title, cur.Title) {
-		title = cur.Title + " " + next.Title
+func seasonCard(next Season) Card {
+	title := next.Name
+	if title == "" {
+		title = next.Title
 	}
 	return Card{
 		Kind:  source.CardMedia,
 		ID:    next.ID,
 		Title: title,
-		Image: cur.Image,
+		Image: next.Image,
 		Shape: source.ShapePortrait,
 	}
 }
@@ -200,7 +201,7 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 		awake, app.watch.awake = app.watch.awake, nil
 	}
 	w := &Watching{app: app, sourceID: sourceID, show: s, index: max(ep, 0), loading: true, panel: !app.lib.OnTop, unpin: app.lib.OnTop, awake: awake}
-	w.switchSeason = func(next Season, ep int) { app.openIn(w.sourceID, seasonCard(w.show, next), ep, w.seasons) }
+	w.switchSeason = func(next Season, ep int) { app.openIn(w.sourceID, seasonCard(next), ep, w.seasons) }
 	if seasonOf(seasons, s.ID) >= 0 {
 		w.seasons = seasons
 	}
@@ -213,7 +214,10 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 			return
 		}
 		if err != nil {
-			w.loading, w.detailErr = false, errText(err)
+			w.loading = false
+			if !errors.Is(err, context.Canceled) {
+				w.detailErr = errText(err)
+			}
 			return
 		}
 		w.detail = d
@@ -481,6 +485,9 @@ func (w *Watching) keepAwake() {
 // failed shows why episode i did not play. Autoplay skips an unavailable
 // episode, up to maxSkips in a row.
 func (w *Watching) failed(i int, auto bool, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
 	app := w.app
 	if auto && source.Is(err, source.ErrUnavailable) && i+1 < len(w.detail.Episodes) {
 		w.skipped++
@@ -1362,9 +1369,9 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 			case next.IsAvailable():
 				app.primary(c, nil, "看"+next.Title).OnClick(func() { w.switchSeason(next, -1) })
 			case app.lib.Following(nextRef):
-				app.secondary(c, nil, "已追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(w.show, next)) })
+				app.secondary(c, nil, "已追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(next)) })
 			default:
-				app.primary(c, iconHeart, "追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(w.show, next)) })
+				app.primary(c, iconHeart, "追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(next)) })
 			}
 		})
 	case w.paused && w.player != nil:

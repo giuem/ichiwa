@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/giuem/ichiwa/internal/source"
+	"github.com/giuem/ichiwa/internal/sources/hongguo"
 )
 
 // feedPage is one page of a feed as its source returns it.
@@ -23,13 +26,10 @@ type feedPage struct {
 }
 
 func pageResult(p *source.CollectionPage, err error) (feedPage, error) {
-	if err != nil {
+	if p == nil {
 		return feedPage{}, err
 	}
-	if p == nil {
-		return feedPage{}, nil
-	}
-	return feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}, nil
+	return feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}, err
 }
 
 // Feed is a list of cards loaded page by page from fetch. The view keeps
@@ -116,11 +116,19 @@ func (app *App) loadMore(f *Feed) {
 		if f.gen != gen {
 			return
 		}
-		f.loading, f.loaded = false, true
+		f.loading = false
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			f.loaded = true
+			if p.page != nil && f.onPage != nil {
+				f.onPage(p)
+			}
 			f.err = errText(err)
 			return
 		}
+		f.loaded = true
 		fresh, added := f.take(p)
 		f.more = f.step(p, fresh)
 		if f.onPage != nil {
@@ -250,6 +258,13 @@ func (app *App) feed(colID string) *Feed {
 		if name := feedCacheNames[colID]; name != "" && app.cacheDir != "" {
 			f.cache = filepath.Join(app.cacheDir, "feeds", app.sourceID(), name+".json")
 			f.items = loadFeedCache(f.cache)
+			if len(f.items) == 0 && app.sourceID() == hongguo.SourceID {
+				legacyPath := filepath.Join(app.cacheDir, "feeds", name+".json")
+				if items := loadLegacyFeedCache(legacyPath); len(items) > 0 {
+					f.items = items
+					_ = writeFeedCache(f.cache, items)
+				}
+			}
 			f.stale = len(f.items) > 0
 		}
 		app.feeds[colID] = f
@@ -275,6 +290,49 @@ func loadFeedCache(path string) []Card {
 		return nil
 	}
 	return items
+}
+
+type legacyFeedShow struct {
+	ID       string
+	Title    string
+	Desc     string
+	Cover    string
+	Episodes int
+	Tag      string
+}
+
+func loadLegacyFeedCache(path string) []Card {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	_ = os.Remove(path)
+	var old []legacyFeedShow
+	if err := json.Unmarshal(data, &old); err != nil {
+		log.Printf("feeds: legacy %s is unreadable: %v", path, err)
+		return nil
+	}
+	out := make([]Card, 0, len(old))
+	for _, s := range old {
+		if s.ID == "" {
+			continue
+		}
+		var badges []string
+		if s.Episodes > 0 {
+			badges = []string{fmt.Sprintf("全%d集", s.Episodes)}
+		}
+		out = append(out, Card{
+			Kind:     source.CardMedia,
+			ID:       s.ID,
+			Title:    s.Title,
+			Subtitle: s.Desc,
+			Image:    s.Cover,
+			Shape:    source.ShapePortrait,
+			Badges:   badges,
+			Note:     s.Tag,
+		})
+	}
+	return out
 }
 
 // saveFeeds writes the first items of the channels that changed, on a

@@ -100,6 +100,19 @@ type App struct {
 	// upd is a newer version found, which the sidebar marks, and its
 	// dialog.
 	upd updateState
+
+	// post schedules callbacks onto the UI thread; defaults to app.win.Update.
+	post func(func())
+}
+
+func (app *App) dispatch(fn func()) {
+	if app.post != nil {
+		app.post(fn)
+		return
+	}
+	if app.win != nil {
+		app.win.Update(fn)
+	}
 }
 
 func (app *App) sourceID() string {
@@ -118,7 +131,7 @@ func (app *App) hasCap(c source.Capability) bool {
 func async[T any](app *App, work func() (T, error), done func(T, error)) {
 	go func() {
 		v, err := work()
-		app.win.Update(func() { done(v, err) })
+		app.dispatch(func() { done(v, err) })
 	}()
 }
 

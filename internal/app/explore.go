@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -143,6 +144,8 @@ func (app *App) filterPage(c *ui.Context) {
 			app.feedFooter(c, r.loading, r.err, r.more, retry)
 		case r.loaded && !r.more && r.err == "":
 			ui.Text(c, "没有符合条件的短剧，换个条件试试").FontSize(13).TextColor(p.muted).Padding(40, 0).AlignSelf(ui.Center)
+		case !fs.rowsOK && r.err != "":
+			// Filter panel already shows the error and retry button.
 		default:
 			app.feedFooter(c, r.err == "", r.err, true, retry)
 		}
@@ -237,30 +240,89 @@ func (app *App) actorCard(c *ui.Context, i int, a Card, width float32) {
 
 // personState is an actor's collection page, shown over the sidebar's page.
 type personState struct {
-	actor  Card // what the ranking knew, shown until the header loads
-	header *source.Header
-	works  Feed
+	actor        Card // what the ranking knew, shown until the header loads
+	header       *source.Header
+	headerBusy   bool
+	headerLoaded bool
+	headerErr    string
+	works        Feed
+	worksReady   bool
 }
 
 func (app *App) openPerson(a Card) {
-	ps := &personState{actor: a}
-	ps.works = *newFeed(func(cursor string) (feedPage, error) {
-		return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
-			ID:     a.ID,
-			Cursor: cursor,
-		}))
-	})
-	ps.works.onPage = func(fp feedPage) {
-		if fp.page != nil && fp.page.Header != nil {
-			ps.header = fp.page.Header
-		}
+	app.person = &personState{actor: a}
+}
+
+func (app *App) loadPerson(ps *personState) {
+	if app.src == nil || ps.headerBusy {
+		return
 	}
-	app.person = ps
+	ps.headerBusy, ps.headerErr = true, ""
+	src := app.src
+	colID := ps.actor.ID
+	async(app, func() (*source.CollectionPage, error) {
+		return src.Collection(context.Background(), source.CollectionRequest{ID: colID})
+	}, func(p *source.CollectionPage, err error) {
+		if app.person != ps {
+			return
+		}
+		ps.headerBusy = false
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				ps.headerErr = errText(err)
+			}
+			return
+		}
+		ps.headerLoaded = true
+		if p == nil {
+			ps.worksReady = true
+			ps.works.loaded = true
+			return
+		}
+		if p.Header != nil {
+			ps.header = p.Header
+		}
+		// If the source splits works into a lazy section (e.g. Hongguo's
+		// person-works:<id>), load and paginate it independently so the bio
+		// never waits for works and both can fail/retry separately.
+		if len(p.Items) == 0 && p.Cursor == "" {
+			for _, sec := range p.Sections {
+				if sec.Collection != "" {
+					worksCol := sec.Collection
+					ps.works = *newFeed(func(cursor string) (feedPage, error) {
+						return pageResult(src.Collection(context.Background(), source.CollectionRequest{
+							ID:     worksCol,
+							Cursor: cursor,
+						}))
+					})
+					ps.worksReady = true
+					app.loadMore(&ps.works)
+					return
+				}
+			}
+		}
+		// Otherwise the source returned works inline on the first page.
+		ps.works = *newFeed(func(cursor string) (feedPage, error) {
+			return pageResult(src.Collection(context.Background(), source.CollectionRequest{
+				ID:     colID,
+				Cursor: cursor,
+			}))
+		})
+		ps.worksReady = true
+		ps.works.loaded = true
+		fp := feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}
+		fresh, added := ps.works.take(fp)
+		ps.works.more = ps.works.step(fp, fresh)
+		app.fill(&ps.works, added)
+	})
 }
 
 func (app *App) personPage(c *ui.Context) {
 	ps := app.person
 	p := app.pal
+	if !ps.headerLoaded && !ps.headerBusy && ps.headerErr == "" && ps.header == nil {
+		app.loadPerson(ps)
+	}
 	f := &ps.works
 	retry := func() { f.err = ""; app.loadMore(f) }
 	back := func() { app.person = nil }
@@ -296,6 +358,8 @@ func (app *App) personPage(c *ui.Context) {
 			app.feedFooter(c, f.loading, f.err, f.more, retry)
 		case f.loaded && !f.more && f.err == "":
 			ui.Text(c, "暂无作品").FontSize(13).TextColor(p.muted).Padding(24, 0)
+		case ps.headerErr != "" && !ps.worksReady:
+			// Header retry is shown in personFacts right above.
 		default:
 			app.feedFooter(c, f.err == "", f.err, true, retry)
 		}
@@ -308,13 +372,13 @@ func (app *App) personFacts(c *ui.Context, ps *personState) {
 	p := app.pal
 	info := ps.header
 	switch {
-	case info == nil && ps.works.err != "":
+	case info == nil && ps.headerErr != "":
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, ps.works.err).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
-			app.secondary(c, iconRefresh, "重试").OnClick(func() { ps.works.err = ""; app.loadMore(&ps.works) })
+			ui.Text(c, ps.headerErr).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
+			app.secondary(c, iconRefresh, "重试").OnClick(func() { app.loadPerson(ps) })
 		})
 		return
-	case info == nil && !ps.works.loaded:
+	case info == nil && !ps.headerLoaded:
 		ui.Box(c).Role(ui.RoleStatus).Label("加载中")
 		sh := app.shimmer(c)
 		sh.bone(c, 4).Height(12).Width(180)
