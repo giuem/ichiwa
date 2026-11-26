@@ -3,7 +3,6 @@ package app
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -323,7 +322,7 @@ func (w *Watching) syncDanmaku() {
 				EpisodeID: ep.ID,
 				Cursor:    cursor,
 			})
-			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			if ctx.Err() != nil {
 				return
 			}
 			if err != nil {

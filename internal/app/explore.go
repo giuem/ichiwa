@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -268,9 +267,7 @@ func (app *App) loadPerson(ps *personState) {
 		}
 		ps.headerBusy = false
 		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				ps.headerErr = errText(err)
-			}
+			ps.headerErr = errText(err)
 			return
 		}
 		ps.headerLoaded = true

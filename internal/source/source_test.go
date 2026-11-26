@@ -85,23 +85,29 @@ func TestErrors(t *testing.T) {
 		t.Fatal("deadline exceeded should produce a message")
 	}
 
-	// Context errors must not be classified as ErrPlugin, and host cancellation
-	// yields an empty message so no UI error is shown.
-	for _, ce := range []error{
-		context.Canceled,
-		fmt.Errorf("wrapped: %w", context.Canceled),
-		context.DeadlineExceeded,
-		fmt.Errorf("wrapped: %w", context.DeadlineExceeded),
-	} {
-		if CodeOf(ce) != "" || Is(ce, ErrPlugin) {
-			t.Fatalf("context error %v classified as %q", ce, CodeOf(ce))
+	// A cancellation carries no code: only the caller knows whether it
+	// canceled the call. A timeout is a plugin failure (§10). A code the
+	// source gave wins over a context error behind it.
+	for _, ce := range []error{context.Canceled, fmt.Errorf("wrapped: %w", context.Canceled)} {
+		if CodeOf(ce) != "" {
+			t.Fatalf("CodeOf(%v) = %q, want empty", ce, CodeOf(ce))
+		}
+		if Message(ce) == "" {
+			t.Fatalf("Message(%v) is empty; a source's own cancellation must be shown", ce)
 		}
 	}
-	if got := Message(context.Canceled); got != "" {
-		t.Fatalf("Message(context.Canceled) = %q, want empty", got)
+	for _, de := range []error{context.DeadlineExceeded, fmt.Errorf("wrapped: %w", context.DeadlineExceeded)} {
+		if CodeOf(de) != ErrPlugin {
+			t.Fatalf("CodeOf(%v) = %q, want %q", de, CodeOf(de), ErrPlugin)
+		}
 	}
-	if got := Message(fmt.Errorf("wrapped: %w", context.Canceled)); got != "" {
-		t.Fatalf("Message(wrapped Canceled) = %q, want empty", got)
+	coded := NewError(ErrUnavailable, "该集需要登录才能观看", context.DeadlineExceeded)
+	if CodeOf(coded) != ErrUnavailable {
+		t.Fatalf("CodeOf(coded timeout) = %q, want %q", CodeOf(coded), ErrUnavailable)
+	}
+	coded = NewError(ErrRateLimited, "", fmt.Errorf("wrapped: %w", context.Canceled))
+	if CodeOf(coded) != ErrRateLimited {
+		t.Fatalf("CodeOf(coded cancel) = %q, want %q", CodeOf(coded), ErrRateLimited)
 	}
 }
 
@@ -232,7 +238,7 @@ func TestDecodeMedia(t *testing.T) {
 	raw := `{
 		"id": "m1",
 		"title": " 测试剧 ",
-		"aspect": "unknown",
+		"aspect": " portrait ",
 		"seasons": [
 			{"id": "s1", "title": "第一季", "name": " 测试剧 第一季 ", "image": "https://cdn.example.com/s1.jpg", "current": true},
 			{"id": "s1", "title": "重复季", "name": "重复"},
@@ -242,15 +248,16 @@ func TestDecodeMedia(t *testing.T) {
 			{"id": "e1", "title": "第一集", "duration": -5, "lock": "bogus"},
 			{"id": "e1", "title": "重复的第一集", "duration": 99},
 			{"id": "", "title": "bad"},
-			{"id": "e2", "duration": 62.5, "lock": "vip"}
+			{"id": "e2", "duration": 62.5, "lock": " vip "},
+			{"id": "e3", "lock": ""}
 		]
 	}`
 	m, err := DecodeMedia([]byte(raw), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Aspect != AspectLandscape {
-		t.Fatalf("aspect = %q, want landscape", m.Aspect)
+	if m.Aspect != AspectPortrait {
+		t.Fatalf("aspect = %q, want portrait (enum values are trimmed)", m.Aspect)
 	}
 	if len(m.Seasons) != 2 {
 		t.Fatalf("seasons = %+v, want 2 deduplicated", m.Seasons)
@@ -261,7 +268,9 @@ func TestDecodeMedia(t *testing.T) {
 	if m.Seasons[1].IsAvailable() || m.Seasons[1].Name != "测试剧 第二季" || m.Seasons[1].Image != "" || m.Seasons[1].Note != "即将上线" {
 		t.Fatalf("season[1] = %+v", m.Seasons[1])
 	}
-	if len(m.Episodes) != 2 || m.Episodes[0].Title != "第一集" || m.Episodes[0].Duration != 0 || m.Episodes[0].Lock != LockNone || m.Episodes[1].Lock != LockVIP {
+	// An unknown lock is still a lock; " vip " is trimmed, not read as playable.
+	if len(m.Episodes) != 3 || m.Episodes[0].Title != "第一集" || m.Episodes[0].Duration != 0 ||
+		m.Episodes[0].Lock != LockUnavailable || m.Episodes[1].Lock != LockVIP || m.Episodes[2].Lock != LockNone {
 		t.Fatalf("episodes = %+v", m.Episodes)
 	}
 }

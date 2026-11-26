@@ -97,16 +97,20 @@ func DefaultMessage(code ErrorCode) string {
 	}
 }
 
-// CodeOf returns the ErrorCode of err, "" if err is nil or a context error
-// (context.Canceled or context.DeadlineExceeded), or ErrPlugin for any other
-// non-protocol error.
+// CodeOf returns the ErrorCode of err: the code an *Error carries, even
+// when its cause is a context error; "" for nil and for context.Canceled,
+// which only the caller can tell apart from a failure (see Message); and
+// ErrPlugin for anything else, a timeout included (§10).
 func CodeOf(err error) ErrorCode {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if err == nil {
 		return ""
 	}
 	var se *Error
 	if errors.As(err, &se) {
 		return normalizeErrorCode(se.Code)
+	}
+	if errors.Is(err, context.Canceled) {
+		return ""
 	}
 	return ErrPlugin
 }
@@ -135,10 +139,12 @@ func RetryAfter(err error) time.Duration {
 	return 0
 }
 
-// Message turns err into a concise user-facing string. Host cancellations
-// return "" since they are not errors and must not be displayed.
+// Message turns err into a concise user-facing string. A call the host
+// canceled is not an error and must not be shown, but only the caller knows
+// whether it canceled: callers check their own context first. A source that
+// reports context.Canceled on its own failed, so it gets the generic text.
 func Message(err error) string {
-	if err == nil || errors.Is(err, context.Canceled) {
+	if err == nil {
 		return ""
 	}
 	var se *Error
@@ -147,6 +153,9 @@ func Message(err error) string {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "请求超时，请稍后再试"
+	}
+	if errors.Is(err, context.Canceled) {
+		return DefaultMessage(ErrPlugin)
 	}
 	return truncateRunes(strings.TrimSpace(err.Error()), MaxErrorMessageRunes)
 }

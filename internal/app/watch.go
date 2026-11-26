@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -215,9 +214,7 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 		}
 		if err != nil {
 			w.loading = false
-			if !errors.Is(err, context.Canceled) {
-				w.detailErr = errText(err)
-			}
+			w.detailErr = errText(err)
 			return
 		}
 		w.detail = d
@@ -485,9 +482,6 @@ func (w *Watching) keepAwake() {
 // failed shows why episode i did not play. Autoplay skips an unavailable
 // episode, up to maxSkips in a row.
 func (w *Watching) failed(i int, auto bool, err error) {
-	if errors.Is(err, context.Canceled) {
-		return
-	}
 	app := w.app
 	if auto && source.Is(err, source.ErrUnavailable) && i+1 < len(w.detail.Episodes) {
 		w.skipped++

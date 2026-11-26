@@ -594,7 +594,10 @@ func TestSeasonCardUsesRealNameAndImage(t *testing.T) {
 	}
 }
 
-func TestCanceledCallShowsNoError(t *testing.T) {
+// The app never cancels its calls to the source (it drops stale results by
+// generation instead), so a context.Canceled reaching it is the source
+// failing: it must show an error and leave a retry, not spin or stay blank.
+func TestSourceCancellationShowsError(t *testing.T) {
 	done := make(chan func(), 8)
 	src := &sourcetest.Source{
 		InfoData: source.Info{ID: "demo", Capabilities: []source.Capability{source.CapSearch, source.CapSearchHome}},
@@ -624,13 +627,13 @@ func TestCanceledCallShowsNoError(t *testing.T) {
 	f := app.feed(pageRecommend)
 	app.loadMore(f)
 	drain()
-	if f.err != "" || f.loading || f.loaded {
+	if f.err == "" || f.loading || !f.loaded {
 		t.Fatalf("canceled feed: err=%q loading=%v loaded=%v", f.err, f.loading, f.loaded)
 	}
 
 	app.loadHot()
 	drain()
-	if app.search.hotErr != "" || app.search.hotBusy {
+	if app.search.hotErr == "" || app.search.hotBusy {
 		t.Fatalf("canceled hot: err=%q busy=%v", app.search.hotErr, app.search.hotBusy)
 	}
 
@@ -638,13 +641,13 @@ func TestCanceledCallShowsNoError(t *testing.T) {
 	app.person = ps
 	app.loadPerson(ps)
 	drain()
-	if ps.headerErr != "" || ps.headerBusy {
+	if ps.headerErr == "" || ps.headerBusy {
 		t.Fatalf("canceled person: err=%q busy=%v", ps.headerErr, ps.headerBusy)
 	}
 
 	w := &Watching{app: app, detail: &Media{Episodes: []source.Episode{{ID: "e1"}, {ID: "e2"}}}}
-	w.failed(0, true, context.Canceled)
-	if w.err != "" || w.skipped != 0 {
+	w.failed(0, false, context.Canceled)
+	if w.err == "" || w.skipped != 0 {
 		t.Fatalf("canceled playback failed(): err=%q skipped=%d", w.err, w.skipped)
 	}
 }

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -509,9 +508,7 @@ func (app *App) loadHot() {
 	}, func(p *source.CollectionPage, err error) {
 		s.hotBusy = false
 		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				s.hotErr = errText(err)
-			}
+			s.hotErr = errText(err)
 			return
 		}
 		if p != nil && p.Sections != nil {
