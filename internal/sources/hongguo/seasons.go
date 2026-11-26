@@ -52,37 +52,39 @@ func (s *Source) storeSeasons(id string, entries []seasonEntry) {
 
 // loadSeasons reads a show's seasons, then their release notes, in the
 // background and on contexts of their own, so a slow list or calendar
-// never holds up playback: what it finds is cached for the next opening
-// even after the Media that started it returned. base gets the list as
-// soon as it is read, annotated the list with its notes; both are closed
-// without a value when the list cannot be read.
+// never holds up playback. Only the list itself is cached: the notes come
+// from the calendar's days, which have a cache of their own that keeps
+// only whole days, so a calendar that failed is read again next time.
+// base gets the list as soon as it is in, annotated the list with its
+// notes; both are closed without a value when the list cannot be read.
 func (s *Source) loadSeasons(id string) (base, annotated <-chan []seasonEntry) {
 	baseCh := make(chan []seasonEntry, 1)
 	annCh := make(chan []seasonEntry, 1)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		album, err := s.client.Seasons(ctx, id)
-		cancel()
-		if err != nil {
-			close(baseCh)
-			close(annCh)
-			return
+		entries, ok := s.cachedSeasons(id)
+		if !ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			album, err := s.client.Seasons(ctx, id)
+			cancel()
+			if err != nil {
+				close(baseCh)
+				close(annCh)
+				return
+			}
+			entries = seasonsOf(album.Seasons)
+			if len(entries) < 2 {
+				entries = nil
+			}
+			s.storeSeasons(id, entries)
 		}
-		entries := seasonsOf(album.Seasons)
-		if len(entries) < 2 {
-			entries = nil
-		}
-		s.storeSeasons(id, entries)
 		baseCh <- entries
 		if entries == nil {
 			annCh <- nil
 			return
 		}
-		ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
-		notes := s.announce(ctx, slices.Clone(entries))
-		cancel()
-		s.storeSeasons(id, notes)
-		annCh <- notes
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		annCh <- s.announce(ctx, entries)
 	}()
 	return baseCh, annCh
 }

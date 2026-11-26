@@ -215,3 +215,73 @@ func TestRankCursorIgnoresFilters(t *testing.T) {
 		t.Fatalf("next page with filters that moved on: %v", err)
 	}
 }
+
+// A calendar that fails leaves the release notes out this time only: the
+// next opening reads it again, with the season list from the cache.
+func TestFailedCalendarIsReadAgain(t *testing.T) {
+	const dates = `"20261023","20261024","20261025"`
+	const matchJSON = `{
+		"code": 0,
+		"data": {
+			"subscribe_items": [{
+				"is_online": false,
+				"expected_publish_time": 1793001600,
+				"subscribe_data": {"series_id": "7100000000000502", "title": "测试剧 第二季", "episode_cnt": 0}
+			}],
+			"has_more": false,
+			"calendar_schema": {"date_list":[` + dates + `],"default_date":"20261023","current_date":"20261025"}
+		}
+	}`
+	var failing atomic.Bool
+	failing.Store(true)
+	var seasonCalls atomic.Int32
+	src := newTestSource(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/service/2/device_register/":
+			_, _ = w.Write([]byte(registerRespJSON))
+		case "/novel/player/video_detail/v1/":
+			_, _ = w.Write([]byte(loadSeriesJSON))
+		case "/reading/bookapi/plan/v1/":
+			seasonCalls.Add(1)
+			_, _ = w.Write([]byte(loadSeasonsJSON))
+		case "/reading/user/subscribe/list/v1/":
+			if failing.Load() {
+				http.Error(w, "calendar down", http.StatusInternalServerError)
+				return
+			}
+			day := r.URL.Query().Get("target_date")
+			switch day {
+			case "":
+				_, _ = w.Write([]byte(calendarJSON("20261023", dates)))
+			case "20261025":
+				_, _ = w.Write([]byte(matchJSON))
+			default:
+				_, _ = w.Write([]byte(calendarJSON(day, dates)))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	src.calendarBudget = 2 * time.Second
+
+	m, err := src.Media(context.Background(), "7100000000000101")
+	if err != nil {
+		t.Fatalf("Media: %v", err)
+	}
+	if len(m.Seasons) != 2 || m.Seasons[1].Note != "" {
+		t.Fatalf("Media with the calendar down = %+v", m.Seasons)
+	}
+
+	failing.Store(false)
+	m, err = src.Media(context.Background(), "7100000000000101")
+	if err != nil {
+		t.Fatalf("second Media: %v", err)
+	}
+	if len(m.Seasons) != 2 || m.Seasons[1].Note == "" {
+		t.Fatalf("second Media did not read the recovered calendar: %+v", m.Seasons)
+	}
+	if n := seasonCalls.Load(); n != 1 {
+		t.Fatalf("season list read %d times, want 1 (cached)", n)
+	}
+}

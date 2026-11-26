@@ -698,6 +698,59 @@ func TestPersonPageFetchesProfileAndWorksTogether(t *testing.T) {
 	}
 }
 
+// The works do not wait long for a slow profile, nor at all when they fail.
+func TestPersonWorksDoNotWaitForSlowProfile(t *testing.T) {
+	const worksJSON = `{"code":0,"data":{"common_list_info":{"cursor":"c2","has_more":false},"data_list":[{"data_type":1,"video":{"video_id":"7100000000001801","common":{"title":"代表作"},"expand":{"episode_cnt":60}}}]}}`
+	const tabsJSON = `{"code":0,"data":{"tabs":[{"name":"剧作","tab_type":8,"sub_tabs":[{"name":"全部","tab_type":100}]}]}}`
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var failWorks atomic.Bool
+	src := newTestSource(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/service/2/device_register/":
+			_, _ = w.Write([]byte(registerRespJSON))
+		case "/reading/user/profile/get/v1/":
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			http.Error(w, "late", http.StatusServiceUnavailable)
+		case "/novel/commentapi/user/profile/7100000000001701/v1":
+			if failWorks.Load() {
+				http.Error(w, "works down", http.StatusInternalServerError)
+				return
+			}
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if _, ok := body["tab_type"]; !ok {
+				_, _ = w.Write([]byte(tabsJSON))
+				return
+			}
+			_, _ = w.Write([]byte(worksJSON))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	src.profileWait = 50 * time.Millisecond
+	get := func() (*source.CollectionPage, error, time.Duration) {
+		start := time.Now()
+		p, err := src.Collection(context.Background(), source.CollectionRequest{ID: "person:7100000000001701"})
+		return p, err, time.Since(start)
+	}
+	p, err, took := get()
+	if err != nil || p.Header != nil || len(p.Items) != 1 {
+		t.Fatalf("page with a late profile = %+v, %v", p, err)
+	}
+	if took > time.Second {
+		t.Fatalf("works waited %v for the profile", took)
+	}
+	failWorks.Store(true)
+	if _, err, took = get(); err == nil || took > time.Second {
+		t.Fatalf("failed works: err=%v after %v; want an error at once", err, took)
+	}
+}
+
 func TestEmojify(t *testing.T) {
 	for in, want := range map[string]string{
 		"哈哈[笑哭][笑哭]": "哈哈😂😂",

@@ -38,6 +38,7 @@ type Source struct {
 	client *sdk.Client
 
 	calendarBudget time.Duration // max wait for calendar notes in Media; defaults to defaultCalendarBudget
+	profileWait    time.Duration // max wait for an actor's profile after their works; defaults to defaultProfileWait
 
 	mu          sync.Mutex
 	days        map[string]calDay // the 上新 calendar's days read lately
@@ -129,8 +130,6 @@ func (s *Source) Collection(ctx context.Context, r source.CollectionRequest) (*s
 		return s.personWorks(ctx, strings.TrimPrefix(r.ID, "person:"), r.Cursor)
 	case strings.HasPrefix(r.ID, "person:"):
 		return s.person(ctx, strings.TrimPrefix(r.ID, "person:"))
-	case strings.HasPrefix(r.ID, "person-works:"):
-		return s.personWorks(ctx, strings.TrimPrefix(r.ID, "person-works:"), r.Cursor)
 	case strings.HasPrefix(r.ID, "related:"):
 		return s.related(ctx, strings.TrimPrefix(r.ID, "related:"))
 	default:
@@ -408,36 +407,52 @@ func selections(chosen map[string]string) map[string][]string {
 }
 
 // person is an actor's page: their profile as the header, their works as
-// the items, both fetched at once so neither waits for the other. Without
-// the works the page has nothing to show, so their failure fails the page
-// and the host offers a retry; a profile that fails only leaves the header
-// out, logged, and the host falls back to the card it opened the page from.
+// the items. The two are read at once. Without the works the page has
+// nothing to show, so their failure fails the page at once and the host
+// offers a retry; once they are in, the profile gets at most profileWait
+// more, and a profile that fails or is late only leaves the header out, so
+// the host shows the card it opened the page from.
 func (s *Source) person(ctx context.Context, userID string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-	var (
-		profile    *model.Person
-		profileErr error
-		wg         sync.WaitGroup
-	)
-	wg.Add(1)
+	pctx, pcancel := context.WithCancel(ctx)
+	defer pcancel()
+	profile := make(chan *model.Person, 1)
 	go func() {
-		defer wg.Done()
-		profile, profileErr = s.client.Person(ctx, userID)
+		p, err := s.client.Person(pctx, userID)
+		if err != nil {
+			if pctx.Err() == nil {
+				log.Printf("hongguo: profile of person %s: %v", userID, err)
+			}
+			p = nil
+		}
+		profile <- p
 	}()
 	page, err := s.personWorks(ctx, userID, "")
-	wg.Wait()
 	if err != nil {
 		return nil, err
 	}
-	if profileErr != nil {
-		log.Printf("hongguo: profile of person %s: %v", userID, profileErr)
-	} else if profile != nil {
-		page.Header = personHeader(profile)
-		page.Title = page.Header.Title
+	wait := s.profileWait
+	if wait <= 0 {
+		wait = defaultProfileWait
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case p := <-profile:
+		if p != nil {
+			page.Header = personHeader(p)
+			page.Title = page.Header.Title
+		}
+	case <-timer.C:
+		log.Printf("hongguo: profile of person %s is late; showing the works without it", userID)
+	case <-ctx.Done():
 	}
 	return page, nil
 }
+
+// defaultProfileWait is how long an actor's works wait for their profile.
+const defaultProfileWait = time.Second
 
 func (s *Source) personWorks(ctx context.Context, userID, cursor string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
@@ -542,11 +557,7 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 		episodes []model.Episode
 		epErr    error
 	)
-	cached, haveCached := s.cachedSeasons(id)
-	var base, annotated <-chan []seasonEntry
-	if !haveCached {
-		base, annotated = s.loadSeasons(id)
-	}
+	base, annotated := s.loadSeasons(id)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -585,10 +596,7 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 		return nil, source.NewError(source.ErrUnavailable, "这部剧暂时没有可看的剧集", nil)
 	}
 
-	entries := cached
-	if !haveCached {
-		entries = s.awaitSeasons(ctx, base, annotated)
-	}
+	entries := s.awaitSeasons(ctx, base, annotated)
 	var seasons []source.Season
 	if len(entries) >= 2 {
 		seasons = make([]source.Season, 0, len(entries))
