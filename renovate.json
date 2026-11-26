@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Asia/Shanghai",
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Go 模块每周一起升一次，一个 PR",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["!github.com/beilunyang/openhongguo"],
+      "groupName": "go",
+      "schedule": ["* 0-5 * * 1"]
+    },
+    {
+      "description": "workflow 用的 action 每月一次",
+      "matchManagers": ["github-actions"],
+      "groupName": "actions",
+      "schedule": ["* 0-5 1 * *"]
+    },
+    {
+      "description": "openhongguo 是我们紧跟的上游：新 tag 一出就升，测试全过就自动合入",
+      "matchPackageNames": ["github.com/beilunyang/openhongguo"],
+      "schedule": ["at any time"],
+      "minimumReleaseAge": null,
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false
+    }
+  ]
+}
