@@ -594,7 +594,7 @@ func TestCalendarPartialDayNotCached(t *testing.T) {
 	}
 }
 
-func TestPersonHeaderIndependentOfWorksAndWorksFirstPageError(t *testing.T) {
+func TestPersonPageFetchesProfileAndWorksTogether(t *testing.T) {
 	const personJSON = `{
 		"code": 0,
 		"data": {
@@ -612,7 +612,7 @@ func TestPersonHeaderIndependentOfWorksAndWorksFirstPageError(t *testing.T) {
 	const worksJSON = `{
 		"code": 0,
 		"data": {
-			"common_list_info": {"cursor":"c2","has_more":false},
+			"common_list_info": {"cursor":"c2","has_more":true},
 			"data_list": [{
 				"data_type": 1,
 				"video": {
@@ -624,7 +624,7 @@ func TestPersonHeaderIndependentOfWorksAndWorksFirstPageError(t *testing.T) {
 		}
 	}`
 
-	var failWorks atomic.Bool
+	var failWorks, failProfile atomic.Bool
 	failWorks.Store(true)
 	var worksCalls atomic.Int32
 
@@ -634,6 +634,10 @@ func TestPersonHeaderIndependentOfWorksAndWorksFirstPageError(t *testing.T) {
 		case "/service/2/device_register/":
 			_, _ = w.Write([]byte(registerRespJSON))
 		case "/reading/user/profile/get/v1/":
+			if failProfile.Load() {
+				http.Error(w, "profile down", http.StatusInternalServerError)
+				return
+			}
 			_, _ = w.Write([]byte(personJSON))
 		case "/novel/commentapi/user/profile/7100000000001701/v1":
 			worksCalls.Add(1)
@@ -653,31 +657,44 @@ func TestPersonHeaderIndependentOfWorksAndWorksFirstPageError(t *testing.T) {
 		}
 	}))
 
-	// Fetching person header does not call or wait for PersonWorks.
-	p, err := src.Collection(context.Background(), source.CollectionRequest{ID: "person:7100000000001701"})
+	const id = "person:7100000000001701"
+	get := func(cursor string) (*source.CollectionPage, error) {
+		return src.Collection(context.Background(), source.CollectionRequest{ID: id, Cursor: cursor})
+	}
+
+	// Without the works there is nothing to show: the page fails, retryably.
+	if _, err := get(""); err == nil {
+		t.Fatal("expected an error when the works fail")
+	}
+
+	// Profile and works together: the header and the works inline.
+	failWorks.Store(false)
+	p, err := get("")
 	if err != nil {
-		t.Fatalf("person header failed: %v", err)
+		t.Fatalf("person page: %v", err)
 	}
-	if worksCalls.Load() != 0 {
-		t.Fatalf("person header triggered %d works calls", worksCalls.Load())
-	}
-	if p.Header == nil || p.Header.Title != "李柯以" || len(p.Sections) != 1 || p.Sections[0].Collection != "person-works:7100000000001701" {
+	if p.Header == nil || p.Header.Title != "李柯以" || len(p.Items) != 1 || p.Items[0].ID != "7100000000001801" || len(p.Sections) != 0 {
 		t.Fatalf("person page = %+v", p)
 	}
 
-	// First page failure of works must return an error, not an empty page.
-	if _, err := src.Collection(context.Background(), source.CollectionRequest{ID: p.Sections[0].Collection}); err == nil {
-		t.Fatal("expected error when works first page fails")
+	// A profile that fails leaves the header out but still shows the works.
+	failProfile.Store(true)
+	p, err = get("")
+	if err != nil {
+		t.Fatalf("person page without profile: %v", err)
+	}
+	if p.Header != nil || len(p.Items) != 1 {
+		t.Fatalf("person page without profile = %+v", p)
 	}
 
-	// Retry once works recovers.
-	failWorks.Store(false)
-	wp, err := src.Collection(context.Background(), source.CollectionRequest{ID: p.Sections[0].Collection})
-	if err != nil {
-		t.Fatalf("works retry failed: %v", err)
+	// Later pages are works only and do not read the profile again.
+	if p.Cursor == "" {
+		t.Fatal("first page has no cursor")
 	}
-	if len(wp.Items) != 1 || wp.Items[0].ID != "7100000000001801" {
-		t.Fatalf("works page = %+v", wp)
+	before := worksCalls.Load()
+	wp, err := get(p.Cursor)
+	if err != nil || wp.Header != nil || len(wp.Items) != 1 || worksCalls.Load() != before+1 {
+		t.Fatalf("second page = %+v, %v (works calls %d → %d)", wp, err, before, worksCalls.Load())
 	}
 }
 

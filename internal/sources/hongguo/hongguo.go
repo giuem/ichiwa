@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +43,7 @@ type Source struct {
 	days        map[string]calDay // the 上新 calendar's days read lately
 	calInflight map[string]*calFlight
 	panels      map[string]panelCache
+	seasons     map[string]seasonsCache // the season lists read lately, by media ID
 }
 
 type panelCache struct {
@@ -125,6 +125,8 @@ func (s *Source) Collection(ctx context.Context, r source.CollectionRequest) (*s
 		return s.rank(ctx, r.Filters, r.Cursor)
 	case r.ID == ColFilter:
 		return s.filter(ctx, r.Filters, r.Cursor)
+	case strings.HasPrefix(r.ID, "person:") && r.Cursor != "":
+		return s.personWorks(ctx, strings.TrimPrefix(r.ID, "person:"), r.Cursor)
 	case strings.HasPrefix(r.ID, "person:"):
 		return s.person(ctx, strings.TrimPrefix(r.ID, "person:"))
 	case strings.HasPrefix(r.ID, "person-works:"):
@@ -405,24 +407,36 @@ func selections(chosen map[string]string) map[string][]string {
 	return out
 }
 
+// person is an actor's page: their profile as the header, their works as
+// the items, both fetched at once so neither waits for the other. Without
+// the works the page has nothing to show, so their failure fails the page
+// and the host offers a retry; a profile that fails only leaves the header
+// out, logged, and the host falls back to the card it opened the page from.
 func (s *Source) person(ctx context.Context, userID string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-	p, err := s.client.Person(ctx, userID)
+	var (
+		profile    *model.Person
+		profileErr error
+		wg         sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		profile, profileErr = s.client.Person(ctx, userID)
+	}()
+	page, err := s.personWorks(ctx, userID, "")
+	wg.Wait()
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, err
 	}
-	header := personHeader(p)
-	return &source.CollectionPage{
-		Title:  header.Title,
-		Header: header,
-		Layout: source.LayoutGrid,
-		Sections: []source.Section{{
-			Title:      "作品",
-			Layout:     source.SectionGrid,
-			Collection: "person-works:" + userID,
-		}},
-	}, nil
+	if profileErr != nil {
+		log.Printf("hongguo: profile of person %s: %v", userID, profileErr)
+	} else if profile != nil {
+		page.Header = personHeader(profile)
+		page.Title = page.Header.Title
+	}
+	return page, nil
 }
 
 func (s *Source) personWorks(ctx context.Context, userID, cursor string) (*source.CollectionPage, error) {
@@ -523,17 +537,19 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 	defer cancel()
 
 	var (
-		series       *model.Series
-		serErr       error
-		episodes     []model.Episode
-		epErr        error
-		baseSeasons  []seasonEntry
-		annotatedCh  chan []seasonEntry
-		calStartedAt time.Time
+		series   *model.Series
+		serErr   error
+		episodes []model.Episode
+		epErr    error
 	)
+	cached, haveCached := s.cachedSeasons(id)
+	var base, annotated <-chan []seasonEntry
+	if !haveCached {
+		base, annotated = s.loadSeasons(id)
+	}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		series, serErr = s.client.GetSeries(ctx, id)
@@ -557,29 +573,6 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 			cursor = page.Cursor
 		}
 	}()
-	go func() {
-		defer wg.Done()
-		// Fetch season list alongside details; calendar annotation runs
-		// separately with a short budget so slow calendars never stall playback.
-		sCtx, sCancel := context.WithTimeout(ctx, 10*time.Second)
-		defer sCancel()
-		album, err := s.client.Seasons(sCtx, id)
-		if err != nil {
-			return
-		}
-		entries := seasonsOf(album.Seasons)
-		if len(entries) < 2 {
-			return
-		}
-		baseSeasons = entries
-		calStartedAt = time.Now()
-		annotatedCh = make(chan []seasonEntry, 1)
-		go func(in []seasonEntry) {
-			bgCtx, bgCancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer bgCancel()
-			annotatedCh <- s.announce(bgCtx, in)
-		}(slices.Clone(entries))
-	}()
 	wg.Wait()
 
 	if serErr != nil {
@@ -592,33 +585,12 @@ func (s *Source) Media(ctx context.Context, id string) (*source.Media, error) {
 		return nil, source.NewError(source.ErrUnavailable, "这部剧暂时没有可看的剧集", nil)
 	}
 
+	entries := cached
+	if !haveCached {
+		entries = s.awaitSeasons(ctx, base, annotated)
+	}
 	var seasons []source.Season
-	if len(baseSeasons) >= 2 {
-		entries := baseSeasons
-		if annotatedCh != nil {
-			budget := s.calendarBudget
-			if budget <= 0 {
-				budget = defaultCalendarBudget
-			}
-			remaining := budget - time.Since(calStartedAt)
-			if remaining <= 0 {
-				select {
-				case got := <-annotatedCh:
-					entries = got
-				default:
-				}
-			} else {
-				timer := time.NewTimer(remaining)
-				select {
-				case got := <-annotatedCh:
-					timer.Stop()
-					entries = got
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-				}
-			}
-		}
+	if len(entries) >= 2 {
 		seasons = make([]source.Season, 0, len(entries))
 		for _, e := range entries {
 			seasons = append(seasons, toProtocolSeason(e, e.ID == id))
