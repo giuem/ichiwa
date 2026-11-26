@@ -1,22 +1,15 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/giuem/ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/source"
 )
-
-// pages adapts a catalog call returning a page of shows to a feed's fetch.
-func pages(fetch func(cursor string) ([]Show, string, bool, error)) func(string) (feedPage, error) {
-	return func(cursor string) (feedPage, error) {
-		items, next, more, err := fetch(cursor)
-		return feedPage{items: items, cursor: next, more: more}, err
-	}
-}
 
 // avatar draws a round portrait, fading it in over the first letter of
 // the name as it loads.
@@ -65,24 +58,20 @@ func (app *App) option(c *ui.Context, label string, selected bool) ui.Element {
 // ---- Filter ----
 
 type filterState struct {
-	rows      []FilterRow
-	rowsFor   string // the genre the rows are for
-	rowsOK    bool
-	panelBusy bool
-	panelErr  string
-
+	rows    []FilterRow
+	rowsOK  bool
 	chosen  map[string]string // a value per row key, none for all
 	results Feed              // for chosen; without a fetch until shown
 }
 
 // choose picks value in the row key, "" for all, and reports whether the
-// choice changed. The genre decides the other rows' options, so picking
-// one clears the rest.
+// choice changed. Dependent row resets are returned by the source in the
+// updated FilterRows on the first page.
 func (fs *filterState) choose(key, value string) bool {
 	if fs.chosen[key] == value {
 		return false
 	}
-	if key == catalog.GenreKey || fs.chosen == nil {
+	if fs.chosen == nil {
 		fs.chosen = map[string]string{}
 	}
 	if value == "" {
@@ -107,34 +96,35 @@ func (fs *filterState) restart() {
 	fs.results.fetch = nil
 }
 
-func (app *App) loadFilterPanel() {
-	fs := &app.filter
-	genre := fs.chosen[catalog.GenreKey]
-	fs.panelBusy, fs.panelErr = true, ""
-	async(app, func() ([]FilterRow, error) { return app.be.FilterPanel(genre) }, func(rows []FilterRow, err error) {
-		fs.panelBusy = false
-		if fs.chosen[catalog.GenreKey] != genre {
-			return // the genre changed meanwhile; the view asks again
+func (fs *filterState) applyPage(fp feedPage) {
+	if fp.page == nil || len(fp.page.Filters) == 0 {
+		return
+	}
+	fs.rows = fp.page.Filters
+	fs.rowsOK = true
+	next := map[string]string{}
+	for _, row := range fs.rows {
+		if row.Value != "" {
+			next[row.Key] = row.Value
 		}
-		if err != nil {
-			fs.panelErr = errText(err)
-			return
-		}
-		fs.rows, fs.rowsFor, fs.rowsOK = rows, genre, true
-	})
+	}
+	fs.chosen = next
 }
 
 func (app *App) filterPage(c *ui.Context) {
 	fs := &app.filter
 	p := app.pal
-	genre := fs.chosen[catalog.GenreKey]
-	if !fs.panelBusy && fs.panelErr == "" && (!fs.rowsOK || fs.rowsFor != genre) {
-		app.loadFilterPanel()
-	}
 	r := &fs.results
 	if r.fetch == nil {
 		chosen := maps.Clone(fs.chosen) // the fetch runs off the main thread
-		r.fetch = pages(func(cursor string) ([]Show, string, bool, error) { return app.be.Filter(chosen, cursor) })
+		r.fetch = func(cursor string) (feedPage, error) {
+			return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
+				ID:      pageFilter,
+				Filters: chosen,
+				Cursor:  cursor,
+			}))
+		}
+		r.onPage = fs.applyPage
 		r.more = !r.loaded
 	}
 	retry := func() { r.err = ""; app.loadMore(r) }
@@ -165,10 +155,10 @@ func (app *App) filterPanel(c *ui.Context) {
 	fs := &app.filter
 	p := app.pal
 	if !fs.rowsOK {
-		if fs.panelErr != "" {
+		if fs.results.err != "" {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(4, 0).Children(func() {
-				ui.Text(c, "筛选条件加载失败："+fs.panelErr).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
-				app.secondary(c, iconRefresh, "重试").OnClick(func() { fs.panelErr = "" })
+				ui.Text(c, "筛选条件加载失败："+fs.results.err).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
+				app.secondary(c, iconRefresh, "重试").OnClick(func() { fs.results.err = ""; app.loadMore(&fs.results) })
 			})
 			return
 		}
@@ -182,14 +172,19 @@ func (app *App) filterPanel(c *ui.Context) {
 	}
 	ui.Column(c).Gap(6).Children(func() {
 		for _, row := range fs.rows {
-			choices(c.Key("row-"+row.Key), row.Name).Gap(4).Wrap().Children(func() {
-				all := fs.chosen[row.Key] == ""
+			choices(c.Key("row-"+row.Key), row.Title).Gap(4).Wrap().Children(func() {
 				key := row.Key
-				// It shows the row's name and chooses all of it.
-				app.option(c.Key("all"), row.Name, all).Label("全部" + row.Name).OnClick(func() { fs.choose(key, "") })
 				for _, o := range row.Options {
 					value := o.Value
-					app.option(c.Key(o.Value), o.Name, fs.chosen[key] == value).OnClick(func() { fs.choose(key, value) })
+					optKey := value
+					if optKey == "" {
+						optKey = "all"
+					}
+					el := app.option(c.Key(optKey), o.Title, fs.chosen[key] == value)
+					if value == "" && !strings.HasPrefix(o.Title, "全部") {
+						el.Label("全部" + o.Title)
+					}
+					el.OnClick(func() { fs.choose(key, value) })
 				}
 			})
 		}
@@ -201,7 +196,7 @@ func (app *App) filterPanel(c *ui.Context) {
 const actorCardMinW = 300
 
 // actorGrid lays out the rows of the actors' ranking.
-func (app *App) actorGrid(c *ui.Context, actors []Actor) {
+func (app *App) actorGrid(c *ui.Context, actors []Card) {
 	w := app.contentWidth(c)
 	n := max(1, int((w+cardGap)/(actorCardMinW+cardGap)))
 	cw := (w - cardGap*float32(n-1)) / float32(n)
@@ -216,22 +211,22 @@ func (app *App) actorGrid(c *ui.Context, actors []Actor) {
 	})
 }
 
-func (app *App) actorCard(c *ui.Context, i int, a Actor, width float32) {
+func (app *App) actorCard(c *ui.Context, i int, a Card, width float32) {
 	p := app.pal
 	b := ui.ButtonBase(c.Key(a.ID)).Width(width).Padding(14, 16).Gap(14).Radius(14).
-		AlignItems(ui.Center).Justify(ui.Start).Label(a.Name).
-		Description(joinNonEmpty(append([]string{fmt.Sprintf("第%d名", i+1), a.Score}, a.Details...)...))
+		AlignItems(ui.Center).Justify(ui.Start).Label(a.Title).
+		Description(joinNonEmpty(fmt.Sprintf("第%d名", i+1), a.Note, a.Subtitle))
 	pressable(b, p.surface, p.surface.Mix(p.text, 0.05), 0.98)
 	b.Children(func() {
 		ui.Text(c, itoa(i+1)).FontSize(15).Bold().Width(22).TextAlign(ui.Center).TextColor(ternary(i < 3, p.accent, p.faint))
-		app.avatar(c, a.Avatar, a.Name, 56)
+		app.avatar(c, a.Image, a.Title, 56)
 		ui.Column(c).Grow(1).Shrink(1).Gap(4).Children(func() {
-			ui.Text(c, a.Name).FontSize(14.5).FontWeight(600).TextColor(p.text).SingleLine()
-			if a.Score != "" {
-				ui.Text(c, a.Score).FontSize(12).FontWeight(500).TextColor(p.accent).SingleLine()
+			ui.Text(c, a.Title).FontSize(14.5).FontWeight(600).TextColor(p.text).SingleLine()
+			if a.Note != "" {
+				ui.Text(c, a.Note).FontSize(12).FontWeight(500).TextColor(p.accent).SingleLine()
 			}
-			if len(a.Details) > 0 {
-				ui.Text(c, strings.Join(a.Details, " · ")).FontSize(11.5).TextColor(p.muted).SingleLine()
+			if a.Subtitle != "" {
+				ui.Text(c, a.Subtitle).FontSize(11.5).TextColor(p.muted).SingleLine()
 			}
 		})
 	})
@@ -240,49 +235,44 @@ func (app *App) actorCard(c *ui.Context, i int, a Actor, width float32) {
 
 // ---- An actor's page ----
 
-// personState is an actor's page, shown over the sidebar's page.
+// personState is an actor's collection page, shown over the sidebar's page.
 type personState struct {
-	actor Actor // what the ranking knew, shown until the profile loads
-	info  *Person
-	busy  bool
-	err   string
-	works Feed
+	actor  Card // what the ranking knew, shown until the header loads
+	header *source.Header
+	works  Feed
 }
 
-func (app *App) openPerson(a Actor) {
+func (app *App) openPerson(a Card) {
 	ps := &personState{actor: a}
-	ps.works = *newFeed(pages(func(cursor string) ([]Show, string, bool, error) { return app.be.Works(a.ID, cursor) }))
-	app.person = ps
-}
-
-func (app *App) loadPerson(ps *personState) {
-	ps.busy, ps.err = true, ""
-	async(app, func() (*Person, error) { return app.be.Person(ps.actor.ID) }, func(info *Person, err error) {
-		ps.busy = false
-		if err != nil {
-			ps.err = errText(err)
-			return
-		}
-		ps.info = info
+	ps.works = *newFeed(func(cursor string) (feedPage, error) {
+		return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
+			ID:     a.ID,
+			Cursor: cursor,
+		}))
 	})
+	ps.works.onPage = func(fp feedPage) {
+		if fp.page != nil && fp.page.Header != nil {
+			ps.header = fp.page.Header
+		}
+	}
+	app.person = ps
 }
 
 func (app *App) personPage(c *ui.Context) {
 	ps := app.person
 	p := app.pal
-	if ps.info == nil && !ps.busy && ps.err == "" {
-		app.loadPerson(ps)
-	}
 	f := &ps.works
 	retry := func() { f.err = ""; app.loadMore(f) }
 	back := func() { app.person = nil }
 	c.OnShortcut(0, ui.KeyEscape, back)
 
-	name, avatar := ps.actor.Name, ps.actor.Avatar
-	if ps.info != nil {
-		name = ps.info.Name
-		if ps.info.Avatar != "" {
-			avatar = ps.info.Avatar
+	name, avatar := ps.actor.Title, ps.actor.Image
+	if ps.header != nil {
+		if ps.header.Title != "" {
+			name = ps.header.Title
+		}
+		if ps.header.Image != "" {
+			avatar = ps.header.Image
 		}
 	}
 	app.tell(c, name)
@@ -313,36 +303,38 @@ func (app *App) personPage(c *ui.Context) {
 	app.pump(c, f)
 }
 
-// personFacts shows what the profile says under the name.
+// personFacts shows what the collection header says under the name.
 func (app *App) personFacts(c *ui.Context, ps *personState) {
 	p := app.pal
-	info := ps.info
+	info := ps.header
 	switch {
-	case info == nil && ps.err != "":
+	case info == nil && ps.works.err != "":
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, ps.err).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
-			app.secondary(c, iconRefresh, "重试").OnClick(func() { ps.err = "" })
+			ui.Text(c, ps.works.err).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
+			app.secondary(c, iconRefresh, "重试").OnClick(func() { ps.works.err = ""; app.loadMore(&ps.works) })
 		})
 		return
-	case info == nil:
+	case info == nil && !ps.works.loaded:
 		ui.Box(c).Role(ui.RoleStatus).Label("加载中")
 		sh := app.shimmer(c)
 		sh.bone(c, 4).Height(12).Width(180)
 		sh.bone(c, 4).Height(12).Width(320)
 		return
+	case info == nil:
+		return
 	}
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Wrap().Children(func() {
-		for i, t := range info.Tags {
-			ui.Text(c.Key(i), t).FontSize(11.5).FontWeight(500).TextColor(p.muted).Padding(2, 8).Radius(6).Background(p.surface)
-		}
-		if info.Followers != "" {
-			ui.Text(c, info.Followers+" 粉丝").FontSize(12.5).TextColor(p.muted)
-		}
-		if info.Likes != "" {
-			ui.Text(c, info.Likes+" 获赞").FontSize(12.5).TextColor(p.muted)
-		}
-	})
-	if info.Desc != "" {
-		ui.Text(c, info.Desc).FontSize(13).TextColor(p.muted).MaxLines(3).MaxWidth(680)
+	if len(info.Meta) > 0 {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Wrap().Children(func() {
+			for i, m := range info.Meta {
+				if m.Label == "" {
+					ui.Text(c.Key(i), m.Value).FontSize(11.5).FontWeight(500).TextColor(p.muted).Padding(2, 8).Radius(6).Background(p.surface)
+				} else {
+					ui.Text(c.Key(i), m.Value+" "+m.Label).FontSize(12.5).TextColor(p.muted)
+				}
+			}
+		})
+	}
+	if info.Description != "" {
+		ui.Text(c, info.Description).FontSize(13).TextColor(p.muted).MaxLines(3).MaxWidth(680)
 	}
 }

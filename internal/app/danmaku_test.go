@@ -3,12 +3,12 @@ package app
 import (
 	"fmt"
 	"testing"
-
-	"github.com/egoist/mygo/ui"
 	"time"
 
-	"github.com/giuem/ichiwa/internal/catalog"
+	"github.com/egoist/mygo/ui"
+
 	"github.com/giuem/ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 func fixedWidth([]ui.Span) float32 { return 100 }
@@ -22,7 +22,7 @@ func at(s float64) time.Duration { return time.Duration(s * float64(time.Second)
 // before came in whole shares its lane.
 func TestDanmakuLanes(t *testing.T) {
 	d := &danmaku{}
-	d.add([]catalog.Danmaku{{Text: "a", At: at(1)}, {Text: "b", At: at(1)}, {Text: "c", At: at(4)}})
+	d.add([]source.Danmaku{{Text: "a", Time: 1}, {Text: "b", Time: 1}, {Text: "c", Time: 4}})
 	d.advance(at(5), 800, 600, testStyle, fixedWidth)
 	if d.lanes[0] != 0 || d.lanes[1] != 1 || d.lanes[2] != 0 {
 		t.Fatalf("lanes = %v", d.lanes)
@@ -32,9 +32,9 @@ func TestDanmakuLanes(t *testing.T) {
 // With every lane taken, a comment is left out.
 func TestDanmakuFull(t *testing.T) {
 	d := &danmaku{}
-	var items []catalog.Danmaku
+	var items []source.Danmaku
 	for i := range testStyle.lanes(200) + 1 {
-		items = append(items, catalog.Danmaku{Text: itoa(i), At: at(1)})
+		items = append(items, source.Danmaku{Text: itoa(i), Time: 1})
 	}
 	d.add(items)
 	d.advance(at(1), 800, 200, testStyle, fixedWidth)
@@ -47,8 +47,8 @@ func TestDanmakuFull(t *testing.T) {
 // a page out of order is sorted in.
 func TestDanmakuSeekAndOrder(t *testing.T) {
 	d := &danmaku{}
-	d.add([]catalog.Danmaku{{Text: "late", At: at(30)}})
-	d.add([]catalog.Danmaku{{Text: "early", At: at(2)}})
+	d.add([]source.Danmaku{{Text: "late", Time: 30}})
+	d.add([]source.Danmaku{{Text: "early", Time: 2}})
 	if d.items[0].Text != "early" {
 		t.Fatalf("items = %v", d.items)
 	}
@@ -65,7 +65,7 @@ func TestDanmakuSeekAndOrder(t *testing.T) {
 // The video reporting itself a little back does not give the lanes again.
 func TestDanmakuJitter(t *testing.T) {
 	d := &danmaku{}
-	d.add([]catalog.Danmaku{{Text: "a", At: at(1)}, {Text: "b", At: at(1)}})
+	d.add([]source.Danmaku{{Text: "a", Time: 1}, {Text: "b", Time: 1}})
 	d.advance(at(2), 800, 600, testStyle, fixedWidth)
 	d.advance(at(2)-100*time.Millisecond, 800, 600, testStyle, fixedWidth)
 	if d.next != 2 || d.lanes[0] != 0 || d.lanes[1] != 1 {
@@ -76,7 +76,7 @@ func TestDanmakuJitter(t *testing.T) {
 // After seeking back, playing on does not give the lanes again each frame.
 func TestDanmakuSeekBack(t *testing.T) {
 	d := &danmaku{}
-	d.add([]catalog.Danmaku{{Text: "a", At: at(1)}, {Text: "b", At: at(1)}})
+	d.add([]source.Danmaku{{Text: "a", Time: 1}, {Text: "b", Time: 1}})
 	d.advance(at(20), 800, 600, testStyle, fixedWidth)
 	d.advance(at(1.5), 800, 600, testStyle, fixedWidth)
 	d.lanes[1] = 5 // a reset would give it again
@@ -90,8 +90,8 @@ func TestDanmakuSeekBack(t *testing.T) {
 // still in flight count towards the first, shown as ×n, and fly again later.
 func TestDanmakuRepeats(t *testing.T) {
 	d := &danmaku{}
-	d.add([]catalog.Danmaku{{ID: "1", Text: "+1", At: at(1)}, {ID: "2", Text: "+1", At: at(5)}, {ID: "3", Text: "hi", At: at(5)}})
-	d.add([]catalog.Danmaku{{ID: "1", Text: "+1", At: at(1)}, {ID: "4", Text: "+1", At: at(20)}, {ID: "5", Text: "+1", At: at(3)}})
+	d.add([]source.Danmaku{{ID: "1", Text: "+1", Time: 1}, {ID: "2", Text: "+1", Time: 5}, {ID: "3", Text: "hi", Time: 5}})
+	d.add([]source.Danmaku{{ID: "1", Text: "+1", Time: 1}, {ID: "4", Text: "+1", Time: 20}, {ID: "5", Text: "+1", Time: 3}})
 	var got []string
 	for i, it := range d.items {
 		got = append(got, fmt.Sprintf("%s×%d", it.ID, d.counts[i]))
@@ -140,7 +140,7 @@ func TestDanmakuArea(t *testing.T) {
 // the comments again.
 func TestDanmakuRestyle(t *testing.T) {
 	d := &danmaku{}
-	d.add([]catalog.Danmaku{{Text: "a", At: at(1)}, {Text: "b", At: at(1)}})
+	d.add([]source.Danmaku{{Text: "a", Time: 1}, {Text: "b", Time: 1}})
 	d.advance(at(2), 800, 600, testStyle, fixedWidth)
 	big := testStyle
 	big.size = 24

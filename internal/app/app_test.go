@@ -4,10 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/giuem/ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/source"
+	"github.com/giuem/ichiwa/internal/source/sourcetest"
 )
 
 // Times show as minutes and seconds, and hours only past an hour.
@@ -38,7 +39,7 @@ func TestColumns(t *testing.T) {
 func TestVisibleWholeRows(t *testing.T) {
 	f := &Feed{more: true}
 	for i := range 13 {
-		f.add([]Show{{ID: itoa(i)}})
+		f.add([]Card{{Kind: source.CardMedia, ID: itoa(i)}})
 	}
 	if got := len(visible(f, 5)); got != 10 {
 		t.Errorf("more: shows %d, want 10", got)
@@ -51,7 +52,7 @@ func TestVisibleWholeRows(t *testing.T) {
 	if got := len(visible(f, 5)); got != 13 {
 		t.Errorf("ended: shows %d, want 13", got)
 	}
-	short := &Feed{more: true, items: make([]Show, 3)}
+	short := &Feed{more: true, items: make([]Card, 3)}
 	if got := len(visible(short, 5)); got != 3 {
 		t.Errorf("short: shows %d, want 3", got)
 	}
@@ -61,13 +62,13 @@ func TestVisibleWholeRows(t *testing.T) {
 // apart from new ones.
 func TestFeedReset(t *testing.T) {
 	f := newFeed(func(string) (feedPage, error) { return feedPage{}, nil })
-	f.add([]Show{{ID: "a"}})
+	f.add([]Card{{Kind: source.CardMedia, ID: "a"}})
 	f.cursor, f.more, f.loading = "c", false, true
 	f.reset()
 	if f.fetch == nil || !f.more || f.loading || len(f.items) != 0 || f.cursor != "" || f.gen != 1 {
 		t.Fatalf("reset = %+v", f)
 	}
-	f.add([]Show{{ID: "a"}})
+	f.add([]Card{{Kind: source.CardMedia, ID: "a"}})
 	if len(f.items) != 1 {
 		t.Fatal("seen survived the reset")
 	}
@@ -78,7 +79,7 @@ func TestFeedReset(t *testing.T) {
 func TestStageButtonsTakeClicks(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
-		detail: &Detail{Episodes: make([]model.Episode, 3)}}
+		detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	if err := tt.Click("选集面板"); err != nil {
@@ -98,7 +99,7 @@ func TestStageButtonsTakeClicks(t *testing.T) {
 func TestPinFoldsPanel(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	w := &Watching{app: app, panel: true, index: 1,
-		detail: &Detail{Episodes: make([]model.Episode, 3)}}
+		detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	pin := func() {
@@ -138,11 +139,11 @@ func TestPinFoldsPanel(t *testing.T) {
 // the season it switches to.
 func seasonsWatching(t *testing.T, secondOnline bool) (*Watching, *[]Season, *[]int) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, panel: true, index: 2, show: Show{ID: "s1"},
-		detail: &Detail{Episodes: make([]model.Episode, 3)},
+	w := &Watching{app: app, sourceID: "hongguo", panel: true, index: 2, show: Card{Kind: source.CardMedia, ID: "s1"},
+		detail: &Media{Episodes: make([]source.Episode, 3)},
 		seasons: []Season{
-			{Show: Show{ID: "s1", Title: "剧 第1季"}, Index: 1, Online: true},
-			{Show: Show{ID: "s2", Title: "剧 第2季"}, Index: 2, Online: secondOnline, Note: "预计11月10日上线"},
+			{ID: "s1", Title: "第1季", Current: true, Available: source.Bool(true)},
+			{ID: "s2", Title: "第2季", Available: source.Bool(secondOnline), Note: "预计11月10日上线"},
 		}}
 	var to []Season
 	var eps []int
@@ -184,6 +185,7 @@ func TestEndedWaitsForAnnouncedSeason(t *testing.T) {
 // The season row switches to a season where the user left it.
 func TestSeasonRowSwitches(t *testing.T) {
 	w, to, eps := seasonsWatching(t, true)
+	w.seasons[1].Note = ""
 	tt := ui.NewTester(func(c *ui.Context) { w.app.seasonRow(c, w) }, 368, 200)
 	tt.Frame()
 	if err := tt.Click("第2季"); err != nil {
@@ -356,7 +358,7 @@ func TestMiniSize(t *testing.T) {
 // them closes them without reaching the picture.
 func TestDrawerClosesOnClickBeside(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}, drawer: true}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: []source.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}, drawer: true}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, true) }, 1200, 700)
 	tt.Frame()
 	tt.ClickAt(100, 300)
@@ -373,7 +375,7 @@ func TestDrawerClosesOnClickBeside(t *testing.T) {
 // still takes its own: nothing in the flow may cover them.
 func TestPictureTakesClicks(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: []model.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: []source.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	tt.ClickAt(200, 300)
@@ -395,7 +397,7 @@ func TestPictureTakesClicks(t *testing.T) {
 // The controls of the narrowest stage still build, for the small window.
 func TestStageBuildsNarrow(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, miniMinWidth, miniMinHeight)
 	tt.Frame()
 	tt.Frame()
@@ -492,7 +494,7 @@ func testLibrary(t *testing.T) *library.Library {
 func TestSpeedPicker(t *testing.T) {
 	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 	app.lib.Speed = 1
-	w := &Watching{app: app, index: 1, detail: &Detail{Episodes: make([]model.Episode, 3)}}
+	w := &Watching{app: app, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	tt.Frame()
 	if err := tt.Click("播放速度"); err != nil {
@@ -511,5 +513,44 @@ func TestSpeedPicker(t *testing.T) {
 	tt.Frame()
 	if w.speedOpen || app.lib.Speed != 1.5 {
 		t.Fatalf("chose 1.5倍: open %v, speed %v", w.speedOpen, app.lib.Speed)
+	}
+}
+
+// Sidebar search and player danmaku controls follow source capabilities.
+func TestCapabilityHiding(t *testing.T) {
+	noCaps := &sourcetest.Source{InfoData: source.Info{ID: "plain", Name: "Plain"}}
+	app := &App{
+		src:     noCaps,
+		nav:     []source.NavItem{{ID: "home", Title: "首页", Icon: source.IconHome}},
+		pal:     darkPalette(),
+		posters: newPosters(t.TempDir(), func() {}),
+		lib:     testLibrary(t),
+	}
+	tt := ui.NewTester(app.sidebar, 220, 600)
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleButton, "搜索"); ok {
+		t.Error("search nav item shown without CapSearch")
+	}
+
+	w := &Watching{app: app, index: 0, detail: &Media{Episodes: []source.Episode{{ID: "e1"}}}}
+	ttStage := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
+	ttStage.Frame()
+	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); ok {
+		t.Error("danmaku toggle shown without CapDanmaku")
+	}
+
+	withCaps := &sourcetest.Source{InfoData: source.Info{
+		ID:           "full",
+		Name:         "Full",
+		Capabilities: []source.Capability{source.CapSearch, source.CapDanmaku},
+	}}
+	app.src = withCaps
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleButton, "搜索"); !ok {
+		t.Error("search nav item hidden with CapSearch")
+	}
+	ttStage.Frame()
+	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); !ok {
+		t.Error("danmaku toggle hidden with CapDanmaku")
 	}
 }

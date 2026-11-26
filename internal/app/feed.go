@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
@@ -10,18 +11,28 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/giuem/ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 // feedPage is one page of a feed as its source returns it.
 type feedPage struct {
-	items  []Show
+	items  []Card
 	cursor string
 	more   bool
-	extra  any // what else the source returned, for onPage
+	page   *source.CollectionPage // full protocol page for onPage (filters, header, sections)
 }
 
-// Feed is a list of dramas loaded page by page from fetch. The view keeps
+func pageResult(p *source.CollectionPage, err error) (feedPage, error) {
+	if err != nil {
+		return feedPage{}, err
+	}
+	if p == nil {
+		return feedPage{}, nil
+	}
+	return feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}, nil
+}
+
+// Feed is a list of cards loaded page by page from fetch. The view keeps
 // about two screens loaded below what it shows, so pages arrive before
 // they are scrolled to, and a page that doesn't fill the view loads the
 // next at once.
@@ -29,7 +40,7 @@ type Feed struct {
 	fetch  func(cursor string) (feedPage, error) // runs off the main thread
 	onPage func(feedPage)                        // runs on the main thread
 
-	items   []Show
+	items   []Card
 	seen    map[string]bool
 	cursor  string
 	more    bool
@@ -57,7 +68,7 @@ func (f *Feed) reset() {
 	*f = Feed{fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache}
 }
 
-func (f *Feed) add(items []Show) {
+func (f *Feed) add(items []Card) {
 	if f.seen == nil {
 		f.seen = map[string]bool{}
 	}
@@ -76,7 +87,7 @@ func (f *Feed) add(items []Show) {
 // take adds a page to f and returns whether it brought anything new and
 // the items to fill. The first page after items of the cache goes before
 // them, and they stay after it, so the grid doesn't shrink as it comes.
-func (f *Feed) take(p feedPage) (fresh bool, added []Show) {
+func (f *Feed) take(p feedPage) (fresh bool, added []Card) {
 	if f.stale {
 		cached := f.items
 		f.items, f.seen, f.stale = nil, nil, false
@@ -147,30 +158,58 @@ func (f *Feed) step(p feedPage, fresh bool) bool {
 	return f.stalls < maxStalls
 }
 
-// fill looks up the covers and counts that new items of f lack, and puts
-// them in when they come.
-func (app *App) fill(f *Feed, fresh []Show) {
-	var need []Show
+func cardLacking(c Card) bool {
+	return c.Kind == source.CardMedia && (c.Image == "" || len(c.Badges) == 0)
+}
+
+// fill looks up the covers and badges that new media cards lack via Refresh,
+// and merges them in when they arrive.
+func (app *App) fill(f *Feed, fresh []Card) {
+	if !app.hasCap(source.CapRefresh) {
+		return
+	}
+	var ids []string
 	for _, s := range fresh {
-		if catalog.Lacking(s) {
-			need = append(need, s)
+		if cardLacking(s) {
+			ids = append(ids, s.ID)
 		}
 	}
-	if len(need) == 0 {
+	if len(ids) == 0 {
 		return
 	}
 	gen := f.gen
-	async(app, func() ([]Show, error) { return app.be.Fill(need), nil }, func(filled []Show, _ error) {
-		if f.gen != gen {
+	src := app.src
+	async(app, func() ([]Card, error) {
+		var filled []Card
+		for start := 0; start < len(ids); start += source.MaxRefreshIDs {
+			batch := ids[start:min(start+source.MaxRefreshIDs, len(ids))]
+			got, err := src.Refresh(context.Background(), batch)
+			if err != nil {
+				continue
+			}
+			filled = append(filled, got...)
+		}
+		return filled, nil
+	}, func(filled []Card, _ error) {
+		if f.gen != gen || len(filled) == 0 {
 			return
 		}
-		byID := make(map[string]Show, len(filled))
+		byID := make(map[string]Card, len(filled))
 		for _, s := range filled {
 			byID[s.ID] = s
 		}
 		for i, s := range f.items {
 			if d, ok := byID[s.ID]; ok {
-				f.items[i] = d
+				if s.Image == "" {
+					s.Image = d.Image
+				}
+				if len(s.Badges) == 0 {
+					s.Badges = d.Badges
+				}
+				if s.Subtitle == "" {
+					s.Subtitle = d.Subtitle
+				}
+				f.items[i] = s
 				f.changed = f.changed || i < feedCacheSize
 			}
 		}
@@ -192,26 +231,28 @@ func (app *App) pump(c *ui.Context, f *Feed) {
 
 // visible is what of f the grid shows: whole rows of n while more pages
 // come, so that the last row doesn't fill in piece by piece.
-func visible(f *Feed, n int) []Show {
+func visible(f *Feed, n int) []Card {
 	if f.more && f.err == "" && len(f.items) > n {
 		return f.items[:len(f.items)/n*n]
 	}
 	return f.items
 }
 
-func (app *App) feed(channel string) *Feed {
-	f := app.feeds[channel]
+func (app *App) feed(colID string) *Feed {
+	f := app.feeds[colID]
 	if f == nil {
 		f = newFeed(func(cursor string) (feedPage, error) {
-			items, next, more, err := app.be.Discover(channel, cursor)
-			return feedPage{items: items, cursor: next, more: more}, err
+			return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
+				ID:     colID,
+				Cursor: cursor,
+			}))
 		})
-		if name := feedCacheNames[channel]; name != "" && app.cacheDir != "" {
-			f.cache = filepath.Join(app.cacheDir, "feeds", name+".json")
+		if name := feedCacheNames[colID]; name != "" && app.cacheDir != "" {
+			f.cache = filepath.Join(app.cacheDir, "feeds", app.sourceID(), name+".json")
 			f.items = loadFeedCache(f.cache)
 			f.stale = len(f.items) > 0
 		}
-		app.feeds[channel] = f
+		app.feeds[colID] = f
 	}
 	return f
 }
@@ -223,12 +264,12 @@ var feedCacheNames = map[string]string{pageRecommend: "recommend", pageLive: "li
 // feedCacheSize is how many items of a channel are kept: a few screens.
 const feedCacheSize = 48
 
-func loadFeedCache(path string) []Show {
+func loadFeedCache(path string) []Card {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	var items []Show
+	var items []Card
 	if err := json.Unmarshal(data, &items); err != nil {
 		log.Printf("feeds: %s is unreadable: %v", path, err)
 		return nil
@@ -241,7 +282,7 @@ func loadFeedCache(path string) []Show {
 func (app *App) saveFeeds(wait bool) {
 	type job struct {
 		path  string
-		items []Show
+		items []Card
 	}
 	var jobs []job
 	for _, f := range app.feeds {
@@ -268,7 +309,7 @@ func (app *App) saveFeeds(wait bool) {
 	}
 }
 
-func writeFeedCache(path string, items []Show) error {
+func writeFeedCache(path string, items []Card) error {
 	data, err := json.Marshal(items)
 	if err != nil {
 		return err
@@ -286,7 +327,7 @@ func writeFeedCache(path string, items []Show) error {
 // warm asks once for the first pages of the other pages, so they show at
 // once when opened.
 func (app *App) warm() {
-	if app.warmed || app.be == nil {
+	if app.warmed || app.src == nil {
 		return
 	}
 	app.warmed = true
@@ -296,7 +337,7 @@ func (app *App) warm() {
 		}
 	}
 	if app.rank.list.fetch == nil {
-		app.loadRank("", "")
+		app.loadRank(nil)
 	}
 	app.loadHot()
 }

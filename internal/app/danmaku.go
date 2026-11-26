@@ -12,8 +12,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/giuem/ichiwa/internal/catalog"
 	"github.com/giuem/ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 // danmakuStep is a step of a danmaku setting: what it says, and what it
@@ -96,47 +96,58 @@ const danmakuJitter = 250 * time.Millisecond
 // saying there are more.
 const danmakuPages = 200
 
+type danmakuItem struct {
+	ID   string
+	Text string
+	At   time.Duration
+}
+
 // danmaku holds the comments of an episode and which lane each flies in.
 // A comment takes the first lane in which it neither starts on the one
 // before nor catches up with it, as the official player does, and is left
 // out when no lane has room. Lanes are given as the video reaches each
 // comment, so that seeking or resizing just gives them again from there.
 type danmaku struct {
-	episode string            // whose comments these are
-	seen    map[string]bool   // the comments taken, by ID
-	cancel  func()            // stops reading them
-	done    bool              // all read
-	items   []catalog.Danmaku // by when they appear
-	counts  []int             // how many viewers sent each
-	widths  []float32         // of their text, measured as they get a lane
-	lanes   []int             // the lane of each, -1 for none
-	next    int               // the first not given a lane yet
-	tails   []int             // the last comment given each lane, -1 for none
-	width   float32           // of the stage the lanes are for
-	style   danmakuStyle      // the lanes are for
-	last    time.Duration     // where the video was when lanes were last given
+	episode string          // whose comments these are
+	seen    map[string]bool // the comments taken, by ID
+	cancel  func()          // stops reading them
+	done    bool            // all read
+	items   []danmakuItem   // by when they appear
+	counts  []int           // how many viewers sent each
+	widths  []float32       // of their text, measured as they get a lane
+	lanes   []int           // the lane of each, -1 for none
+	next    int             // the first not given a lane yet
+	tails   []int           // the last comment given each lane, -1 for none
+	width   float32         // of the stage the lanes are for
+	style   danmakuStyle    // the lanes are for
+	last    time.Duration   // where the video was when lanes were last given
 }
 
 // add takes a page of comments in. A comment already taken is left out,
 // and one saying what one taken says while that one is still in flight
 // counts towards it rather than flies: many viewers send the same words,
 // and a lane each for them fills the picture.
-func (d *danmaku) add(items []catalog.Danmaku) {
-	if len(items) == 0 {
+func (d *danmaku) add(raw []source.Danmaku) {
+	if len(raw) == 0 {
 		return
 	}
 	if d.seen == nil {
 		d.seen = map[string]bool{}
 	}
 	n := len(d.items)
-	for _, it := range items {
-		if it.ID != "" && d.seen[it.ID] {
+	for _, r := range raw {
+		if r.ID != "" && d.seen[r.ID] {
 			continue
 		}
-		d.seen[it.ID] = true
+		d.seen[r.ID] = true
+		it := danmakuItem{
+			ID:   r.ID,
+			Text: r.Text,
+			At:   time.Duration(r.Time * float64(time.Second)),
+		}
 		if utf8.RuneCountInString(it.Text) > danmakuMaxRunes {
-			r := []rune(it.Text)
-			it.Text = string(r[:danmakuMaxRunes-1]) + "…"
+			runes := []rune(it.Text)
+			it.Text = string(runes[:danmakuMaxRunes-1]) + "…"
 		}
 		if k := d.repeats(it); k >= 0 {
 			d.counts[k]++
@@ -163,7 +174,7 @@ func (d *danmaku) add(items []catalog.Danmaku) {
 		idx[i] = i
 	}
 	slices.SortStableFunc(idx, func(a, b int) int { return cmp.Compare(d.items[a].At, d.items[b].At) })
-	items, counts, widths := make([]catalog.Danmaku, len(idx)), make([]int, len(idx)), make([]float32, len(idx))
+	items, counts, widths := make([]danmakuItem, len(idx)), make([]int, len(idx)), make([]float32, len(idx))
 	for k, i := range idx {
 		items[k], counts[k], widths[k] = d.items[i], d.counts[i], d.widths[i]
 	}
@@ -173,7 +184,7 @@ func (d *danmaku) add(items []catalog.Danmaku) {
 
 // repeats is the comment taken that says what it says near the same
 // time, or -1.
-func (d *danmaku) repeats(it catalog.Danmaku) int {
+func (d *danmaku) repeats(it danmakuItem) int {
 	for k, taken := range d.items {
 		if taken.Text == it.Text && (it.At-taken.At).Abs() < danmakuMerge {
 			return k
@@ -289,7 +300,7 @@ func (d *danmaku) spans(i int, shadow bool) []ui.Span {
 // once it plays and while they are wanted.
 func (w *Watching) syncDanmaku() {
 	app := w.app
-	if !app.lib.Danmaku || w.detail == nil || w.player == nil {
+	if !app.hasCap(source.CapDanmaku) || !app.lib.Danmaku || w.detail == nil || w.player == nil {
 		return
 	}
 	ep := w.detail.Episodes[w.index]
@@ -301,11 +312,16 @@ func (w *Watching) syncDanmaku() {
 	d := &danmaku{episode: ep.ID, cancel: cancel}
 	w.dm = d
 	series := w.show.ID
+	src := app.src
 	go func() {
 		defer cancel()
 		cursor := ""
 		for range danmakuPages {
-			page, err := app.be.Danmaku(ctx, series, ep.ID, cursor)
+			page, err := src.Danmaku(ctx, source.DanmakuRequest{
+				MediaID:   series,
+				EpisodeID: ep.ID,
+				Cursor:    cursor,
+			})
 			if ctx.Err() != nil {
 				return
 			}
@@ -313,7 +329,7 @@ func (w *Watching) syncDanmaku() {
 				log.Printf("danmaku of %s: %v", ep.ID, err)
 				return
 			}
-			last := page.Next == ""
+			last := page.Cursor == ""
 			app.win.Update(func() {
 				if w.dm == d {
 					d.add(page.Items)
@@ -323,7 +339,7 @@ func (w *Watching) syncDanmaku() {
 			if last {
 				return
 			}
-			cursor = page.Next
+			cursor = page.Cursor
 		}
 	}()
 }
@@ -339,7 +355,7 @@ func (w *Watching) dropDanmaku() {
 // danmakuLayer flies the comments over the picture.
 func (app *App) danmakuLayer(c *ui.Context, w *Watching) {
 	d := w.dm
-	if !app.lib.Danmaku || d == nil || w.player == nil || w.err != "" || w.halt || w.ended {
+	if !app.hasCap(source.CapDanmaku) || !app.lib.Danmaku || d == nil || w.player == nil || w.err != "" || w.halt || w.ended {
 		return
 	}
 	p := w.player

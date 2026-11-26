@@ -8,7 +8,7 @@ import (
 
 	"github.com/egoist/mygo"
 
-	"github.com/giuem/ichiwa/internal/catalog"
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 // tour walks the pages and saves a screenshot of each into the directory
@@ -41,7 +41,7 @@ func (app *App) tour() {
 		shot("5-results", 6*time.Second)
 		app.win.Update(func() {
 			if f := app.feeds[pageRecommend]; f != nil && len(f.items) > 0 {
-				app.open(f.items[0], -1)
+				app.open(app.sourceID(), f.items[0], -1)
 			}
 		})
 		shot("6-player", 15*time.Second)
@@ -55,13 +55,13 @@ func (app *App) tour() {
 		shot("8-history", 2*time.Second)
 		goTo(pageFilter)
 		shot("9-filter", 6*time.Second)
-		app.win.Update(func() { app.filter.choose(catalog.GenreKey, "comic_series") })
+		app.win.Update(func() { app.filter.choose("genre", "comic_series") })
 		shot("10-filter-comic", 6*time.Second)
-		app.win.Update(func() { app.page = pageRank; app.loadRank("ranklist_celebrity", "") })
+		app.win.Update(func() { app.page = pageRank; app.loadRank(map[string]string{"content": "ranklist_celebrity"}) })
 		shot("11-actors", 6*time.Second)
 		app.win.Update(func() {
-			if len(app.rank.actors) > 0 {
-				app.openPerson(app.rank.actors[0])
+			if len(app.rank.list.items) > 0 && app.rank.list.items[0].Kind == source.CardCollection {
+				app.openPerson(app.rank.list.items[0])
 			}
 		})
 		shot("12-person", 6*time.Second)

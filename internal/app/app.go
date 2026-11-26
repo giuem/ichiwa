@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"log"
@@ -12,8 +13,10 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"github.com/giuem/ichiwa/internal/catalog"
 	"github.com/giuem/ichiwa/internal/library"
+	"github.com/giuem/ichiwa/internal/media"
+	"github.com/giuem/ichiwa/internal/source"
+	"github.com/giuem/ichiwa/internal/sources/hongguo"
 )
 
 const sidebarWidth = 220
@@ -25,11 +28,11 @@ var logo, _ = ui.DecodeBitmap(logoPNG)
 
 // Page names.
 const (
-	pageRecommend = "推荐"
-	pageLive      = "真人剧"
-	pageComic     = "漫剧"
-	pageRank      = "rank"
-	pageFilter    = "filter"
+	pageRecommend = hongguo.ColRecommend
+	pageLive      = hongguo.ColLive
+	pageComic     = hongguo.ColComic
+	pageRank      = hongguo.ColRank
+	pageFilter    = hongguo.ColFilter
 	pageSearch    = "search"
 	pageHistory   = "history"
 	pageFollows   = "follows"
@@ -38,7 +41,9 @@ const (
 // App is the state the window shows.
 type App struct {
 	win     *mygo.Window
-	be      *catalog.Backend
+	src     source.Source
+	media   *media.Manager
+	nav     []source.NavItem
 	posters *Posters
 	lib     *library.Library
 	// cacheDir keeps what the app may lose: covers, episodes, feeds.
@@ -97,6 +102,17 @@ type App struct {
 	upd updateState
 }
 
+func (app *App) sourceID() string {
+	if app.src != nil {
+		return app.src.Info().ID
+	}
+	return library.LegacySource
+}
+
+func (app *App) hasCap(c source.Capability) bool {
+	return app.src != nil && app.src.Info().Has(c)
+}
+
 // async runs work on a goroutine and then done with its result on the main
 // thread, redrawing the window.
 func async[T any](app *App, work func() (T, error), done func(T, error)) {
@@ -149,7 +165,9 @@ func (app *App) view(c *ui.Context) {
 	if c.Vibrancy() {
 		c.Root().Background(ui.Transparent)
 	}
-	c.OnShortcut(ui.Cmd, ui.KeyF, func() { app.go2(pageSearch); app.search.focus = true })
+	if app.hasCap(source.CapSearch) {
+		c.OnShortcut(ui.Cmd, ui.KeyF, func() { app.go2(pageSearch); app.search.focus = true })
+	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
 		side := ui.Column(c).Width(sidebarWidth).Shrink(0).Role(ui.RoleNavigation).Label("主导航")
 		if !c.Vibrancy() {
@@ -163,17 +181,36 @@ func (app *App) view(c *ui.Context) {
 	app.lib.Flush()
 }
 
+func navIcon(ic source.Icon) *ui.SVG {
+	switch ic {
+	case source.IconHome:
+		return iconHome
+	case source.IconFilm:
+		return iconFilm
+	case source.IconSparkles:
+		return iconSparkles
+	case source.IconTrophy:
+		return iconTrophy
+	case source.IconFilter:
+		return iconSliders
+	case source.IconFire:
+		return iconFlame
+	default:
+		return iconHome
+	}
+}
+
 func (app *App) sidebar(c *ui.Context) {
 	p := app.pal
 	top := max(c.TitleBar().Height, 28) + 10
 	ui.Column(c).Fill().Padding(top, 12, 14).Gap(2).DragWindow().Children(func() {
 		app.navSection(c, "发现")
-		app.navItem(c, iconHome, "推荐", pageRecommend, 0)
-		app.navItem(c, iconFilm, "真人剧", pageLive, 0)
-		app.navItem(c, iconSparkles, "漫剧", pageComic, 0)
-		app.navItem(c, iconTrophy, "排行榜", pageRank, 0)
-		app.navItem(c, iconSliders, "筛选", pageFilter, 0)
-		app.navItem(c, iconSearch, "搜索", pageSearch, 0)
+		for _, item := range app.nav {
+			app.navItem(c, navIcon(item.Icon), item.Title, item.ID, 0)
+		}
+		if app.hasCap(source.CapSearch) {
+			app.navItem(c, iconSearch, "搜索", pageSearch, 0)
+		}
 		app.navSection(c, "我的")
 		app.navItem(c, iconClock, "继续观看", pageHistory, len(app.lib.History))
 		app.navItem(c, iconHeart, "追剧", pageFollows, len(app.lib.Follows))
@@ -272,6 +309,21 @@ func (app *App) content(c *ui.Context) {
 	}
 }
 
+func normalizeSavedPage(saved string) string {
+	switch saved {
+	case "推荐":
+		return pageRecommend
+	case "真人剧":
+		return pageLive
+	case "漫剧":
+		return pageComic
+	case pageRecommend, pageLive, pageComic, pageRank, pageFilter, pageSearch, pageHistory, pageFollows:
+		return saved
+	default:
+		return pageRecommend
+	}
+}
+
 // hideWindow takes the window off the screen and leaves the app running.
 // A full screen window leaves full screen first, or its space stays behind
 // empty.
@@ -293,15 +345,26 @@ func Run() {
 		cacheDir, _ := mygo.App.Path(mygo.PathCache)
 		app.cacheDir = cacheDir
 		app.lib = library.Load(dataDir)
-		switch app.lib.Page {
-		case pageRecommend, pageLive, pageComic, pageRank, pageFilter, pageSearch, pageHistory, pageFollows:
-			app.page = app.lib.Page
-		}
-		be, err := catalog.New(dataDir, cacheDir)
+		app.page = normalizeSavedPage(app.lib.Page)
+
+		src, err := hongguo.New(dataDir)
 		if err != nil {
 			app.initErr = err.Error()
+		} else {
+			app.src = src
+			if nav, nerr := src.Navigation(context.Background()); nerr == nil {
+				app.nav = nav
+			}
 		}
-		app.be = be
+		if app.initErr == "" {
+			mgr, merr := media.New(cacheDir)
+			if merr != nil {
+				app.initErr = merr.Error()
+			} else {
+				app.media = mgr
+			}
+		}
+
 		app.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:                "一集",
 			Width:                1280,
