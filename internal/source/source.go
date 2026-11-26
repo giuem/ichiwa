@@ -240,6 +240,8 @@ type Media struct {
 type Season struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
+	Name      string `json:"name,omitempty"`
+	Image     string `json:"image,omitempty"`
 	Current   bool   `json:"current,omitempty"`
 	Available *bool  `json:"available,omitempty"`
 	Note      string `json:"note,omitempty"`

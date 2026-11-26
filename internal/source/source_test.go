@@ -84,6 +84,25 @@ func TestErrors(t *testing.T) {
 	if got := Message(context.DeadlineExceeded); got == "" {
 		t.Fatal("deadline exceeded should produce a message")
 	}
+
+	// Context errors must not be classified as ErrPlugin, and host cancellation
+	// yields an empty message so no UI error is shown.
+	for _, ce := range []error{
+		context.Canceled,
+		fmt.Errorf("wrapped: %w", context.Canceled),
+		context.DeadlineExceeded,
+		fmt.Errorf("wrapped: %w", context.DeadlineExceeded),
+	} {
+		if CodeOf(ce) != "" || Is(ce, ErrPlugin) {
+			t.Fatalf("context error %v classified as %q", ce, CodeOf(ce))
+		}
+	}
+	if got := Message(context.Canceled); got != "" {
+		t.Fatalf("Message(context.Canceled) = %q, want empty", got)
+	}
+	if got := Message(fmt.Errorf("wrapped: %w", context.Canceled)); got != "" {
+		t.Fatalf("Message(wrapped Canceled) = %q, want empty", got)
+	}
 }
 
 func TestDecodeNavigation(t *testing.T) {
@@ -190,13 +209,16 @@ func TestCleanCollectionPageAndCards(t *testing.T) {
 		t.Fatalf("overlong cursor should be cleared, got len %d", len(page.Cursor))
 	}
 
-	// Non-first page ignores header, filters, and sections.
+	// Non-first page preserves header per §6, and ignores filters and sections.
 	nextPage, err := DecodeCollectionPage([]byte(raw), false, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nextPage.Header != nil || len(nextPage.Filters) != 0 || len(nextPage.Sections) != 0 {
-		t.Fatalf("non-first page should omit header/filters/sections: %+v", nextPage)
+	if nextPage.Header == nil || nextPage.Header.Title != "演员" {
+		t.Fatalf("non-first page should keep header: %+v", nextPage.Header)
+	}
+	if len(nextPage.Filters) != 0 || len(nextPage.Sections) != 0 {
+		t.Fatalf("non-first page should omit filters/sections: %+v", nextPage)
 	}
 }
 
@@ -204,31 +226,42 @@ func TestDecodeMedia(t *testing.T) {
 	if _, err := DecodeMedia([]byte(`{"id":"1","title":"t"}`), CleanOptions{}); !Is(err, ErrPlugin) {
 		t.Fatalf("missing episodes should fail as plugin: %v", err)
 	}
+	opts := CleanOptions{
+		AllowHost: func(host string) bool { return host == "cdn.example.com" },
+	}
 	raw := `{
 		"id": "m1",
 		"title": " 测试剧 ",
 		"aspect": "unknown",
 		"seasons": [
-			{"id": "s1", "title": "第一季", "current": true},
-			{"id": "s2", "title": "第二季", "available": false, "note": " 即将上线 "}
+			{"id": "s1", "title": "第一季", "name": " 测试剧 第一季 ", "image": "https://cdn.example.com/s1.jpg", "current": true},
+			{"id": "s1", "title": "重复季", "name": "重复"},
+			{"id": "s2", "title": "第二季", "name": "测试剧 第二季", "image": "https://evil.example.org/s2.jpg", "available": false, "note": " 即将上线 "}
 		],
 		"episodes": [
-			{"id": "e1", "duration": -5, "lock": "bogus"},
+			{"id": "e1", "title": "第一集", "duration": -5, "lock": "bogus"},
+			{"id": "e1", "title": "重复的第一集", "duration": 99},
 			{"id": "", "title": "bad"},
 			{"id": "e2", "duration": 62.5, "lock": "vip"}
 		]
 	}`
-	m, err := DecodeMedia([]byte(raw), CleanOptions{})
+	m, err := DecodeMedia([]byte(raw), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.Aspect != AspectLandscape {
 		t.Fatalf("aspect = %q, want landscape", m.Aspect)
 	}
-	if len(m.Seasons) != 2 || !m.Seasons[0].IsAvailable() || m.Seasons[1].IsAvailable() || m.Seasons[1].Note != "即将上线" {
-		t.Fatalf("seasons = %+v", m.Seasons)
+	if len(m.Seasons) != 2 {
+		t.Fatalf("seasons = %+v, want 2 deduplicated", m.Seasons)
 	}
-	if len(m.Episodes) != 2 || m.Episodes[0].Duration != 0 || m.Episodes[0].Lock != LockNone || m.Episodes[1].Lock != LockVIP {
+	if !m.Seasons[0].IsAvailable() || m.Seasons[0].Name != "测试剧 第一季" || m.Seasons[0].Image != "https://cdn.example.com/s1.jpg" {
+		t.Fatalf("season[0] = %+v", m.Seasons[0])
+	}
+	if m.Seasons[1].IsAvailable() || m.Seasons[1].Name != "测试剧 第二季" || m.Seasons[1].Image != "" || m.Seasons[1].Note != "即将上线" {
+		t.Fatalf("season[1] = %+v", m.Seasons[1])
+	}
+	if len(m.Episodes) != 2 || m.Episodes[0].Title != "第一集" || m.Episodes[0].Duration != 0 || m.Episodes[0].Lock != LockNone || m.Episodes[1].Lock != LockVIP {
 		t.Fatalf("episodes = %+v", m.Episodes)
 	}
 }
@@ -315,5 +348,159 @@ func TestDanmakuSuggestRefreshAndMaxSize(t *testing.T) {
 	huge := make([]byte, MaxResponseBytes+1)
 	if _, err := DecodeCollectionPage(huge, true, CleanOptions{}); !Is(err, ErrPlugin) {
 		t.Fatalf("oversized response should fail as plugin: %v", err)
+	}
+}
+
+func TestDecodeTolerantMalformedFields(t *testing.T) {
+	// CollectionPage: numeric card id, string badges, string mixed in items,
+	// numeric note, numeric meta.value, duplicate card IDs.
+	colRaw := `{
+		"title": "混合脏数据",
+		"header": {
+			"title": "某演员",
+			"image": 123,
+			"meta": [
+				{"label": "评分", "value": 8.9},
+				{"label": "坏项", "value": {"nested": true}},
+				"not-an-object"
+			]
+		},
+		"items": [
+			"stray-string",
+			123,
+			null,
+			{"kind": "media", "id": 7423819283746182736, "title": "数字ID剧", "badges": "不是数组", "note": 98765},
+			{"kind": "media", "id": "7423819283746182736", "title": "重复ID应被丢弃"},
+			{"kind": "media", "id": "ok2", "title": "正常剧", "badges": ["完结", 10, {"bad": 1}], "note": 9.5}
+		]
+	}`
+	page, err := DecodeCollectionPage([]byte(colRaw), true, CleanOptions{})
+	if err != nil {
+		t.Fatalf("DecodeCollectionPage failed on malformed optional/item fields: %v", err)
+	}
+	if page.Header == nil || len(page.Header.Meta) != 1 || page.Header.Meta[0].Value != "8.9" || page.Header.Image != "" {
+		t.Fatalf("header = %+v", page.Header)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("items = %+v, want 2", page.Items)
+	}
+	if page.Items[0].ID != "7423819283746182736" || page.Items[0].Title != "数字ID剧" || len(page.Items[0].Badges) != 0 || page.Items[0].Note != "98765" {
+		t.Fatalf("items[0] = %+v", page.Items[0])
+	}
+	if page.Items[1].ID != "ok2" || !slices.Equal(page.Items[1].Badges, []string{"完结", "10"}) || page.Items[1].Note != "9.5" {
+		t.Fatalf("items[1] = %+v", page.Items[1])
+	}
+
+	// Media: numeric media/episode/season IDs, string episode duration dropped,
+	// non-object episode skipped, numeric meta.value kept.
+	mediaRaw := `{
+		"id": 1001,
+		"title": "容错剧",
+		"meta": [{"value": 80}, "bad-meta"],
+		"seasons": [
+			"bad-season",
+			{"id": 2001, "title": "第1季", "name": 2001, "available": "not-bool"}
+		],
+		"episodes": [
+			"not-an-object",
+			{"id": 101, "title": "第1集", "duration": "60"},
+			{"id": "102", "duration": 42.5}
+		]
+	}`
+	m, err := DecodeMedia([]byte(mediaRaw), CleanOptions{})
+	if err != nil {
+		t.Fatalf("DecodeMedia failed on malformed fields: %v", err)
+	}
+	if m.ID != "1001" || len(m.Meta) != 1 || m.Meta[0].Value != "80" {
+		t.Fatalf("media meta = %+v", m)
+	}
+	if len(m.Seasons) != 1 || m.Seasons[0].ID != "2001" || !m.Seasons[0].IsAvailable() {
+		t.Fatalf("seasons = %+v", m.Seasons)
+	}
+	if len(m.Episodes) != 2 || m.Episodes[0].ID != "101" || m.Episodes[0].Duration != 0 || m.Episodes[1].Duration != 42.5 {
+		t.Fatalf("episodes = %+v", m.Episodes)
+	}
+
+	// Media: required field wrong type still fails as plugin error.
+	if _, err := DecodeMedia([]byte(`{"id":{"bad":1},"title":"t","episodes":[]}`), CleanOptions{}); !Is(err, ErrPlugin) {
+		t.Fatalf("wrong type for required id should fail as plugin: %v", err)
+	}
+	if _, err := DecodeMedia([]byte(`{"id":"1","title":"t","episodes":"not-array"}`), CleanOptions{}); !Is(err, ErrPlugin) {
+		t.Fatalf("wrong type for required episodes should fail as plugin: %v", err)
+	}
+
+	// Playback: floating point expiresAt, bitrate, width, height are floored.
+	pbRaw := `{
+		"streams": [
+			"bad-stream",
+			{
+				"url": "https://cdn.example.com/a.mp4",
+				"container": "mp4",
+				"width": 1080.9,
+				"height": 1920.7,
+				"bitrate": 2500000.8,
+				"headers": {"Referer": "https://cdn.example.com/", "Bad": ["x"]}
+			},
+			{
+				"url": "https://cdn.example.com/bad-enc.mp4",
+				"container": "mp4",
+				"encryption": "not-an-object"
+			}
+		],
+		"expiresAt": 1700000000.9
+	}`
+	pb, err := DecodePlayback([]byte(pbRaw), CleanOptions{})
+	if err != nil {
+		t.Fatalf("DecodePlayback failed on float numbers: %v", err)
+	}
+	if pb.ExpiresAt != 1700000000 || len(pb.Streams) != 1 {
+		t.Fatalf("playback = %+v", pb)
+	}
+	st := pb.Streams[0]
+	if st.Width != 1080 || st.Height != 1920 || st.Bitrate != 2500000 || len(st.Headers) != 1 {
+		t.Fatalf("stream = %+v", st)
+	}
+
+	// Danmaku: non-object item and string time dropped; duplicate non-empty ID kept first.
+	dmRaw := `{
+		"items": [
+			"bad",
+			{"id": 1, "text": "第一条", "time": 5.5},
+			{"id": "1", "text": "重复ID", "time": 6},
+			{"id": "2", "text": "坏时间", "time": "5"},
+			{"text": "无ID一", "time": 1},
+			{"text": "无ID二", "time": 2}
+		]
+	}`
+	dm, err := DecodeDanmakuPage([]byte(dmRaw))
+	if err != nil {
+		t.Fatalf("DecodeDanmakuPage failed: %v", err)
+	}
+	if len(dm.Items) != 3 || dm.Items[0].Text != "无ID一" || dm.Items[1].Text != "无ID二" || dm.Items[2].ID != "1" || dm.Items[2].Text != "第一条" {
+		t.Fatalf("danmaku = %+v", dm.Items)
+	}
+
+	// Navigation: non-object skipped, numeric id stringified, duplicates keep first.
+	navRaw := `{"items": ["bad", {"id": 1, "title": "首页"}, {"id": "1", "title": "重复"}, {"id": "2", "title": "排行", "icon": 99}]}`
+	nav, err := DecodeNavigation([]byte(navRaw))
+	if err != nil || len(nav) != 2 || nav[0].ID != "1" || nav[0].Title != "首页" || nav[1].Icon != "" {
+		t.Fatalf("nav = %+v, err = %v", nav, err)
+	}
+}
+
+func TestCleanRefreshDropsCollectionAndDedups(t *testing.T) {
+	raw := `{"items": [
+		{"kind": "collection", "id": "person:1", "title": "演员"},
+		{"kind": "media", "id": "m1", "title": "剧一"},
+		{"kind": "media", "id": "m1", "title": "剧一重复"},
+		"bad",
+		{"kind": "media", "id": 2, "title": "剧二"}
+	]}`
+	cards, err := DecodeRefresh([]byte(raw), CleanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 2 || cards[0].ID != "m1" || cards[0].Title != "剧一" || cards[1].ID != "2" {
+		t.Fatalf("refresh cards = %+v", cards)
 	}
 }

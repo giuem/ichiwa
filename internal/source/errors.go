@@ -97,10 +97,11 @@ func DefaultMessage(code ErrorCode) string {
 	}
 }
 
-// CodeOf returns the ErrorCode of err, "" if err is nil, or ErrPlugin for any
+// CodeOf returns the ErrorCode of err, "" if err is nil or a context error
+// (context.Canceled or context.DeadlineExceeded), or ErrPlugin for any other
 // non-protocol error.
 func CodeOf(err error) ErrorCode {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return ""
 	}
 	var se *Error
@@ -112,14 +113,10 @@ func CodeOf(err error) ErrorCode {
 
 // Is reports whether err carries the given ErrorCode.
 func Is(err error, code ErrorCode) bool {
-	if err == nil {
+	if err == nil || code == "" {
 		return false
 	}
-	var se *Error
-	if errors.As(err, &se) {
-		return normalizeErrorCode(se.Code) == code
-	}
-	return code == ErrPlugin
+	return CodeOf(err) == code
 }
 
 // RetryAfter returns how long the host should wait before retrying err, or 0
@@ -138,9 +135,10 @@ func RetryAfter(err error) time.Duration {
 	return 0
 }
 
-// Message turns err into a concise user-facing string.
+// Message turns err into a concise user-facing string. Host cancellations
+// return "" since they are not errors and must not be displayed.
 func Message(err error) string {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return ""
 	}
 	var se *Error
