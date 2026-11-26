@@ -25,3 +25,7 @@ require (
 )
 
 tool github.com/egoist/mygo/cmd/mygo
+
+// openhongguo v0.4.1 拿不到播放地址（服务端 2026-11-23 起要求播放请求带 x-medusa）。
+// giuem/openhongguo 是 v0.4.1 加上游 PR #25 的修复；上游发布新版后删掉这行。
+replace github.com/beilunyang/openhongguo => github.com/giuem/openhongguo v0.4.2-0.20261126170640-ad6a1944dd89
