@@ -645,6 +645,7 @@ func (l *Library) ResolveEpisodes(ref source.Ref, episodeIDs []string) {
 	}
 	var stmts []sqlite.Statement
 	if legacy := l.legacyEpisodes[ref]; len(legacy) > 0 {
+		var resolved []int
 		for idx, old := range legacy {
 			if idx < 0 || idx >= len(episodeIDs) || episodeIDs[idx] == "" {
 				continue
@@ -660,13 +661,21 @@ func (l *Library) ResolveEpisodes(ref source.Ref, episodeIDs []string) {
 			if old.Finished {
 				cur.Finished = true
 			}
-			stmts = append(stmts, episodeStatement(epKey{ref, epID}, cur))
+			stmts = append(stmts,
+				episodeStatement(epKey{ref, epID}, cur),
+				sqlite.Statement{
+					SQL:  "DELETE FROM episodes_legacy WHERE source = ? AND media_id = ? AND episode = ?",
+					Args: []any{ref.Source, ref.ID, idx},
+				},
+			)
+			resolved = append(resolved, idx)
 		}
-		delete(l.legacyEpisodes, ref)
-		stmts = append(stmts, sqlite.Statement{
-			SQL:  "DELETE FROM episodes_legacy WHERE source = ? AND media_id = ?",
-			Args: []any{ref.Source, ref.ID},
-		})
+		for _, idx := range resolved {
+			delete(legacy, idx)
+		}
+		if len(legacy) == 0 {
+			delete(l.legacyEpisodes, ref)
+		}
 	}
 	if rec := l.History[ref]; rec != nil && rec.EpisodeID == "" && rec.Episode >= 0 && rec.Episode < len(episodeIDs) {
 		if epID := episodeIDs[rec.Episode]; epID != "" {

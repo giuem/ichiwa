@@ -274,3 +274,71 @@ func TestMigrateFromSchema2(t *testing.T) {
 		t.Fatalf("after reload: episodes=%+v legacy=%+v", again.Episodes[ref], again.legacyEpisodes[ref])
 	}
 }
+
+// ResolveEpisodes deletes only the legacy rows that successfully resolved to an
+// episode ID, keeping out-of-range or empty-ID indices for later resolution.
+func TestResolveEpisodesPartial(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	db, err := sqlite.Open(ctx, filepath.Join(dir, "library.db"), sqlite.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UnixMilli()
+	var stmts []sqlite.Statement
+	for _, sql := range migrations[0] {
+		stmts = append(stmts, sqlite.Statement{SQL: sql})
+	}
+	for _, sql := range migrations[1] {
+		stmts = append(stmts, sqlite.Statement{SQL: sql})
+	}
+	stmts = append(stmts, sqlite.Statement{
+		SQL:  "INSERT INTO history (show_id, show, episode, position, duration, updated) VALUES (?, ?, ?, ?, ?, ?)",
+		Args: []any{"s3", `{"ID":"s3","Title":"部分剧集","Episodes":10}`, 5, 10.0, 60.0, now},
+	})
+	for i := range 6 {
+		stmts = append(stmts, sqlite.Statement{
+			SQL:  "INSERT INTO episodes (show_id, episode, position, duration, finished, updated) VALUES (?, ?, ?, ?, ?, ?)",
+			Args: []any{"s3", i, float64(10 + i), 60.0, boolInt(i < 4), now},
+		})
+	}
+	if _, err := db.Transaction(ctx, stmts); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	ref := source.Ref{Source: LegacySource, ID: "s3"}
+	l := Load(dir)
+	// Supply only 3 episodes, with an empty ID at index 1: only 0 and 2 resolve.
+	l.ResolveEpisodes(ref, []string{"ep0", "", "ep2"})
+	if !l.Watched(ref, "ep0") || !l.Watched(ref, "ep2") {
+		t.Fatalf("resolved episodes = %+v", l.Episodes[ref])
+	}
+	if got := len(l.legacyEpisodes[ref]); got != 4 {
+		t.Fatalf("remaining legacy count = %d, want 4 (%+v)", got, l.legacyEpisodes[ref])
+	}
+	l.Close()
+
+	// Reopening preserves the 4 unresolved rows in SQLite.
+	again := Load(dir)
+	defer again.Close()
+	if got := len(again.legacyEpisodes[ref]); got != 4 {
+		t.Fatalf("after reload remaining legacy count = %d, want 4", got)
+	}
+	for _, idx := range []int{1, 3, 4, 5} {
+		if again.legacyEpisodes[ref][idx] == nil {
+			t.Fatalf("legacy index %d was lost after partial resolve", idx)
+		}
+	}
+	// Now supply the full list and verify all remaining legacy rows resolve and clear.
+	again.ResolveEpisodes(ref, []string{"ep0", "ep1", "ep2", "ep3", "ep4", "ep5"})
+	if !again.Watched(ref, "ep1") || !again.Watched(ref, "ep3") || again.EpisodeStart(ref, "ep4") != 14 || again.EpisodeStart(ref, "ep5") != 15 {
+		t.Fatalf("fully resolved episodes = %+v", again.Episodes[ref])
+	}
+	if again.History[ref].EpisodeID != "ep5" {
+		t.Fatalf("History.EpisodeID = %q, want ep5", again.History[ref].EpisodeID)
+	}
+	if len(again.legacyEpisodes[ref]) != 0 {
+		t.Fatalf("legacy rows left after full resolve: %+v", again.legacyEpisodes[ref])
+	}
+}
