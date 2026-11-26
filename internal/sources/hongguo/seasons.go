@@ -15,7 +15,107 @@ import (
 	"github.com/giuem/ichiwa/internal/source"
 )
 
+// defaultCalendarBudget is how long Media waits, once the details and the
+// episodes are in, for the season list and its release notes.
 const defaultCalendarBudget = time.Second
+
+// seasonsTTL is how long a season list read in the background is reused.
+const seasonsTTL = 10 * time.Minute
+
+// calendarParallel bounds the calendar days read at once.
+const calendarParallel = 4
+
+type seasonsCache struct {
+	entries []seasonEntry // nil for a show of a single season
+	at      time.Time
+}
+
+// cachedSeasons returns a season list read in the last seasonsTTL.
+func (s *Source) cachedSeasons(id string) ([]seasonEntry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.seasons[id]
+	if !ok || time.Since(c.at) > seasonsTTL {
+		return nil, false
+	}
+	return slices.Clone(c.entries), true
+}
+
+func (s *Source) storeSeasons(id string, entries []seasonEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seasons == nil {
+		s.seasons = map[string]seasonsCache{}
+	}
+	s.seasons[id] = seasonsCache{entries: slices.Clone(entries), at: time.Now()}
+}
+
+// loadSeasons reads a show's seasons, then their release notes, in the
+// background and on contexts of their own, so a slow list or calendar
+// never holds up playback: what it finds is cached for the next opening
+// even after the Media that started it returned. base gets the list as
+// soon as it is read, annotated the list with its notes; both are closed
+// without a value when the list cannot be read.
+func (s *Source) loadSeasons(id string) (base, annotated <-chan []seasonEntry) {
+	baseCh := make(chan []seasonEntry, 1)
+	annCh := make(chan []seasonEntry, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		album, err := s.client.Seasons(ctx, id)
+		cancel()
+		if err != nil {
+			close(baseCh)
+			close(annCh)
+			return
+		}
+		entries := seasonsOf(album.Seasons)
+		if len(entries) < 2 {
+			entries = nil
+		}
+		s.storeSeasons(id, entries)
+		baseCh <- entries
+		if entries == nil {
+			annCh <- nil
+			return
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), 60*time.Second)
+		notes := s.announce(ctx, slices.Clone(entries))
+		cancel()
+		s.storeSeasons(id, notes)
+		annCh <- notes
+	}()
+	return baseCh, annCh
+}
+
+// awaitSeasons waits up to the calendar budget for the annotated season
+// list, settling for the plain list, or none, when the time is up.
+func (s *Source) awaitSeasons(ctx context.Context, base, annotated <-chan []seasonEntry) []seasonEntry {
+	budget := s.calendarBudget
+	if budget <= 0 {
+		budget = defaultCalendarBudget
+	}
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	var got []seasonEntry
+	for {
+		select {
+		case e, ok := <-annotated:
+			if ok {
+				return e
+			}
+			return got
+		case e, ok := <-base:
+			if ok {
+				got = e
+			}
+			base = nil
+		case <-timer.C:
+			return got
+		case <-ctx.Done():
+			return got
+		}
+	}
+}
 
 type seasonEntry struct {
 	ID     string
@@ -170,10 +270,13 @@ func (s *Source) announce(ctx context.Context, seasons []seasonEntry) []seasonEn
 	results := make([]calDay, len(days))
 	errs := make([]error, len(days))
 	var wg sync.WaitGroup
+	slots := make(chan struct{}, calendarParallel)
 	for i, day := range days {
 		wg.Add(1)
 		go func(i int, day string) {
 			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
 			results[i], errs[i] = s.calendar(ctx, day)
 		}(i, day)
 	}
