@@ -211,7 +211,7 @@ interface Meta { label?: string; value: string }   // “热度 1.2 亿”“202
 interface FilterRow {
   key: string;
   title: string;                                // “题材”
-  options: { value: string; title: string }[];  // 第一项通常是“全部”，value 为 ""
+  options: { value: string; title: string }[];  // 第一项通常是“全部”，value 为 ""；省略 value 也按 "" 处理
   value: string;                                // 当前选中的 value
 }
 
@@ -262,7 +262,7 @@ interface Episode {
   image?: string;
   badges?: string[];       // “新”“预告”
   aspect?: "portrait" | "landscape";
-  lock?: "login" | "vip" | "paid" | "unavailable"; // 省略表示能播
+  lock?: "login" | "vip" | "paid" | "unavailable"; // 省略表示能播；不认识的值按 unavailable 处理
 }
 ```
 
@@ -295,7 +295,8 @@ interface DanmakuPage {
 - 可选字段不合格（类型不对、URL 不在白名单、数值为负或不是有限数）：丢掉这个字段。必需字段类型不对，按缺字段处理。
 - 数字字段接受小数，需要整数的地方向下取整；`id` 等字符串字段给了数字时转成字符串。
 - 同一列表里 `id` 重复的，只保留第一个。
-- 不认识的字段和枚举值忽略（枚举值按默认处理）。超长字符串截断。
+- 不认识的字段和枚举值忽略（枚举值先去掉首尾空白，不认识的按默认处理；`lock` 例外，见上）。超长字符串截断。
+- `encryption` 不合格的流整路丢弃，不会当作未加密播放。
 - 每次调用最多返回 4 MiB 的 JSON。
 
 ## 7. 播放
