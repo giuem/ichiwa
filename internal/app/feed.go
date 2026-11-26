@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -118,9 +117,6 @@ func (app *App) loadMore(f *Feed) {
 		}
 		f.loading = false
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
 			f.loaded = true
 			if p.page != nil && f.onPage != nil {
 				f.onPage(p)
@@ -262,7 +258,10 @@ func (app *App) feed(colID string) *Feed {
 				legacyPath := filepath.Join(app.cacheDir, "feeds", name+".json")
 				if items := loadLegacyFeedCache(legacyPath); len(items) > 0 {
 					f.items = items
-					_ = writeFeedCache(f.cache, items)
+					// The old file goes only once the new one holds its items.
+					if err := writeFeedCache(f.cache, items); err == nil {
+						_ = os.Remove(legacyPath)
+					}
 				}
 			}
 			f.stale = len(f.items) > 0
@@ -306,10 +305,10 @@ func loadLegacyFeedCache(path string) []Card {
 	if err != nil {
 		return nil
 	}
-	_ = os.Remove(path)
 	var old []legacyFeedShow
 	if err := json.Unmarshal(data, &old); err != nil {
 		log.Printf("feeds: legacy %s is unreadable: %v", path, err)
+		_ = os.Remove(path) // it will never read; the feed fills it anew
 		return nil
 	}
 	out := make([]Card, 0, len(old))

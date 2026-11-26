@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -129,8 +130,27 @@ func TestFeedCacheMigratesLegacy(t *testing.T) {
 		t.Fatalf("non-hongguo removed legacy cache: %v", err)
 	}
 
-	// Hongguo reads, converts fields, deletes the old file, and saves the new path.
 	hgSrc := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
+
+	// When the new file cannot be written, the old one stays for next time.
+	newDir := filepath.Join(cacheDir, "feeds", "hongguo")
+	if err := os.MkdirAll(newDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(newDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if f := (&App{src: hgSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}).feed(pageRecommend); len(f.items) != 1 {
+		t.Fatalf("feed with an unwritable cache = %+v", f)
+	}
+	if _, err := os.Stat(legacyPath); err != nil && runtime.GOOS != "windows" {
+		t.Fatalf("legacy cache removed although the new one was not written: %v", err)
+	}
+	if err := os.Chmod(newDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hongguo reads, converts fields, deletes the old file, and saves the new path.
 	app := &App{src: hgSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}
 	f := app.feed(pageRecommend)
 	if !f.stale || len(f.items) != 1 {
