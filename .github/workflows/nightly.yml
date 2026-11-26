@@ -1,0 +1,41 @@
+# 每天 00:00（Asia/Shanghai）把 main 上还没发布的代码改动发出去：
+# scripts/release.sh auto 看上次发布以来有没有代码改动，有就把
+# CHANGELOG.md 的 Unreleased（空着就替用户写上）改成版本号，提交，打 tag，
+# 推送，再启动 release workflow。没有改动就什么都不做。RELEASING.md 说明
+# 整个流程。
+name: Nightly release
+
+on:
+  schedule:
+    - cron: "0 16 * * *" # 00:00 Asia/Shanghai
+  workflow_dispatch:
+
+permissions:
+  contents: write # 推送发布的提交和 tag
+  actions: write # 启动 release workflow
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0 # 历史和 tag，用来找上次发布
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          before=$(git rev-parse HEAD)
+          scripts/release.sh auto -push
+          [ "$(git rev-parse HEAD)" != "$before" ] || exit 0
+          # GITHUB_TOKEN 推送的 tag 不会启动别的 workflow，所以这里直接启动。
+          tag=$(git describe --tags --exact-match --match 'v*' HEAD)
+          gh workflow run release.yml -f tag="$tag"
+          echo "Started the release of $tag" >> "$GITHUB_STEP_SUMMARY"

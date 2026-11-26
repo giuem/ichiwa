@@ -8,6 +8,11 @@
 #                                    加 -push 就把 main 和 tag 一起推送，
 #                                    推送会启动 release workflow；
 #                                    -n 只显示会做什么，不改任何东西
+#   scripts/release.sh auto [-push] [-n] [-trailer "…"]
+#                                    每天 00:00 的自动发布用：上次发布以来
+#                                    有代码改动就像 tag 一样发布；Unreleased
+#                                    下没有说明时先替用户写上；没有改动就什么
+#                                    都不做
 #
 # 版本号是 YYYY.MDD.N：发布当天（Asia/Shanghai）的年、不补零的月加两位的日、
 # 当天的第几次发布（从 1 开始），例如 2026.1107.2。
@@ -38,6 +43,78 @@ unreleased() {
 	awk '/^## / { if (found) exit; found = ($0 == "## Unreleased"); next } found' CHANGELOG.md
 }
 
+# check 确认可以在这里发布：在 main 上，工作区干净（auto 写的说明除外），
+# 和 origin/main 一致。
+check() {
+	[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || die "要在 main 上发布"
+	[ -z "$(git status --porcelain --untracked-files=no -- . ${allow_changelog:+':(exclude)CHANGELOG.md'})" ] ||
+		die "有没提交的改动，先提交"
+	git fetch --quiet origin main
+	[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
+		die "main 和 origin/main 不一致：先 git pull --rebase origin main，或者先推送"
+}
+
+# code_changes 打印某个提交以来改过的代码文件。文档、测试、CI 和开发工具
+# 不算，和 RELEASING.md 里“不发布”的一样。
+code_changes() {
+	git diff --name-only "$1" HEAD -- . ':(exclude)*.md' ':(exclude)LICENSE' ':(exclude)website' \
+		':(exclude)scripts' ':(exclude).github' ':(exclude)renovate.json' \
+		':(exclude)*_test.go' ':(exclude)**/testdata/**'
+}
+
+# openhongguo_at 打印某个提交的 go.mod 里 openhongguo 的版本。
+openhongguo_at() {
+	git show "$1:go.mod" | awk '$1 == "github.com/beilunyang/openhongguo" { sub(/^v/, "", $2); print $2 }'
+}
+
+auto() {
+	dry=0
+	for a in "$@"; do [ "$a" = -n ] && dry=1; done
+	check
+
+	if unreleased | grep -q '^- '; then
+		say "Unreleased 下已有说明"
+		tag "$@"
+		return
+	fi
+
+	last=$(git describe --tags --abbrev=0 --match 'v*')
+	changed=$(code_changes "$last")
+	if [ -z "$changed" ]; then
+		say "$last 以来没有代码改动，不发布"
+		return
+	fi
+
+	# 说明写给用户：openhongguo 升级单独写一句，别的改动合成一句。
+	notes=
+	old=$(openhongguo_at "$last")
+	new=$(openhongguo_at HEAD)
+	[ "$old" = "$new" ] || notes="- 更新片源接口（openhongguo 升级到 ${new}）"
+	others=$(printf '%s\n' "$changed" | grep -vxE 'go\.(mod|sum)' || true)
+	gomod=$(git diff "$last" HEAD -- go.mod | grep -E '^[-+][^-+]' | grep -v openhongguo || true)
+	if [ -n "$others$gomod" ] || [ -z "$notes" ]; then
+		notes=$(printf '%s\n%s' "$notes" "- 一些小的修复和改进" | sed '/^$/d')
+	fi
+
+	say "$last 以来的代码改动："
+	printf '%s\n' "$changed" >&2
+	say "Unreleased 下没有说明，写上："
+	printf '%s\n' "$notes" >&2
+	if [ "$dry" = 1 ]; then
+		say "-n：不改任何东西"
+		return
+	fi
+
+	# 有空的 Unreleased 就写在它下面，没有就在第一个版本前面加上。
+	if grep -qx '## Unreleased' CHANGELOG.md; then
+		NOTES=$notes awk '{ print } $0 == "## Unreleased" { print ""; print ENVIRON["NOTES"] }' CHANGELOG.md >CHANGELOG.md.new
+	else
+		NOTES=$notes awk '!done && /^## / { print "## Unreleased"; print ""; print ENVIRON["NOTES"]; print ""; done = 1 } { print }' CHANGELOG.md >CHANGELOG.md.new
+	fi
+	mv CHANGELOG.md.new CHANGELOG.md
+	allow_changelog=1 tag "$@"
+}
+
 tag() {
 	push=0
 	dry=0
@@ -55,11 +132,7 @@ tag() {
 		shift
 	done
 
-	[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || die "要在 main 上发布"
-	[ -z "$(git status --porcelain --untracked-files=no)" ] || die "有没提交的改动，先提交"
-	git fetch --quiet origin main
-	[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
-		die "main 和 origin/main 不一致：先 git pull --rebase origin main，或者先推送"
+	check
 
 	notes=$(unreleased)
 	printf '%s\n' "$notes" | grep -q '^- ' || die "CHANGELOG.md 的 \"## Unreleased\" 下没有内容"
@@ -96,6 +169,7 @@ cmd=${1:-}
 case $cmd in
 next) next ;;
 tag) tag "$@" ;;
+auto) auto "$@" ;;
 *)
 	sed -n '2,/^set -eu/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//' >&2
 	exit 2

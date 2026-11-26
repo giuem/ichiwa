@@ -16,4 +16,6 @@
 2. 在最新的 `main` 上、没有别的待提交内容时运行 `scripts/release.sh tag -push -trailer "Co-Authored-By: <你的提交结尾的那一行>"`。它给说明版本号，提交，打 tag `v<版本>`，把 `main` 和 tag 一起推送；tag 启动 workflow，构建、签名并发布 release，不要自己构建。`-n` 显示它会做什么。
 3. 推送因为 `origin/main` 变了被拒绝时，脚本会撤销它的提交和 tag：`git pull --rebase origin main` 后再运行。
 
-不发布的推送不碰 `## Unreleased`。不要改已发布版本的标题，不要移动或复用 tag，不要绕过 `scripts/release.sh tag` 推 `v*` tag。
+每天 00:00（Asia/Shanghai）`.github/workflows/nightly.yml` 运行 `scripts/release.sh auto`：上次发布以来 `main` 上有代码改动（文档、测试、CI、开发工具以外的改动，比如 Renovate 合入的依赖升级），就把它们发布出去；`## Unreleased` 空着时它替用户写上笼统的说明。所以改变用户体验的改动也可以只写好 `## Unreleased`、推送，留给夜里发布；要马上发就照上面自己发。
+
+只改文档、测试、CI、开发工具的推送不碰 `## Unreleased`。不要改已发布版本的标题，不要移动或复用 tag，不要绕过 `scripts/release.sh` 推 `v*` tag。

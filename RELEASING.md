@@ -28,7 +28,17 @@
    它把 `## Unreleased` 改成新版本号，提交（提交说明就是版本号），打 tag `v<版本>`，再用 `git push --atomic` 把 `main` 和 tag 一起推送。`-n` 只显示会做什么；`-trailer "Co-Authored-By: …"` 给提交说明加一行结尾。`CHANGELOG.md` 里 Unreleased 下没有内容、工作区不干净、或者 `main` 落后于 `origin/main` 时它会拒绝。推送被拒绝时它会撤销提交和 tag，`git pull --rebase origin main` 之后再来一次。
 3. tag 启动 release workflow：检查 tag、跑测试、建 release（说明是 CHANGELOG 里这一版的内容）、构建 Apple 芯片和 Intel 两个架构的 `.dmg`、更新包和清单，上传并**自动发布**为最新版本。用 `gh run watch` 看进度。
 
-不推送的改动不碰 `## Unreleased`。不要改已发布版本的标题，不要移动或复用 tag，也不要绕过脚本手推 `v*` tag。
+只改文档、测试、CI、开发工具的推送不碰 `## Unreleased`。不要改已发布版本的标题，不要移动或复用 tag，也不要绕过脚本手推 `v*` tag。
+
+## 每天的自动发布
+
+没人发布的改动也不会一直等着：每天 00:00（Asia/Shanghai）[`.github/workflows/nightly.yml`](.github/workflows/nightly.yml) 在 `main` 上运行 `scripts/release.sh auto -push`。
+
+- 上次发布（最近的 `v*` tag）以来没有代码改动就什么都不做。不算代码改动的是 `*.md`、`LICENSE`、`website/`、`scripts/`、`.github/`、`renovate.json`、`*_test.go` 和 `testdata/`。
+- `## Unreleased` 下有说明就用它；空着就替用户写上：openhongguo 升级了写“更新片源接口（openhongguo 升级到 x）”，别的改动写“一些小的修复和改进”。想要更具体的说明，推送改动时自己写好 `## Unreleased`。
+- 然后和 `tag -push` 一样提交、打 tag、推送，再用 `gh workflow run release.yml` 启动发布（`GITHUB_TOKEN` 推送的 tag 不会自己启动 workflow）。
+
+`scripts/release.sh auto -n` 在本地显示今晚会发什么。在 Actions 页面手动运行 Nightly release 可以立刻跑一次。
 
 workflow 失败后，修好问题再用 `gh workflow run release.yml -f tag=v<版本>` 重新发布同一个 tag（它用这个 tag 指向的提交构建，所以 CHANGELOG 必须已经在那个提交里）；如果问题要改代码，就发一个新的版本。
 
