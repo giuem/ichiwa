@@ -262,7 +262,7 @@ interface Episode {
   image?: string;
   badges?: string[];       // “新”“预告”
   aspect?: "portrait" | "landscape";
-  lock?: "login" | "vip" | "paid" | "unavailable"; // 省略表示能播；不认识的值按 unavailable 处理
+  lock?: "login" | "vip" | "paid" | "unavailable"; // 省略或 null 表示能播；不认识的值、不是字符串的值按 unavailable 处理
 }
 ```
 
