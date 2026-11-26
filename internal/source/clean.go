@@ -111,6 +111,7 @@ func cleanURL(raw string, opts CleanOptions) string {
 }
 
 func cleanShape(s Shape) Shape {
+	s = Shape(strings.TrimSpace(string(s)))
 	switch s {
 	case ShapePortrait, ShapeLandscape, ShapeSquare, ShapeCircle:
 		return s
@@ -120,6 +121,7 @@ func cleanShape(s Shape) Shape {
 }
 
 func cleanLayout(l Layout) Layout {
+	l = Layout(strings.TrimSpace(string(l)))
 	switch l {
 	case LayoutGrid, LayoutList, LayoutRanked:
 		return l
@@ -129,6 +131,7 @@ func cleanLayout(l Layout) Layout {
 }
 
 func cleanSectionLayout(l SectionLayout) SectionLayout {
+	l = SectionLayout(strings.TrimSpace(string(l)))
 	switch l {
 	case SectionRow, SectionGrid, SectionRanked:
 		return l
@@ -138,6 +141,7 @@ func cleanSectionLayout(l SectionLayout) SectionLayout {
 }
 
 func cleanIcon(ic Icon) Icon {
+	ic = Icon(strings.TrimSpace(string(ic)))
 	switch ic {
 	case IconHome, IconFire, IconStar, IconSparkles, IconTrophy, IconFilter,
 		IconFilm, IconTV, IconDrama, IconAnime, IconMusic, IconNews,
@@ -149,6 +153,7 @@ func cleanIcon(ic Icon) Icon {
 }
 
 func cleanAspect(a Aspect, fallback Aspect) Aspect {
+	a = Aspect(strings.TrimSpace(string(a)))
 	switch a {
 	case AspectPortrait, AspectLandscape:
 		return a
@@ -158,11 +163,14 @@ func cleanAspect(a Aspect, fallback Aspect) Aspect {
 }
 
 func cleanLock(l Lock) Lock {
+	l = Lock(strings.TrimSpace(string(l)))
 	switch l {
-	case LockLogin, LockVIP, LockPaid, LockUnavailable:
+	case LockNone, LockLogin, LockVIP, LockPaid, LockUnavailable:
 		return l
 	default:
-		return LockNone
+		// A lock this host does not know is still a lock: play nothing
+		// rather than an episode the source says is locked.
+		return LockUnavailable
 	}
 }
 
@@ -489,7 +497,7 @@ func cleanEncryption(e *Encryption) (*Encryption, bool) {
 	if e == nil {
 		return nil, true
 	}
-	if e.Scheme != EncryptionCENC {
+	if EncryptionScheme(strings.TrimSpace(string(e.Scheme))) != EncryptionCENC {
 		return nil, false
 	}
 	key := strings.ToLower(strings.TrimSpace(e.Key))
