@@ -28,17 +28,23 @@ import (
 // switcher and the management page come in a later step; for now the
 // sidebar's menu switches between them.
 
-// registry holds the loaded sources. The media manager and the posters
-// read it from their goroutines.
+// registry holds the loaded sources: the built-in ones, and the
+// developer mode's plugin, which stands in for a built-in source of its
+// id while it is loaded. The media manager and the posters read it from
+// their goroutines.
 type registry struct {
-	mu   sync.Mutex
-	list []source.Source
+	mu      sync.Mutex
+	builtin []source.Source
+	dev     source.Source
 }
 
 func (r *registry) get(id string) source.Source {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, s := range r.list {
+	if r.dev != nil && r.dev.Info().ID == id {
+		return r.dev
+	}
+	for _, s := range r.builtin {
 		if s.Info().ID == id {
 			return s
 		}
@@ -46,34 +52,45 @@ func (r *registry) get(id string) source.Source {
 	return nil
 }
 
+// all returns the sources to choose from: the built-in ones, with the
+// developer mode's plugin in place of the one of its id, or after them.
 func (r *registry) all() []source.Source {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]source.Source(nil), r.list...)
+	out := make([]source.Source, 0, len(r.builtin)+1)
+	placed := r.dev == nil
+	for _, s := range r.builtin {
+		if r.dev != nil && s.Info().ID == r.dev.Info().ID {
+			s, placed = r.dev, true
+		}
+		out = append(out, s)
+	}
+	if !placed {
+		out = append(out, r.dev)
+	}
+	return out
 }
 
+// add adds a source, replacing one of the same id.
 func (r *registry) add(s source.Source) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	id := s.Info().ID
-	for i, old := range r.list {
+	for i, old := range r.builtin {
 		if old.Info().ID == id {
-			r.list[i] = s
+			r.builtin[i] = s
 			return
 		}
 	}
-	r.list = append(r.list, s)
+	r.builtin = append(r.builtin, s)
 }
 
-func (r *registry) remove(id string) {
+// setDev sets the developer mode's plugin; nil unloads it, and a built-in
+// source of its id comes back.
+func (r *registry) setDev(s source.Source) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for i, s := range r.list {
-		if s.Info().ID == id {
-			r.list = append(r.list[:i], r.list[i+1:]...)
-			return
-		}
-	}
+	r.dev = s
 }
 
 // mediaPolicy is what a source's media may reach: a plugin only its
@@ -143,7 +160,7 @@ func (app *App) saveDevSettings() {
 		return
 	}
 	s := devSettings{Dir: app.dev.dir}
-	if app.src != nil && app.src.Info().ID != hongguo.SourceID {
+	if app.src != nil && !app.builtin() {
 		s.Current = app.src.Info().ID
 	}
 	path := app.devSettingsPath()
@@ -162,32 +179,33 @@ func (app *App) pluginOptions() plugin.Options {
 }
 
 // loadDev loads the plugin folder dir in the developer mode and watches
-// it, replacing a folder loaded before. It runs on the main thread.
+// it, replacing a folder loaded before. A folder that does not load is
+// watched still, and loads once it is fixed. It runs on the main thread.
 func (app *App) loadDev(dir string) error {
 	app.unloadDev()
+	ctx, cancel := context.WithCancel(context.Background())
+	app.dev.dir, app.dev.stop = dir, cancel
 	p, err := plugin.Open(dir, app.pluginOptions())
-	app.dev.dir = dir
 	if err != nil {
 		app.dev.err = err.Error()
+		plugin.WatchFolder(ctx, dir, 0, func() {
+			app.dispatch(func() {
+				if ctx.Err() != nil || app.dev.plugin != nil {
+					return
+				}
+				app.retryDev()
+			})
+		})
 		return err
 	}
 	app.dev.plugin, app.dev.err = p, ""
-	app.sources.add(p)
-	ctx, cancel := context.WithCancel(context.Background())
-	app.dev.stop = cancel
+	app.sources.setDev(p)
 	go p.WatchDir(ctx, dir, 0, func(err error) {
 		app.dispatch(func() {
 			if app.dev.plugin != p {
 				return
 			}
-			if err != nil {
-				app.toast = "插件重新加载失败，详见插件日志"
-				return
-			}
-			app.toast = "插件已重新加载"
-			if app.src == source.Source(p) {
-				app.refreshSource() // the navigation and pages may have changed
-			}
+			app.reloaded(p, err)
 		})
 	})
 	var redraw throttle
@@ -195,7 +213,51 @@ func (app *App) loadDev(dir string) error {
 		redraw.poke(logRedraw, func() { app.dispatch(func() { app.dev.logGen++ }) })
 	})
 	go func() { <-ctx.Done(); stopLogs() }()
+	// It stands in for the built-in source of its id, if that is shown.
+	if app.src != nil && app.src != source.Source(p) && app.src.Info().ID == p.Info().ID {
+		app.useSource(p)
+	}
 	return nil
+}
+
+// retryDev loads the developer mode's folder again after it failed to
+// load, and shows the plugin once it does.
+func (app *App) retryDev() {
+	if err := app.loadDev(app.dev.dir); err != nil {
+		app.toast = "插件加载失败：" + err.Error()
+		return
+	}
+	app.useSource(app.dev.plugin)
+	app.toast = "已加载插件 " + app.dev.plugin.Info().Name
+}
+
+// reloadDev is the menu's reload: the plugin loaded reloads in place, and
+// keeps the code it ran when the folder does not load; a folder that did
+// not load, or whose plugin changed its id, loads anew.
+func (app *App) reloadDev() {
+	p := app.dev.plugin
+	if p == nil {
+		app.retryDev()
+		return
+	}
+	if pkg, err := plugin.ReadDir(app.dev.dir, mygo.App.Version()); err == nil && pkg.Manifest.ID != p.Info().ID {
+		app.retryDev()
+		return
+	}
+	app.reloaded(p, p.ReloadDir(app.dev.dir))
+}
+
+// reloaded tells how a reload of the developer mode's plugin went, and
+// loads the pages of the plugin again when it is shown.
+func (app *App) reloaded(p *plugin.Plugin, err error) {
+	if err != nil {
+		app.toast = "插件重新加载失败，仍在用之前的版本，详见插件日志"
+		return
+	}
+	app.toast = "插件已重新加载"
+	if app.src == source.Source(p) {
+		app.refreshSource() // the navigation and pages may have changed
+	}
 }
 
 // logRedraw is how often at most the log page redraws as lines come.
@@ -215,8 +277,9 @@ func (t *throttle) poke(after time.Duration, fn func()) {
 	})
 }
 
-// unloadDev stops the developer mode's plugin; the app goes back to
-// Hongguo when it showed it.
+// unloadDev stops the developer mode's plugin. When the app showed it,
+// it goes back to the built-in source the plugin stood in for, or to
+// Hongguo.
 func (app *App) unloadDev() {
 	p := app.dev.plugin
 	if app.dev.stop != nil {
@@ -226,10 +289,14 @@ func (app *App) unloadDev() {
 	if p == nil {
 		return
 	}
-	app.sources.remove(p.Info().ID)
+	app.sources.setDev(nil)
 	if app.src == source.Source(p) {
-		if h := app.sources.get(hongguo.SourceID); h != nil {
-			app.useSource(h)
+		back := app.sources.get(p.Info().ID)
+		if back == nil {
+			back = app.sources.get(hongguo.SourceID)
+		}
+		if back != nil {
+			app.useSource(back)
 		}
 	}
 }
@@ -382,11 +449,7 @@ func (app *App) sourceMenu(m *ui.Menu) {
 		}
 		if app.dev.dir != "" {
 			if m.Item("重新加载").Chosen() {
-				if err := app.loadDev(app.dev.dir); err != nil {
-					app.toast = "插件加载失败：" + err.Error()
-				} else {
-					app.useSource(app.dev.plugin)
-				}
+				app.reloadDev()
 			}
 			if app.dev.plugin != nil && m.Item("插件日志").Chosen() {
 				app.dev.logOpen = true

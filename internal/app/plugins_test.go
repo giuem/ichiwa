@@ -1,7 +1,10 @@
 package app
 
 import (
+	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -169,5 +172,151 @@ func TestThrottle(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if runs.Load() < 2 {
 		t.Fatal("a poke after the first run did not run")
+	}
+}
+
+const devManifest = `{"id":"hongguo","name":"开发中的红果","kind":"source","version":"0.0.1","apiVersion":1,"main":"index.js","permissions":{"network":[]}}`
+
+func devJS(title string) string {
+	return `export function navigation() { return { items: [{ id: "home", title: "` + title + `" }] }; }
+export function collection() { return { items: [] }; }
+export function media() { return {}; }
+export function play() { return {}; }
+`
+}
+
+func writeDevDir(t *testing.T, js string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(devManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte(js), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func devApp(t *testing.T) (*App, source.Source, chan func()) {
+	t.Helper()
+	done := make(chan func(), 64)
+	builtin := &sourcetest.Source{InfoData: source.Info{ID: "hongguo", Name: "红果"}}
+	app := &App{
+		src:     builtin,
+		feeds:   map[string]*Feed{},
+		pal:     lightPalette(),
+		posters: newPosters(t.TempDir(), func() {}),
+		lib:     testLibrary(t),
+		dataDir: t.TempDir(),
+		post:    func(fn func()) { done <- fn },
+	}
+	app.sources.add(builtin)
+	t.Cleanup(app.unloadDev)
+	return app, builtin, done
+}
+
+// A plugin in the developer mode with the id of a built-in source stands
+// in for it while loaded, and the built-in one comes back after.
+func TestDevPluginStandsInForBuiltin(t *testing.T) {
+	app, builtin, _ := devApp(t)
+	dir := writeDevDir(t, devJS("一"))
+	if err := app.loadDev(dir); err != nil {
+		t.Fatal(err)
+	}
+	p := app.dev.plugin
+	if app.src != source.Source(p) || app.sources.get("hongguo") != source.Source(p) {
+		t.Fatalf("shown %v, registered %v", app.src, app.sources.get("hongguo"))
+	}
+	if all := app.sources.all(); len(all) != 1 || all[0] != source.Source(p) {
+		t.Fatalf("sources = %v", all)
+	}
+	// What is shown is saved by whether it is the plugin.
+	if s := app.loadDevSettings(); s.Dir != dir || s.Current != "hongguo" {
+		t.Fatalf("saved %+v", s)
+	}
+	if pol := app.sources.mediaPolicy("hongguo"); !pol.Sandboxed {
+		t.Fatal("the plugin's media are not sandboxed")
+	}
+
+	app.unloadDev()
+	app.saveDevSettings()
+	if app.src != builtin || app.sources.get("hongguo") != builtin {
+		t.Fatalf("after unloading: shown %v, registered %v", app.src, app.sources.get("hongguo"))
+	}
+	if all := app.sources.all(); len(all) != 1 || all[0] != builtin {
+		t.Fatalf("sources = %v", all)
+	}
+	if s := app.loadDevSettings(); s.Current != "" {
+		t.Fatalf("saved %+v", s)
+	}
+	if pol := app.sources.mediaPolicy("hongguo"); pol.Sandboxed {
+		t.Fatal("the built-in source's media are sandboxed")
+	}
+
+	// Loaded while another source is shown, it does not take over.
+	other := &sourcetest.Source{InfoData: source.Info{ID: "other", Name: "别的"}}
+	app.sources.add(other)
+	app.useSource(other)
+	if err := app.loadDev(dir); err != nil {
+		t.Fatal(err)
+	}
+	if app.src != source.Source(other) || len(app.sources.all()) != 2 {
+		t.Fatalf("shown %v, sources %v", app.src, app.sources.all())
+	}
+	if s := app.loadDevSettings(); s.Current != "" {
+		t.Fatalf("saved %+v", s)
+	}
+}
+
+// The menu's reload keeps the plugin and its code when the folder is
+// broken, and a folder that did not load loads once it is fixed.
+func TestDevReloadKeepsLastGoodCode(t *testing.T) {
+	app, _, done := devApp(t)
+	dir := writeDevDir(t, devJS("一"))
+	if err := app.loadDev(dir); err != nil {
+		t.Fatal(err)
+	}
+	p := app.dev.plugin
+	write := func(js string) {
+		if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte(js), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	title := func() string {
+		nav, err := app.dev.plugin.Navigation(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return nav[0].Title
+	}
+	write("export function navigation( {")
+	app.reloadDev()
+	if app.dev.plugin != p || app.src != source.Source(p) || title() != "一" || !strings.Contains(app.toast, "仍在用之前的版本") {
+		t.Fatalf("broken reload: plugin %p (was %p), title %q, toast %q", app.dev.plugin, p, title(), app.toast)
+	}
+	write(devJS("二"))
+	app.reloadDev()
+	if app.dev.plugin != p || title() != "二" {
+		t.Fatalf("reload: title %q", title())
+	}
+
+	// Broken from the start: watched, and loaded once fixed.
+	app.unloadDev()
+	write("export function navigation( {")
+	if err := app.loadDev(dir); err == nil {
+		t.Fatal("broken folder loaded")
+	}
+	write(devJS("三"))
+	deadline := time.After(10 * time.Second)
+	for app.dev.plugin == nil {
+		select {
+		case fn := <-done:
+			fn()
+		case <-deadline:
+			t.Fatal("the fixed folder never loaded")
+		}
+	}
+	if title() != "三" || app.src != source.Source(app.dev.plugin) {
+		t.Fatalf("fixed: title %q, shown %v", title(), app.src)
 	}
 }
