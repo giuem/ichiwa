@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -81,20 +80,29 @@ func (p *hlsProxy) session(token string) *hlsSession {
 	return p.sessions[token]
 }
 
-// url returns the proxy's URL for target in the session token. The last
-// segment keeps the target's file name, whose extension players look at.
-func (p *hlsProxy) url(token string, target *url.URL) string {
+// Kinds of proxied URL: a playlist the player parses, or anything else
+// (a segment, a key, a map). The proxy answers a playlist only whole,
+// with 200, and rewritten.
+const (
+	kindPlaylist = "p"
+	kindOther    = "s"
+)
+
+// url returns the proxy's URL for target of kind in the session token.
+// The last segment keeps the target's file name, whose extension players
+// look at.
+func (p *hlsProxy) url(token, kind string, target *url.URL) string {
 	name := path.Base(target.Path)
 	if name == "." || name == "/" || name == "" {
 		name = "index"
 	}
-	return "http://" + p.addr + "/" + token + "/" + base64.RawURLEncoding.EncodeToString([]byte(target.String())) + "/" + url.PathEscape(name)
+	return "http://" + p.addr + "/" + token + "/" + kind + "/" + base64.RawURLEncoding.EncodeToString([]byte(target.String())) + "/" + url.PathEscape(name)
 }
 
 // blocked is the URL a playlist gets in place of a URI the proxy will
 // not fetch.
 func (p *hlsProxy) blocked(token string) string {
-	return "http://" + p.addr + "/" + token + "/-/blocked"
+	return "http://" + p.addr + "/" + token + "/-/-/blocked"
 }
 
 // serveHLS opens a proxy session for the stream at rawURL and checks that
@@ -126,7 +134,7 @@ func (m *Manager) serveHLS(ctx context.Context, rawURL string, headers map[strin
 		return Item{}, errors.New("不是 HLS 播放列表")
 	}
 	token := proxy.add(s)
-	return Item{URL: proxy.url(token, u)}, nil
+	return Item{URL: proxy.url(token, kindPlaylist, u)}, nil
 }
 
 func (s *hlsSession) fetch(ctx context.Context, u *url.URL, rangeHeader string) (*http.Response, error) {
@@ -146,12 +154,16 @@ func (s *hlsSession) fetch(ctx context.Context, u *url.URL, rangeHeader string) 
 	return s.client.Do(req)
 }
 
+// sniffBytes is how far into a body isPlaylist looks for #EXTM3U, past a
+// byte order mark and blank space.
+const sniffBytes = 1024
+
 func isPlaylist(resp *http.Response, br *bufio.Reader) (bool, *bufio.Reader) {
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(ct, "mpegurl") {
 		return true, br
 	}
-	head, _ := br.Peek(16)
+	head, _ := br.Peek(sniffBytes)
 	head = bytes.TrimPrefix(head, []byte("\xef\xbb\xbf"))
 	return bytes.HasPrefix(bytes.TrimLeft(head, " \t\r\n"), []byte("#EXTM3U")), br
 }
@@ -167,18 +179,22 @@ func (p *hlsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
-	if len(parts) != 3 {
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 4)
+	if len(parts) != 4 {
 		http.NotFound(w, r)
 		return
 	}
-	token := parts[0]
+	token, kind := parts[0], parts[1]
 	s := p.session(token)
 	if s == nil {
 		http.NotFound(w, r)
 		return
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if kind != kindPlaylist && kind != kindOther {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -191,7 +207,7 @@ func (p *hlsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A playlist is rewritten whole, so a range of it is never asked for:
 	// players ask for "bytes=0-" now and then.
 	rng := r.Header.Get("Range")
-	if name := strings.ToLower(parts[2]); strings.HasSuffix(name, ".m3u8") || strings.HasSuffix(name, ".m3u") {
+	if kind == kindPlaylist {
 		rng = ""
 	}
 	fail := func(err error) {
@@ -206,30 +222,32 @@ func (p *hlsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(err)
 		return
 	}
+	defer resp.Body.Close()
 	br := bufio.NewReader(resp.Body)
-	playlist, _ := isPlaylist(resp, br) // peeks: the body stays whole
-	if playlist && resp.StatusCode == http.StatusPartialContent {
-		resp.Body.Close()
-		if resp, err = s.fetch(r.Context(), target, ""); err != nil {
-			fail(err)
+	// What the player takes for a playlist, by how it asked or by what
+	// came back, goes out only rewritten: anything else (a partial
+	// answer, an error page, a body that does not parse) would reach the
+	// player as the server wrote it.
+	if looks, _ := isPlaylist(resp, br); kind == kindPlaylist || looks {
+		if resp.StatusCode != http.StatusOK || !looks {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return
 		}
-		br = bufio.NewReader(resp.Body)
-		playlist, _ = isPlaylist(resp, br)
-	}
-	defer resp.Body.Close()
-	if playlist && resp.StatusCode == http.StatusOK {
 		body, err := io.ReadAll(io.LimitReader(br, maxPlaylistBytes+1))
 		if err != nil || len(body) > maxPlaylistBytes {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return
 		}
-		out := rewritePlaylist(body, resp.Request.URL, func(abs *url.URL) string {
+		out, err := rewritePlaylist(body, resp.Request.URL, func(abs *url.URL, kind string) string {
 			if abs == nil || !s.policy.allows(abs) {
 				return p.blocked(token)
 			}
-			return p.url(token, abs)
+			return p.url(token, kind, abs)
 		})
+		if err != nil {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
@@ -247,42 +265,4 @@ func (p *hlsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		_, _ = io.Copy(w, br)
 	}
-}
-
-var uriAttr = regexp.MustCompile(`URI="([^"]*)"`)
-
-// rewritePlaylist points every URI of an HLS playlist, its URI lines and
-// the URI attributes of its tags, at what proxify returns for it,
-// resolved against base. A URI that does not parse gets proxify(nil).
-func rewritePlaylist(body []byte, base *url.URL, proxify func(*url.URL) string) []byte {
-	resolve := func(raw string) string {
-		ref, err := url.Parse(strings.TrimSpace(raw))
-		if err != nil {
-			return proxify(nil)
-		}
-		return proxify(base.ResolveReference(ref))
-	}
-	lines := strings.Split(string(body), "\n")
-	for i, line := range lines {
-		cr := strings.HasSuffix(line, "\r")
-		t := strings.TrimSpace(line)
-		switch {
-		case t == "":
-			continue
-		case strings.HasPrefix(t, "#"):
-			if !strings.Contains(t, "URI=") {
-				continue
-			}
-			t = uriAttr.ReplaceAllStringFunc(t, func(m string) string {
-				return `URI="` + resolve(uriAttr.FindStringSubmatch(m)[1]) + `"`
-			})
-		default:
-			t = resolve(t)
-		}
-		if cr {
-			t += "\r"
-		}
-		lines[i] = t
-	}
-	return []byte(strings.Join(lines, "\n"))
 }

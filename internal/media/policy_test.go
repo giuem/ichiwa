@@ -201,11 +201,11 @@ func TestHLSProxy(t *testing.T) {
 		}
 	}
 	code, media := get(variant, nil)
-	if code != 200 || !strings.Contains(media, "\r\n") {
+	if code != 200 || strings.Contains(media, "\r") {
 		t.Fatalf("variant = %d\n%s", code, media)
 	}
-	lines := strings.Split(strings.ReplaceAll(media, "\r", ""), "\n")
-	key := uriAttr.FindStringSubmatch(lines[1])[1]
+	lines := strings.Split(media, "\n")
+	key := attrURI(lines[1])
 	seg1, seg2, local := lines[3], lines[5], lines[7]
 	if code, body := get(key, nil); code != 200 || body != "0123456789abcdef" {
 		t.Errorf("key = %d %q", code, body)
@@ -214,7 +214,7 @@ func TestHLSProxy(t *testing.T) {
 		t.Errorf("ranged segment = %d %q", code, body)
 	}
 	for _, u := range []string{seg2, local} {
-		if !strings.HasSuffix(u, "/-/blocked") {
+		if !strings.HasSuffix(u, "/-/-/blocked") {
 			t.Errorf("an URI outside the policy was proxied: %s", u)
 		}
 		if code, _ := get(u, nil); code != 403 {
@@ -222,7 +222,7 @@ func TestHLSProxy(t *testing.T) {
 		}
 	}
 	// A forged target outside the policy, in a valid session.
-	forged := strings.Replace(seg1, strings.Split(strings.TrimPrefix(seg1, "http://"+pu.Host+"/"), "/")[1],
+	forged := strings.Replace(seg1, strings.Split(strings.TrimPrefix(seg1, "http://"+pu.Host+"/"), "/")[2],
 		b64(e.url("elsewhere.test", "/x")), 1)
 	if code, _ := get(forged, nil); code != 403 {
 		t.Errorf("forged target = %d", code)
@@ -231,7 +231,7 @@ func TestHLSProxy(t *testing.T) {
 	if code, _ := get(it.URL, map[string]string{"Host": "evil.test:" + pu.Port()}); code != 403 {
 		t.Errorf("foreign Host = %d", code)
 	}
-	if code, _ := get("http://"+pu.Host+"/0000/"+b64(e.url("cdn.example.test", "/master.m3u8"))+"/x.m3u8", nil); code != 404 {
+	if code, _ := get("http://"+pu.Host+"/0000/p/"+b64(e.url("cdn.example.test", "/master.m3u8"))+"/x.m3u8", nil); code != 404 {
 		t.Errorf("unknown session = %d", code)
 	}
 }
@@ -246,4 +246,129 @@ func TestHLSNotCachedOrPreloaded(t *testing.T) {
 	}
 }
 
+func attrURI(line string) string {
+	_, rest, _ := strings.Cut(line, `URI="`)
+	uri, _, _ := strings.Cut(rest, `"`)
+	return uri
+}
+
 func b64(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+
+// Each way a playlist was seen to get an address past the rewriter to
+// the player (AVPlayer read these as the comments say).
+func TestRewritePlaylistBypasses(t *testing.T) {
+	const inside = "127.0.0.1:9"
+	base, _ := url.Parse("http://cdn.example.test/v/index.m3u8")
+	proxify := func(u *url.URL, kind string) string {
+		if u == nil || u.Hostname() != "cdn.example.test" {
+			return "BLOCKED"
+		}
+		return "PROXY/" + kind + "/" + u.String()
+	}
+	for _, c := range []struct{ name, in string }{
+		{"lines ended by CR alone", "#EXTM3U\r#EXTINF:2,\rhttp://" + inside + "/seg0.ts\r"},
+		{"a URI after a comment's CR", "#EXTM3U\n#EXTINF:2,\n# x\rhttp://" + inside + "/seg0.ts\n"},
+		{"a tag and URI after a comment's CR", "#EXTM3U\n# x\r#EXTINF:2,\rhttp://" + inside + "/secret-admin?action=reboot\n"},
+		{"blank space around URI's =", "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128, URI = \"http://" + inside + "/key.bin\"\n#EXTINF:2,\nseg.ts\n"},
+		{"lowercase uri", "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,uri=\"http://" + inside + "/key.bin\"\n"},
+		{"unquoted URI", "#EXTM3U\n#EXT-X-MAP:URI=http://" + inside + "/init.mp4\n"},
+		{"an interstitial's asset list", "#EXTM3U\n#EXT-X-DATERANGE:ID=\"ad\",CLASS=\"com.apple.hls.interstitial\",START-DATE=\"2020-01-01T00:00:00Z\",X-ASSET-LIST=\"http://" + inside + "/assets.json\"\n"},
+		{"an interstitial's asset URI", "#EXTM3U\n#EXT-X-DATERANGE:ID=\"ad\",START-DATE=\"2020-01-01T00:00:00Z\",X-ASSET-URI=\"http://" + inside + "/ad.m3u8\"\n"},
+		{"a variable", "#EXTM3U\n#EXT-X-DEFINE:NAME=\"h\",VALUE=\"" + inside + "\"\n#EXTINF:2,\nhttp://{$h}/seg0.ts\n"},
+		{"content steering", "#EXTM3U\n#EXT-X-CONTENT-STEERING:SERVER-URI=\"http://" + inside + "/steer.json\"\n"},
+		{"an unknown tag", "#EXTM3U\n#EXT-X-FUTURE:URI=\"http://" + inside + "/x\"\n#EXT-X-FUTURE2:http://" + inside + "/y\n"},
+		{"another attribute holding a URL", "#EXTM3U\n#EXT-X-SESSION-DATA:DATA-ID=\"x\",VALUE=\"http://" + inside + "/v\"\n"},
+		{"a URI ending in a quote", "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"a\",URI=\"http://" + inside + "/a.m3u8\"x\n"},
+	} {
+		out, err := rewritePlaylist([]byte(c.in), base, proxify)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		s := string(out)
+		if strings.Contains(s, inside) || strings.Contains(s, "\r") {
+			t.Errorf("%s: an address got through:\n%s", c.name, s)
+		}
+		for _, l := range strings.Split(s, "\n") {
+			if l != "" && !strings.HasPrefix(l, "#") && !strings.HasPrefix(l, "PROXY/") && l != "BLOCKED" {
+				t.Errorf("%s: an unproxied URI line %q", c.name, l)
+			}
+		}
+	}
+	// Control characters a player might end a line at.
+	for _, in := range []string{"#EXTM3U\n#EXTINF:2,\x00http://" + inside + "/s.ts\n", "#EXTM3U\n# \x0bhttp://" + inside + "/s.ts\n"} {
+		if out, err := rewritePlaylist([]byte(in), base, proxify); err == nil {
+			t.Errorf("%q rewritten to %q", in, out)
+		}
+	}
+	// What is understood comes out whole, addresses proxied by kind.
+	in := "\ufeff#EXTM3U\r\n#EXT-X-VERSION:7\r\n#EXT-X-STREAM-INF:BANDWIDTH=1000,CODECS=\"avc1.4d401f,mp4a.40.2\"\r\nlow.m3u8\r\n" +
+		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"en\",URI=\"a.m3u8\"\r\n#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\",IV=0x01\r\n" +
+		"#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"720@0\"\r\n#EXTINF:4.0,title\r\n#EXT-X-BYTERANGE:100@0\r\nseg.ts\r\n#EXT-X-ENDLIST\r\n"
+	want := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=1000,CODECS=\"avc1.4d401f,mp4a.40.2\"\nPROXY/p/http://cdn.example.test/v/low.m3u8\n" +
+		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"en\",URI=\"PROXY/p/http://cdn.example.test/v/a.m3u8\"\n#EXT-X-KEY:METHOD=AES-128,URI=\"PROXY/s/http://cdn.example.test/v/k.bin\",IV=0x01\n" +
+		"#EXT-X-MAP:URI=\"PROXY/s/http://cdn.example.test/v/init.mp4\",BYTERANGE=\"720@0\"\n#EXTINF:4.0,title\n#EXT-X-BYTERANGE:100@0\nPROXY/s/http://cdn.example.test/v/seg.ts\n#EXT-X-ENDLIST\n"
+	if out, err := rewritePlaylist([]byte(in), base, proxify); err != nil || string(out) != want {
+		t.Errorf("rewritten = %v\n%s\nwant\n%s", err, out, want)
+	}
+}
+
+// A playlist goes to the player only whole, with 200, and rewritten.
+func TestHLSProxyPlaylistStatus(t *testing.T) {
+	defer func(v bool) { hlsPlays = v }(hlsPlays)
+	hlsPlays = true
+	var e *sandboxEnv
+	e = newSandboxEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/master.m3u8":
+			io.WriteString(w, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\npartial.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2\nmissing.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=3\nnot-a-playlist.m3u8\n#EXTINF:2,\nseg.ts\n")
+		case "/partial.m3u8":
+			// 206 without being asked for a range.
+			w.Header().Set("Content-Range", "bytes 0-40/41")
+			w.WriteHeader(http.StatusPartialContent)
+			io.WriteString(w, "#EXTM3U\n#EXTINF:2,\nhttp://127.0.0.1:9/s\n")
+		case "/missing.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, "#EXTM3U\n#EXTINF:2,\nhttp://127.0.0.1:9/s\n")
+		case "/not-a-playlist.m3u8":
+			io.WriteString(w, "http://127.0.0.1:9/s\n")
+		case "/seg.ts":
+			// A segment that turns out to be a playlist is rewritten too.
+			io.WriteString(w, "#EXTM3U\r#EXTINF:2,\rhttp://127.0.0.1:9/s\r")
+		}
+	}))
+	it, err := e.mgr.Open(context.Background(), "p", "m", "e", func(context.Context, source.PlayPrefer) (*source.Playback, error) {
+		return &source.Playback{Streams: []source.Stream{{URL: e.url("cdn.example.test", "/master.m3u8"), Container: source.ContainerHLS}}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(u string) (int, string) {
+		resp, err := http.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	_, master := get(it.URL)
+	var uris []string
+	for _, l := range strings.Split(master, "\n") {
+		if strings.HasPrefix(l, "http://") {
+			uris = append(uris, l)
+		}
+	}
+	if len(uris) != 4 {
+		t.Fatalf("master:\n%s", master)
+	}
+	for _, u := range uris[:3] {
+		if code, body := get(u); code != http.StatusBadGateway {
+			t.Errorf("%s = %d\n%s", u, code, body)
+		}
+	}
+	if code, body := get(uris[3]); code != 200 || strings.Contains(body, "127.0.0.1:9") || strings.Contains(body, "\r") {
+		t.Errorf("a segment that is a playlist = %d\n%s", code, body)
+	}
+}
