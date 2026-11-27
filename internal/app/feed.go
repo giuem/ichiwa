@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -190,7 +191,7 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 // retryWait is how many seconds the feed still waits to ask again.
 func (f *Feed) retryWait() int {
 	if d := time.Until(f.retryAt); d > 0 {
-		return int(d.Seconds()) + 1
+		return int(math.Ceil(d.Seconds()))
 	}
 	return 0
 }
