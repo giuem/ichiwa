@@ -357,7 +357,7 @@ interface Host {
     set(key: string, value: string): void;   // 超出总量时抛错
     delete(key: string): void;
   };
-  cache: {          // 内存，按插件隔离，一集退出即清空；总量 4 MiB，单项 256 KiB
+  cache: {          // 内存，按插件隔离，一集退出即清空；总量 4 MiB（每项另计 64 字节），单项 256 KiB，最多 4096 项，满了先丢最早写入的
     get(key: string): string | undefined;
     set(key: string, value: string, ttlSeconds?: number): void;
     add(key: string, value: string, ttlSeconds?: number): boolean; // 不存在（或已过期）才写，原子操作；写了返回 true。用来在并发的调用之间加锁
@@ -393,7 +393,7 @@ type Bytes = string | Uint8Array;  // 字符串按 UTF-8 编码
 
 - 安装和启动时把模块编译一次。每次调用新建一个 moejs 运行时执行，调用结束即销毁：插件不能靠全局变量在调用之间保存状态，要用 `host.storage` 或 `host.cache`。调用返回、出错或被取消后，还没完成的请求、定时器和 `finally` 都不会再执行，所以锁、“进行中”标记这类状态要带过期时间。同一个插件的多个调用会同时运行，各自是独立的运行时。
 - 每次调用内存上限 64 MiB；超时默认 15 秒，`media` 和 `play` 30 秒。宿主不再需要结果时（比如用户离开了页面）立即中断调用。
-- 同一个插件最多同时运行 4 个调用，其余排队。
+- 同一个插件最多同时运行 4 个调用，其余排队。每次调用最多同时有 16 个请求在路上，总共最多发 256 个请求（跳转也算），超过的 `fetch` 直接失败。
 - 宿主取消的调用不算错误，不显示任何提示。
 - 不会因为连续失败自动停用插件；插件设置里显示最近的错误和日志入口。
 
