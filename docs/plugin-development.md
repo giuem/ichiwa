@@ -176,7 +176,7 @@ return {
 ```js
 host.storage.get("deviceId");              // 持久保存，总量 64 KiB，超出时 set 抛错
 host.storage.set("deviceId", id);
-host.cache.set("token", t, 600);           // 内存缓存，一集退出就没了，总量 4 MiB、单项 256 KiB
+host.cache.set("token", t, 600);           // 内存缓存，一集退出就没了，总量 4 MiB、单项 256 KiB、最多 4096 项
 host.cache.add("lock", id, 5);             // 键不存在或已过期才写，原子操作，写了返回 true：用来加锁
 host.crypto.md5("abc");                    // 也有 sha1、sha256、hmac
 host.crypto.aes({ mode: "cbc", key, iv, data, decrypt: true });   // ecb、cbc、ctr、gcm
@@ -246,6 +246,7 @@ if (host.cache.add("register-lock", token, 5)) {
 | 每次调用的时间 | 15 秒；`media` 和 `play` 30 秒 |
 | 同一插件同时运行的调用 | 4 个，其余排队 |
 | 返回的 JSON | 4 MiB |
+| `host.cache` | 总量 4 MiB（每项另计 64 字节），单项 256 KiB，最多 4096 项；满了先丢最早写入的 |
 | 插件包 | zip 不超过 8 MiB，解压后不超过 32 MiB；路径不能有 `..`、反斜杠、控制字符、符号链接，只差大小写的文件名算冲突 |
 | 导入 | 只能用 `./`、`../` 相对导入包里的文件 |
 

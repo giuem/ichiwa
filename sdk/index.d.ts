@@ -292,7 +292,7 @@ export interface Host {
     set(key: string, value: string): void;
     delete(key: string): void;
   };
-  /** 内存，按插件隔离，一集退出即清空；总量 4 MiB，单项 256 KiB，满了先丢最早写入的 */
+  /** 内存，按插件隔离，一集退出即清空；总量 4 MiB（每项另计 64 字节），单项 256 KiB，最多 4096 项，满了先丢最早写入的 */
   cache: {
     get(key: string): string | undefined;
     set(key: string, value: string, ttlSeconds?: number): void;

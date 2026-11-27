@@ -1,12 +1,12 @@
 package plugin
 
 import (
+	"container/list"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +17,11 @@ const (
 	MaxStorageBytes   = 64 << 10
 	MaxCacheBytes     = 4 << 20
 	MaxCacheItemBytes = 256 << 10
+	// MaxCacheItems bounds the items of a cache, each of which counts
+	// cacheItemOverhead bytes besides its key and value, so that the
+	// work of a write stays small however small its items.
+	MaxCacheItems     = 4096
+	cacheItemOverhead = 64
 )
 
 // Storage is a plugin's persistent key-value store. Its size is the bytes
@@ -131,20 +136,24 @@ func (s *Storage) save() error {
 	return nil
 }
 
-// Cache is a plugin's in-memory cache: MaxCacheBytes in all,
-// MaxCacheItemBytes an item, the oldest written dropped first.
+// Cache is a plugin's in-memory cache: MaxCacheBytes and MaxCacheItems
+// in all, MaxCacheItemBytes an item, the oldest written dropped first.
 type Cache struct {
 	mu    sync.Mutex
 	items map[string]*cacheItem
+	order list.List // of *cacheItem, the oldest written first
 	size  int
-	seq   uint64
-	now   func() time.Time
+	// soonest is no later than when the first item expires, zero when
+	// none does: until then no item has to be looked for to drop.
+	soonest time.Time
+	now     func() time.Time
 }
 
 type cacheItem struct {
+	key     string
 	value   string
 	expires time.Time
-	seq     uint64
+	elem    *list.Element
 }
 
 func NewCache() *Cache { return &Cache{items: map[string]*cacheItem{}, now: time.Now} }
@@ -172,7 +181,7 @@ func (c *Cache) Set(key, value string, ttl time.Duration) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.setLocked(key, value, ttl, n)
+	c.setLocked(key, value, ttl)
 	return nil
 }
 
@@ -189,41 +198,54 @@ func (c *Cache) Add(key, value string, ttl time.Duration) (bool, error) {
 	if it, ok := c.items[key]; ok && (it.expires.IsZero() || c.now().Before(it.expires)) {
 		return false, nil
 	}
-	c.setLocked(key, value, ttl, n)
+	c.setLocked(key, value, ttl)
 	return true, nil
 }
 
-func (c *Cache) setLocked(key, value string, ttl time.Duration, n int) {
+// itemSize is what an item counts towards MaxCacheBytes.
+func itemSize(key, value string) int { return len(key) + len(value) + cacheItemOverhead }
+
+func (c *Cache) setLocked(key, value string, ttl time.Duration) {
+	n := itemSize(key, value)
 	c.drop(key)
 	now := c.now()
-	for k, it := range c.items {
-		if !it.expires.IsZero() && !now.Before(it.expires) {
-			c.drop(k)
-		}
+	if c.full(n) && !c.soonest.IsZero() && !now.Before(c.soonest) {
+		c.dropExpired(now)
 	}
-	for c.size+n > MaxCacheBytes {
-		var oldest string
-		var seq uint64
-		first := true
-		for k, it := range c.items {
-			if first || it.seq < seq {
-				oldest, seq, first = k, it.seq, false
-			}
-		}
-		if first {
-			break
-		}
-		c.drop(oldest)
+	for c.full(n) && c.order.Len() > 0 {
+		c.drop(c.order.Front().Value.(*cacheItem).key)
 	}
-	c.seq++
 	// A copy, as for Storage.Set.
-	key = strings.Clone(key)
-	it := &cacheItem{value: strings.Clone(value), seq: c.seq}
+	it := &cacheItem{key: strings.Clone(key), value: strings.Clone(value)}
 	if ttl > 0 {
 		it.expires = now.Add(ttl)
+		if c.soonest.IsZero() || it.expires.Before(c.soonest) {
+			c.soonest = it.expires
+		}
 	}
-	c.items[key] = it
+	it.elem = c.order.PushBack(it)
+	c.items[it.key] = it
 	c.size += n
+}
+
+// full tells whether an item of n bytes needs room made for it.
+func (c *Cache) full(n int) bool {
+	return c.size+n > MaxCacheBytes || len(c.items) >= MaxCacheItems
+}
+
+// dropExpired drops the items expired at now and notes when the next
+// expires.
+func (c *Cache) dropExpired(now time.Time) {
+	c.soonest = time.Time{}
+	for k, it := range c.items {
+		switch {
+		case it.expires.IsZero():
+		case !now.Before(it.expires):
+			c.drop(k)
+		case c.soonest.IsZero() || it.expires.Before(c.soonest):
+			c.soonest = it.expires
+		}
+	}
 }
 
 func (c *Cache) Delete(key string) {
@@ -234,7 +256,8 @@ func (c *Cache) Delete(key string) {
 
 func (c *Cache) drop(key string) {
 	if it, ok := c.items[key]; ok {
-		c.size -= len(key) + len(it.value)
+		c.size -= itemSize(key, it.value)
+		c.order.Remove(it.elem)
 		delete(c.items, key)
 	}
 }
@@ -253,16 +276,14 @@ func (c *Cache) Save(path string) error {
 	c.mu.Lock()
 	now := c.now()
 	items := make([]savedItem, 0, len(c.items))
-	seqs := make(map[string]uint64, len(c.items))
-	for k, it := range c.items {
+	for e := c.order.Front(); e != nil; e = e.Next() {
+		it := e.Value.(*cacheItem)
 		if !it.expires.IsZero() && !now.Before(it.expires) {
 			continue
 		}
-		items = append(items, savedItem{Key: k, Value: it.value, Expires: it.expires})
-		seqs[k] = it.seq
+		items = append(items, savedItem{Key: it.key, Value: it.value, Expires: it.expires})
 	}
 	c.mu.Unlock()
-	sort.Slice(items, func(i, j int) bool { return seqs[items[i].Key] < seqs[items[j].Key] })
 	data, err := json.Marshal(items)
 	if err != nil {
 		return err

@@ -346,3 +346,33 @@ func TestStoredSlicesKeepNoPage(t *testing.T) {
 	}
 	runtime.KeepAlive(p)
 }
+
+// However many small items are written, the cache holds at most
+// MaxCacheItems and a write stays quick.
+func TestCacheBoundsItems(t *testing.T) {
+	c := NewCache()
+	for i := range 100_000 {
+		if err := c.Set("k"+strconv.Itoa(i), "v", 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(c.items) != MaxCacheItems {
+		t.Fatalf("cache holds %d items", len(c.items))
+	}
+	if _, ok := c.Get("k" + strconv.Itoa(100_000-MaxCacheItems)); !ok {
+		t.Fatal("dropped an item newer than the oldest kept")
+	}
+	if _, ok := c.Get("k" + strconv.Itoa(100_000-MaxCacheItems-1)); ok {
+		t.Fatal("kept an item past the limit")
+	}
+	if want := MaxCacheItems * (len("k99999") + 1 + cacheItemOverhead); c.size > want {
+		t.Fatalf("size = %d, want at most %d", c.size, want)
+	}
+	start := time.Now()
+	if err := c.Set("big", strings.Repeat("x", 250<<10), 0); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Fatalf("a write took %v", d)
+	}
+}
