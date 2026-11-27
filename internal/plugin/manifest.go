@@ -39,7 +39,9 @@ type Manifest struct {
 func (m *Manifest) Hosts() netguard.Hosts { return netguard.Hosts(m.Network) }
 
 var (
-	idPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+	// An id ends in a letter or digit: Windows drops a trailing dot of a
+	// folder name, so "foo." would share the data of "foo".
+	idPattern     = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$`)
 	semverPattern = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 	appVerPattern = regexp.MustCompile(`^\d{4}\.\d{3,4}\.\d+$`)
 )
@@ -107,7 +109,7 @@ func ParseManifest(data []byte, appVersion string) (*Manifest, error) {
 		return nil, err
 	}
 	if !idPattern.MatchString(m.ID) {
-		return nil, fmt.Errorf("id %q 不合格：只能用小写字母、数字和 . _ -，以字母或数字开头，不超过 64 个字符", m.ID)
+		return nil, fmt.Errorf("id %q 不合格：只能用小写字母、数字和 . _ -，以字母或数字开头和结尾，不超过 64 个字符", m.ID)
 	}
 	if m.Name, err = str("name", raw.Name, true); err != nil {
 		return nil, err

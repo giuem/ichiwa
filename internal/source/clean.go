@@ -102,13 +102,25 @@ func cleanURL(raw string, opts CleanOptions) string {
 		return ""
 	}
 	host := u.Hostname()
-	if host == "" {
+	// Only ASCII: lowering the case of other letters is not what IDNA
+	// does to them, so a host list could match another host than the one
+	// fetched.
+	if host == "" || strings.ContainsAny(host, "%") || !isASCII(host) {
 		return ""
 	}
 	if opts.AllowHost != nil && !opts.AllowHost(strings.ToLower(host)) {
 		return ""
 	}
 	return u.String()
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func cleanShape(s Shape) Shape {

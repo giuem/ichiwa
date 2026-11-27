@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/publicsuffix"
@@ -40,8 +41,14 @@ func denied(format string, args ...any) error {
 type Hosts []string
 
 // Allows reports whether host, a hostname without port, is in the list.
-// An IP address is never allowed: a manifest cannot name one.
+// An IP address is never allowed: a manifest cannot name one. Nor is a
+// name with other than ASCII: lowering its case is not what IDNA does
+// to it ("İ" lowers to "i" but maps to "i̇"), so it could name another
+// host than the one it matches; a manifest names hosts in punycode.
 func (h Hosts) Allows(host string) bool {
+	if !IsASCII(host) {
+		return false
+	}
 	host = normalizeHost(host)
 	if host == "" {
 		return false
@@ -76,6 +83,16 @@ func (h Hosts) AllowsURL(u *url.URL) bool {
 	return h.Allows(u.Hostname())
 }
 
+// IsASCII reports whether s is all ASCII.
+func IsASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeHost(h string) string {
 	h = strings.ToLower(strings.TrimSpace(h))
 	h = strings.TrimSuffix(h, ".")
@@ -106,7 +123,13 @@ func ValidPattern(p string) error {
 		return fmt.Errorf("不能写 %q", raw)
 	}
 	if !validDomain(host) {
-		return fmt.Errorf("%q 不是有效的域名", raw)
+		return fmt.Errorf("%q 不是有效的域名（国际化域名写 punycode）", raw)
+	}
+	// A resolver may take "8.526344" or "0x08.0x08.0x08.0x08" for an
+	// IPv4 address; no top-level domain is a number.
+	labels := strings.Split(host, ".")
+	if numeric(labels[len(labels)-1]) {
+		return fmt.Errorf("不能写 IP 地址 %q", raw)
 	}
 	suffix, icann := publicsuffix.PublicSuffix(host)
 	if suffix == host && (icann || !strings.Contains(host, ".")) {
@@ -118,6 +141,26 @@ func ValidPattern(p string) error {
 		}
 	}
 	return nil
+}
+
+// numeric reports whether a label is a number in decimal, or in hex
+// after 0x.
+func numeric(label string) bool {
+	digits := label
+	hex := false
+	if rest, ok := strings.CutPrefix(label, "0x"); ok {
+		digits, hex = rest, true
+	}
+	if digits == "" {
+		return hex
+	}
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		if !(c >= '0' && c <= '9' || hex && c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validDomain(h string) bool {
@@ -144,26 +187,29 @@ func validDomain(h string) bool {
 var blockedPrefixes = func() []netip.Prefix {
 	var out []netip.Prefix
 	for _, s := range []string{
-		"0.0.0.0/8",      // "this network", the unspecified address
-		"10.0.0.0/8",     // private
-		"100.64.0.0/10",  // CGNAT, Alibaba Cloud's metadata 100.100.100.200
-		"127.0.0.0/8",    // loopback
-		"169.254.0.0/16", // link-local, the metadata of most clouds
-		"172.16.0.0/12",  // private
-		"192.0.0.0/24",   // IETF protocol assignments
-		"192.168.0.0/16", // private
-		"224.0.0.0/4",    // multicast
-		"240.0.0.0/4",    // reserved, broadcast
-		"::/128",         // unspecified
-		"::1/128",        // loopback
-		"fc00::/7",       // unique local, AWS's metadata fd00:ec2::254
-		"fe80::/10",      // link-local
-		"fec0::/10",      // site-local, deprecated
-		"ff00::/8",       // multicast
-		"100::/64",       // discard
-		"2001:db8::/32",  // documentation
-		"::ffff:0:0/96",  // IPv4-mapped, checked again unmapped
-		"64:ff9b:1::/48", // local-use NAT64
+		"0.0.0.0/8",        // "this network", the unspecified address
+		"10.0.0.0/8",       // private
+		"100.64.0.0/10",    // CGNAT, Alibaba Cloud's metadata 100.100.100.200
+		"127.0.0.0/8",      // loopback
+		"169.254.0.0/16",   // link-local, the metadata of most clouds
+		"172.16.0.0/12",    // private
+		"192.0.0.0/24",     // IETF protocol assignments
+		"192.168.0.0/16",   // private
+		"224.0.0.0/4",      // multicast
+		"240.0.0.0/4",      // reserved, broadcast
+		"::/128",           // unspecified
+		"::1/128",          // loopback
+		"fc00::/7",         // unique local, AWS's metadata fd00:ec2::254
+		"fe80::/10",        // link-local
+		"fec0::/10",        // site-local, deprecated
+		"ff00::/8",         // multicast
+		"100::/64",         // discard
+		"2001:db8::/32",    // documentation
+		"::ffff:0:0/96",    // IPv4-mapped, checked again unmapped
+		"::ffff:0:0:0/96",  // IPv4-translated
+		"::/96",            // IPv4-compatible, deprecated
+		"64:ff9b:1::/48",   // local-use NAT64
+		"168.63.129.16/32", // Azure's host services
 	} {
 		out = append(out, netip.MustParsePrefix(s))
 	}
@@ -220,6 +266,74 @@ type Guard struct {
 	Exempt func(netip.AddrPort) bool
 	// Dial dials one checked address; nil means a net.Dialer.
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	// Local returns the networks of this machine's interfaces; nil means
+	// localNetworks. A public address of this machine, or of a device
+	// beside it (an IPv6 home network has no private range), is as much
+	// inside as a private one.
+	Local func() []netip.Prefix
+}
+
+// localTTL is how long localNetworks keeps what it found: interfaces
+// change as the machine moves between networks.
+const localTTL = 10 * time.Second
+
+var local struct {
+	sync.Mutex
+	at       time.Time
+	prefixes []netip.Prefix
+}
+
+// localNetworks returns this machine's addresses and, for IPv6, the
+// networks beside them, where the devices of a home network have public
+// addresses (a private IPv4 network is Blocked anyway). An IPv6 network
+// wider than /48 counts as the interface's own address only, so that a
+// VPN's wide route cannot shut out the internet; so does an IPv4 one,
+// so that the fake-ip range of a proxy's tunnel (198.18.0.0/15) works.
+func localNetworks() []netip.Prefix {
+	local.Lock()
+	defer local.Unlock()
+	if time.Since(local.at) < localTTL {
+		return local.prefixes
+	}
+	local.at = time.Now()
+	local.prefixes = local.prefixes[:0:0]
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip, ok := netip.AddrFromSlice(ipn.IP)
+		if !ok {
+			continue
+		}
+		ip = ip.Unmap()
+		bits, _ := ipn.Mask.Size()
+		if ip.Is4() || bits < 48 {
+			bits = ip.BitLen()
+		}
+		if p, err := ip.Prefix(bits); err == nil {
+			local.prefixes = append(local.prefixes, p)
+		}
+	}
+	return local.prefixes
+}
+
+func (g *Guard) local(ip netip.Addr) bool {
+	nets := localNetworks
+	if g != nil && g.Local != nil {
+		nets = g.Local
+	}
+	ip = ip.Unmap()
+	for _, p := range nets() {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Guard) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
@@ -233,7 +347,7 @@ func (g *Guard) allowed(ap netip.AddrPort) bool {
 	if g != nil && g.Exempt != nil && g.Exempt(ap) {
 		return true
 	}
-	return !Blocked(ap.Addr())
+	return !Blocked(ap.Addr()) && !g.local(ap.Addr())
 }
 
 // DialContext resolves addr and dials it, refusing when any address the
@@ -263,7 +377,9 @@ func (g *Guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 	}
 	for _, ip := range addrs {
 		if !g.allowed(netip.AddrPortFrom(ip.Unmap(), uint16(port))) {
-			return nil, denied("%s 指向本机或内网地址 %s", host, ip)
+			// Not which address: the message reaches the plugin, which
+			// could map the network with it.
+			return nil, denied("%s 指向本机或内网地址", host)
 		}
 	}
 	dial := (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
@@ -315,11 +431,28 @@ func CheckRedirect(allow func(*url.URL) bool) func(req *http.Request, via []*htt
 		if allow != nil && !allow(req.URL) {
 			return denied("跳转到未声明的地址 %s", redact(req.URL))
 		}
-		if len(via) > 0 && !sameHost(via[0].URL, req.URL, via) {
+		if len(via) > 0 && (!sameHost(via[0].URL, req.URL, via) || downgraded(req.URL, via)) {
 			StripCredentials(req.Header)
 		}
 		return nil
 	}
+}
+
+// downgraded reports whether a chain of redirects that began on https
+// went to http, where the credentials would go in the clear.
+func downgraded(next *url.URL, via []*http.Request) bool {
+	if !strings.EqualFold(via[0].URL.Scheme, "https") {
+		return false
+	}
+	if !strings.EqualFold(next.Scheme, "https") {
+		return true
+	}
+	for _, r := range via {
+		if !strings.EqualFold(r.URL.Scheme, "https") {
+			return true
+		}
+	}
+	return false
 }
 
 func sameHost(first, next *url.URL, via []*http.Request) bool {

@@ -565,3 +565,21 @@ func TestDecodePageError(t *testing.T) {
 		}
 	}
 }
+
+// A host with other than ASCII is dropped before its case is lowered:
+// "İ" lowers to "i", but the transport's IDNA maps it to another host.
+func TestCleanURLRefusesNonASCIIHosts(t *testing.T) {
+	opts := CleanOptions{AllowHost: func(host string) bool { return host == "cdn.big.example" }}
+	if got := cleanURL("http://cdn.big.example/v.mp4", opts); got == "" {
+		t.Fatal("the declared host was dropped")
+	}
+	for _, raw := range []string{
+		"http://cdn.bİg.example/leak?q=1",
+		"http://cdn.b%C4%B0g.example/leak",
+		"http://cdn.bíg.example/x",
+	} {
+		if got := cleanURL(raw, opts); got != "" {
+			t.Errorf("%q kept as %q", raw, got)
+		}
+	}
+}

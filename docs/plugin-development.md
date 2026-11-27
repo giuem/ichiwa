@@ -96,14 +96,14 @@ ichiwa-plugin call ./hello play '{"mediaId":"123","episodeId":"e1"}'
 
 | 字段 | 说明 |
 | --- | --- |
-| `id` | 小写字母、数字和 `.` `_` `-`，以字母或数字开头，不超过 64 个字符。发布后不能改 |
+| `id` | 小写字母、数字和 `.` `_` `-`，以字母或数字开头和结尾，不超过 64 个字符。发布后不能改 |
 | `name` | 不超过 32 字；`description` 不超过 200 字 |
 | `version` | 语义化版本，如 `1.2.0`，和 Release 标签 `v1.2.0` 一致 |
 | `apiVersion` | 写 `1` |
 | `minAppVersion` | 可选。用到某个版本才加入的宿主 API 时填，如 `2026.1201.1` |
 | `main` | 入口文件，`.js` |
 | `icon` | 可选，正方形 PNG/JPEG/WebP，至少 128×128 |
-| `permissions.network` | 插件能访问的主机。精确域名，或 `*.example.com` 表示 example.com 的所有子域（不含 example.com 本身，要的话另写一项）。不能写 IP、`localhost`、端口，也不能写 `*.com` 这样的公共后缀 |
+| `permissions.network` | 插件能访问的主机。精确域名，或 `*.example.com` 表示 example.com 的所有子域（不含 example.com 本身，要的话另写一项）。只能写 ASCII，国际化域名写 punycode（`xn--…`）。不能写 IP（包括 `0x08.0x08.0x08.0x08` 这类变形写法）、`localhost`、端口，也不能写 `*.com` 这样的公共后缀 |
 | `images.headers` | 可选。一集下载图片时带的请求头，只能有 `Referer`、`User-Agent`、`Origin` |
 | `capabilities` | 可选能力：`search`、`search.suggest`、`search.home`、`danmaku`、`refresh`。声明了就必须导出对应的函数 |
 
@@ -192,8 +192,8 @@ throw host.error("rateLimited", "请求太频繁", { retryAfter: 60 });
 
 ## 网络
 
-- `fetch` 只能访问 `permissions.network` 里的主机，每次跳转都重新检查，最多 10 跳；跳到别的主机时去掉 `Authorization` 和 `Cookie`。
-- 连接时一集检查域名解析出的 IP：本机、局域网、链路本地、CGNAT、组播等地址一律拒绝，域名在白名单里也不行。插件的请求不走系统代理。
+- `fetch` 只能访问 `permissions.network` 里的主机，每次跳转都重新检查，最多 10 跳；跳到别的主机、或从 https 跳到 http 时去掉 `Authorization` 和 `Cookie`。
+- 连接时一集检查域名解析出的 IP：本机（包括本机的公网地址和它所在的 IPv6 网段）、局域网、链路本地、CGNAT、组播等地址一律拒绝，域名在白名单里也不行。插件的请求不走系统代理。
 - 每个插件有自己的 Cookie，只在内存里：响应的 `Set-Cookie` 会保存，之后的请求自动带上。请求自己写了 `Cookie` 头时（值为空也算），一集不再附加保存的，也不发出空的 `Cookie` 头；跳转后也一样。想不带任何 Cookie 发请求，就写 `Cookie: ""`。
 - 被拒绝的请求在插件日志里有一行说明。
 

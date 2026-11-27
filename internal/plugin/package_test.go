@@ -215,10 +215,22 @@ func TestManifest(t *testing.T) {
 	if _, err := ParseManifest(build(nil), ""); err != nil {
 		t.Fatal(err)
 	}
+	for _, id := range []string{"a", "a.b", "a_b-c", strings.Repeat("a", 64)} {
+		if _, err := ParseManifest(build(map[string]string{"id": `"` + id + `"`}), ""); err != nil {
+			t.Errorf("id %q: %v", id, err)
+		}
+	}
 	bad := []map[string]string{
 		{"id": `"Bad"`},
 		{"id": `"-x"`},
+		{"id": `"x."`},
+		{"id": `"x-"`},
+		{"id": `"x_"`},
+		{"id": `"` + strings.Repeat("a", 65) + `"`},
 		{"id": ""},
+		{"permissions": `{"network":["8.526344"]}`},
+		{"permissions": `{"network":["0x08.0x08.0x08.0x08"]}`},
+		{"permissions": `{"network":["b\u00fccher.example"]}`},
 		{"name": `"` + strings.Repeat("名", 33) + `"`},
 		{"kind": `"theme"`},
 		{"version": `"1.0"`},
