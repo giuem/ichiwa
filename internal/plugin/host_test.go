@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/giuem/ichiwa/internal/source"
 )
 
 func hostCall(t *testing.T, p *Plugin, id string, args map[string]string) map[string]any {
@@ -186,10 +188,13 @@ func TestLogRing(t *testing.T) {
 	es := l.Entries()
 	total := 0
 	for _, e := range es {
-		total += len(e.Text)
+		total += len(e.Text) + logEntryCost
 	}
-	if total > MaxLogBytes || total < MaxLogBytes-1000 {
+	if total > MaxLogBytes || total < MaxLogBytes-1100 {
 		t.Fatalf("log holds %d bytes", total)
+	}
+	if tail := l.Tail(5); len(tail) != 5 || tail[4] != es[len(es)-1] {
+		t.Fatalf("tail = %d entries", len(tail))
 	}
 	l.add("log", strings.Repeat("y", 3*maxLogLine))
 	last := l.Entries()[len(l.Entries())-1]
@@ -203,6 +208,19 @@ func TestLogRing(t *testing.T) {
 	l.add("log", "b")
 	if got != 1 {
 		t.Fatalf("watch saw %d entries", got)
+	}
+}
+
+// Empty lines take room too: a flood of them is dropped like any other.
+func TestLogFlood(t *testing.T) {
+	p := open(t, "hostile/loop", Options{Timeout: 300 * time.Millisecond})
+	for range 3 {
+		if _, err := p.Collection(context.Background(), source.CollectionRequest{ID: "spam"}); code(err) != source.ErrPlugin {
+			t.Fatalf("spam: %v", err)
+		}
+	}
+	if n := len(p.Logs().Entries()); n > MaxLogBytes/logEntryCost {
+		t.Fatalf("log holds %d empty lines", n)
 	}
 }
 

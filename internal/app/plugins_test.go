@@ -2,6 +2,7 @@ package app
 
 import (
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -150,5 +151,23 @@ func TestSourcePolicies(t *testing.T) {
 	}
 	if pol := r.mediaPolicy("gone"); !pol.Sandboxed || len(pol.Hosts) != 0 {
 		t.Fatalf("unknown source policy = %+v", pol)
+	}
+}
+
+// A flood of log lines redraws the log page a few times, not once a line.
+func TestThrottle(t *testing.T) {
+	var th throttle
+	var runs atomic.Int32
+	for range 200000 {
+		th.poke(50*time.Millisecond, func() { runs.Add(1) })
+	}
+	time.Sleep(150 * time.Millisecond)
+	if n := runs.Load(); n < 1 || n > 3 {
+		t.Fatalf("ran %d times", n)
+	}
+	th.poke(time.Millisecond, func() { runs.Add(1) })
+	time.Sleep(50 * time.Millisecond)
+	if runs.Load() < 2 {
+		t.Fatal("a poke after the first run did not run")
 	}
 }

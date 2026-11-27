@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -188,11 +190,29 @@ func (app *App) loadDev(dir string) error {
 			}
 		})
 	})
+	var redraw throttle
 	stopLogs := p.Logs().Watch(func(plugin.LogEntry) {
-		app.dispatch(func() { app.dev.logGen++ })
+		redraw.poke(logRedraw, func() { app.dispatch(func() { app.dev.logGen++ }) })
 	})
 	go func() { <-ctx.Done(); stopLogs() }()
 	return nil
+}
+
+// logRedraw is how often at most the log page redraws as lines come.
+const logRedraw = 200 * time.Millisecond
+
+// throttle runs a function once a while after it is poked, however
+// often it is poked meanwhile.
+type throttle struct{ pending atomic.Bool }
+
+func (t *throttle) poke(after time.Duration, fn func()) {
+	if t.pending.Swap(true) {
+		return
+	}
+	time.AfterFunc(after, func() {
+		t.pending.Store(false)
+		fn()
+	})
 }
 
 // unloadDev stops the developer mode's plugin; the app goes back to
@@ -400,6 +420,9 @@ func (app *App) sourceSwitch(c *ui.Context) {
 	}
 }
 
+// logPageLines is how much of the log the page shows: the newest lines.
+const logPageLines = 500
+
 // logPage shows the log of the developer mode's plugin as it grows.
 func (app *App) logPage(c *ui.Context) {
 	p := app.pal
@@ -412,13 +435,16 @@ func (app *App) logPage(c *ui.Context) {
 	app.header(c, "插件日志", pl.Info().Name+" "+pl.Info().Version, func() {
 		app.secondary(c, iconX, "关闭").OnClick(func() { app.dev.logOpen = false })
 	})
-	text := pl.Logs().Text()
-	if text == "" {
-		text = "还没有日志"
+	var lines []string
+	for _, e := range pl.Logs().Tail(logPageLines) {
+		// An entry may hold several lines; the page shows its last ones.
+		lines = append(lines, strings.Split(e.String(), "\n")...)
 	}
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	if len(lines) > 500 {
-		lines = lines[len(lines)-500:]
+	if len(lines) > logPageLines {
+		lines = lines[len(lines)-logPageLines:]
+	}
+	if len(lines) == 0 {
+		lines = []string{"还没有日志"}
 	}
 	ui.Scroll(c.Key("plugin-log")).Grow(1).Padding(0, pagePad, 24).Children(func() {
 		for i, l := range lines {
