@@ -110,13 +110,13 @@ plugin.zip
 
 | 字段 | 规则 |
 | --- | --- |
-| `id` | `^[a-z0-9][a-z0-9._-]{0,63}$`。安装后不能变，和发布它的 GitHub 仓库绑定 |
+| `id` | `^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$` 或单个字符 `^[a-z0-9]$`：不能以 `.`、`-`、`_` 结尾（Windows 会去掉目录名末尾的点）。安装后不能变，和发布它的 GitHub 仓库绑定 |
 | `name`、`description` | 显示给用户，分别不超过 32 和 200 字 |
 | `kind` | 目前只有 `source` |
 | `version` | 语义化版本，和 Release 标签 `v<version>` 一致 |
 | `apiVersion` | 协议大版本，目前是 `1`。宿主不支持的大版本拒绝安装 |
 | `minAppVersion` | 可选。用到某个版本才加入的宿主 API 时填。格式同一集的版本号 `YYYY.MDD.N`，逐段按数字比较 |
-| `permissions.network` | 插件能访问的主机：精确域名，或 `*.example.com`（必须是可注册域名的子域）。不能写 IP、`localhost`、端口 |
+| `permissions.network` | 插件能访问的主机：精确域名，或 `*.example.com`（必须是可注册域名的子域）。只能是 ASCII（国际化域名写 punycode）；不能写 IP（包括 `0x08.0x08.0x08.0x08` 这类变形写法）、`localhost`、端口 |
 | `images.headers` | 可选。宿主下载图片时附带的请求头，只允许 `Referer`、`User-Agent`、`Origin` |
 | `capabilities` | 可选能力，见第 5 节 |
 
@@ -414,7 +414,7 @@ type Bytes = string | Uint8Array;  // 字符串按 UTF-8 编码
 
 - `fetch` 只能访问 `permissions.network` 里的主机，每次跳转重新检查，最多 10 跳；跳到别的主机时去掉 `Authorization`、`Cookie` 请求头。
 - **建立连接时检查解析出的 IP**：环回、私有网段、链路本地、CGNAT、组播、未指定地址、云服务元数据地址一律拒绝。只比对域名不够：插件作者控制的域名可以解析到内网。
-- 每个插件有自己的 Cookie 存储，只在内存里，按标准规则保存响应的 `Set-Cookie`、附加到之后的请求；请求自己带了 `Cookie` 头时，宿主不再附加存储里的。需要长期保存的令牌放 `host.storage`。
+- 每个插件有自己的 Cookie 存储，只在内存里，按标准规则保存响应的 `Set-Cookie`、附加到之后的请求；请求自己带了 `Cookie` 头时（值为空也算），宿主不再附加存储里的，也不发送空的 `Cookie` 头。需要长期保存的令牌放 `host.storage`。
 - 图片和媒体地址受同一份白名单约束；宿主请求它们时不带插件的 Cookie。
 - 插件看不到观看记录、追剧、设置和其他插件的数据，不能读写文件、启动进程、调用系统接口。
 
