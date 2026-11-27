@@ -481,7 +481,7 @@ func (app *App) warm() {
 		}
 	}
 	if app.rank.list.fetch == nil {
-		app.loadRank(nil)
+		app.loadRankIn(app.srcContext(), nil)
 	}
 	app.loadHot()
 }

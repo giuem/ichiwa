@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/ui"
+
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
 )
@@ -243,5 +245,109 @@ func TestPersonPageKeepsHeaderOfFailedList(t *testing.T) {
 	run(5 * time.Second)
 	if len(ps.works.items) != 1 || ps.header == nil {
 		t.Fatalf("retry: %+v", ps.works.items)
+	}
+}
+
+// blockingSource is a source whose collections and searches wait
+// for their context until open, then answer with one card each.
+func blockingSource(t *testing.T) (src *sourcetest.Source, open *atomic.Bool, calls *atomic.Int32, entered chan struct{}) {
+	open, calls, entered = new(atomic.Bool), new(atomic.Int32), make(chan struct{}, 16)
+	page := func(ctx context.Context, id string) (*source.CollectionPage, error) {
+		calls.Add(1)
+		if !open.Load() {
+			entered <- struct{}{}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return &source.CollectionPage{Items: []source.Card{{Kind: source.CardMedia, ID: id, Title: "剧", Image: "x", Badges: []string{"全1集"}}}}, nil
+	}
+	src = &sourcetest.Source{
+		InfoData: source.Info{ID: "a", Capabilities: []source.Capability{source.CapSearch}},
+		OnCollection: func(ctx context.Context, r source.CollectionRequest) (*source.CollectionPage, error) {
+			return page(ctx, "c-"+r.ID)
+		},
+		OnSearch: func(ctx context.Context, r source.SearchRequest) (*source.CollectionPage, error) {
+			return page(ctx, "s-"+r.Query)
+		},
+	}
+	return src, open, calls, entered
+}
+
+func waitEntered(t *testing.T, entered chan struct{}) {
+	t.Helper()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call never started")
+	}
+}
+
+// The ranking canceled as its page is left loads again when shown, and
+// the one warm loads for pages to come isn't canceled with the page.
+func TestRankLoadsAgainAfterCancel(t *testing.T) {
+	src, open, calls, entered := blockingSource(t)
+	app, run := cancelApp(t, src)
+	app.page = pageRank
+	tt := ui.NewTester(app.rankPage, 900, 600)
+	tt.Frame()
+	waitEntered(t, entered)
+	app.go2(pageRecommend)
+	if !run(5 * time.Second) {
+		t.Fatal("the canceled load never came back")
+	}
+	l := &app.rank.list
+	if l.loaded || l.loading || l.err != "" {
+		t.Fatalf("canceled ranking: %+v", l)
+	}
+	open.Store(true)
+	app.go2(pageRank)
+	tt.Frame()
+	if !run(5*time.Second) || len(l.items) != 1 || calls.Load() != 2 {
+		t.Fatalf("ranking shown again: calls %d, %+v", calls.Load(), l)
+	}
+
+	// warm, for the pages to come, outlives the page shown.
+	src2, _, _, entered2 := blockingSource(t)
+	app2, run2 := cancelApp(t, src2)
+	app2.warmed = false
+	app2.page = pageRecommend
+	app2.warm()
+	for range 4 { // three channels and the ranking
+		waitEntered(t, entered2)
+	}
+	app2.go2(pageSearch)
+	if run2(300 * time.Millisecond) {
+		t.Fatal("leaving the page canceled what warm loads")
+	}
+	if app2.rank.list.err != "" || !app2.rank.list.loading {
+		t.Fatalf("warm ranking: %+v", app2.rank.list)
+	}
+	app2.leaveSource()
+	for run2(time.Second) {
+	}
+}
+
+// A search canceled as its page is left searches again when shown,
+// rather than say nothing was found.
+func TestSearchLoadsAgainAfterCancel(t *testing.T) {
+	src, open, calls, entered := blockingSource(t)
+	app, run := cancelApp(t, src)
+	app.page = pageSearch
+	app.runSearch("兔子")
+	waitEntered(t, entered)
+	app.go2(pageRecommend)
+	if !run(5 * time.Second) {
+		t.Fatal("the canceled search never came back")
+	}
+	r := &app.search.results
+	if r.loaded || r.loading || r.err != "" {
+		t.Fatalf("canceled search: %+v", r)
+	}
+	open.Store(true)
+	app.go2(pageSearch)
+	tt := ui.NewTester(app.searchPage, 900, 600)
+	tt.Frame()
+	if !run(5*time.Second) || len(r.items) != 1 || calls.Load() != 2 {
+		t.Fatalf("search shown again: calls %d, %+v", calls.Load(), r)
 	}
 }

@@ -322,7 +322,10 @@ type rankState struct {
 }
 
 // loadRank loads a ranking from its start with the given filter selections.
-func (app *App) loadRank(filters map[string]string) {
+func (app *App) loadRank(filters map[string]string) { app.loadRankIn(app.pageContext(), filters) }
+
+// loadRankIn loads the ranking until ctx ends.
+func (app *App) loadRankIn(ctx context.Context, filters map[string]string) {
 	r := &app.rank
 	if len(r.filters) > 1 {
 		key0 := r.filters[0].Key
@@ -341,7 +344,7 @@ func (app *App) loadRank(filters map[string]string) {
 	reqFilters := maps.Clone(filters)
 	r.list.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: pageRank, Filters: reqFilters}))
 	r.list.onPage = r.loaded
-	app.loadMore(&r.list)
+	app.loadMoreIn(ctx, &r.list)
 }
 
 // loaded takes in a page of the ranking and updates its filter rows.
@@ -368,6 +371,8 @@ func (app *App) rankPage(c *ui.Context) {
 	p := app.pal
 	if l.fetch == nil {
 		app.loadRank(nil)
+	} else if !l.loaded && !l.loading && l.err == "" {
+		app.loadMore(l) // a load canceled as the page was left
 	}
 	retry := func() { l.err = ""; app.loadMore(l) }
 	app.header(c, "排行榜", "看看大家都在追什么", nil)
@@ -539,6 +544,9 @@ func (app *App) searchPage(c *ui.Context) {
 		return
 	}
 	r := &s.results
+	if !r.loaded && !r.loading && r.err == "" {
+		app.loadMore(r) // a search canceled as the page was left
+	}
 	retry := func() { r.err = ""; app.loadMore(r) }
 	// The focus stays in the field, so nothing else says the search is done.
 	if r.loaded && !r.loading && r.err == "" && s.told != s.shown {
