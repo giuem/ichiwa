@@ -300,7 +300,7 @@ func (d *danmaku) spans(i int, shadow bool) []ui.Span {
 // once it plays and while they are wanted.
 func (w *Watching) syncDanmaku() {
 	app := w.app
-	if !app.hasCap(source.CapDanmaku) || !app.lib.Danmaku || w.detail == nil || w.player == nil {
+	if !w.has(source.CapDanmaku) || !app.lib.Danmaku || w.detail == nil || w.player == nil {
 		return
 	}
 	ep := w.detail.Episodes[w.index]
@@ -312,7 +312,7 @@ func (w *Watching) syncDanmaku() {
 	d := &danmaku{episode: ep.ID, cancel: cancel}
 	w.dm = d
 	series := w.show.ID
-	src := app.src
+	src := w.src
 	go func() {
 		defer cancel()
 		cursor := ""
@@ -355,7 +355,7 @@ func (w *Watching) dropDanmaku() {
 // danmakuLayer flies the comments over the picture.
 func (app *App) danmakuLayer(c *ui.Context, w *Watching) {
 	d := w.dm
-	if !app.hasCap(source.CapDanmaku) || !app.lib.Danmaku || d == nil || w.player == nil || w.err != "" || w.halt || w.ended {
+	if !w.has(source.CapDanmaku) || !app.lib.Danmaku || d == nil || w.player == nil || w.err != "" || w.halt || w.ended {
 		return
 	}
 	p := w.player

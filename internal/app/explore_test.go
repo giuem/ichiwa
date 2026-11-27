@@ -17,7 +17,7 @@ import (
 // by the source.
 func TestFilterChoose(t *testing.T) {
 	var fs filterState
-	fs.results.fetch = func(string) (feedPage, error) { return feedPage{}, nil }
+	fs.results.setFetch(&sourcetest.Source{}, func(context.Context, source.Source, string) (feedPage, error) { return feedPage{}, nil })
 	if !fs.choose("category_dim_theme", "cate_5000") || fs.chosen["category_dim_theme"] != "cate_5000" {
 		t.Fatalf("choose theme: %+v", fs.chosen)
 	}
@@ -197,7 +197,8 @@ func TestRankSwitchCategoryClearsSubBoards(t *testing.T) {
 	}
 	app.rank.chosen = map[string]string{"content": "human", "board": "hot"}
 	app.rank.list = Feed{
-		fetch:  func(string) (feedPage, error) { return feedPage{}, nil },
+		src:    &sourcetest.Source{},
+		fetch:  func(context.Context, source.Source, string) (feedPage, error) { return feedPage{}, nil },
 		loaded: true,
 		items:  []Card{{Kind: source.CardMedia, ID: "m1", Title: "热播剧"}},
 	}
@@ -230,7 +231,8 @@ func TestRankWithoutFiltersShowsItems(t *testing.T) {
 		page:    pageRank,
 	}
 	app.rank.list = Feed{
-		fetch:  func(string) (feedPage, error) { return feedPage{}, nil },
+		src:    &sourcetest.Source{},
+		fetch:  func(context.Context, source.Source, string) (feedPage, error) { return feedPage{}, nil },
 		loaded: true,
 		items:  []Card{{Kind: source.CardMedia, ID: "m1", Title: "无筛选排行剧"}},
 	}
@@ -362,7 +364,8 @@ func TestActorOpensPerson(t *testing.T) {
 	}
 	// Loaded already, so the page asks for nothing.
 	app.rank.list = Feed{
-		fetch:  func(string) (feedPage, error) { return feedPage{}, nil },
+		src:    &sourcetest.Source{},
+		fetch:  func(context.Context, source.Source, string) (feedPage, error) { return feedPage{}, nil },
 		loaded: true,
 		items: []Card{{
 			Kind:     source.CardCollection,

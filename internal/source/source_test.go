@@ -536,3 +536,50 @@ func TestEnumsAreTrimmed(t *testing.T) {
 		t.Errorf("encryption = %+v, %v", e, ok)
 	}
 }
+
+func TestDecodePageError(t *testing.T) {
+	cases := []struct {
+		raw   string
+		code  ErrorCode
+		msg   string
+		retry time.Duration
+	}{
+		{`{"items":[]}`, "", "", 0},
+		{`{"error":null}`, "", "", 0},
+		{`{"error":{"code":"network","message":" 列表取不到 "}}`, ErrNetwork, "列表取不到", 0},
+		{`{"error":{"code":"rateLimited","retryAfter":12.5}}`, ErrRateLimited, "", 12500 * time.Millisecond},
+		{`{"error":{"code":"teapot"}}`, ErrPlugin, "", 0},
+		{`{"error":"broken"}`, ErrPlugin, "", 0},
+		{`{"error":{"code":"notFound","retryAfter":-3}}`, ErrNotFound, "", 0},
+	}
+	for _, c := range cases {
+		e := DecodePageError([]byte(c.raw))
+		if c.code == "" {
+			if e != nil {
+				t.Errorf("%s: %v", c.raw, e)
+			}
+			continue
+		}
+		if e == nil || e.Code != c.code || e.Message != c.msg || e.RetryAfter != c.retry {
+			t.Errorf("%s: %+v", c.raw, e)
+		}
+	}
+}
+
+// A host with other than ASCII is dropped before its case is lowered:
+// "İ" lowers to "i", but the transport's IDNA maps it to another host.
+func TestCleanURLRefusesNonASCIIHosts(t *testing.T) {
+	opts := CleanOptions{AllowHost: func(host string) bool { return host == "cdn.big.example" }}
+	if got := cleanURL("http://cdn.big.example/v.mp4", opts); got == "" {
+		t.Fatal("the declared host was dropped")
+	}
+	for _, raw := range []string{
+		"http://cdn.bİg.example/leak?q=1",
+		"http://cdn.b%C4%B0g.example/leak",
+		"http://cdn.bíg.example/x",
+	} {
+		if got := cleanURL(raw, opts); got != "" {
+			t.Errorf("%q kept as %q", raw, got)
+		}
+	}
+}

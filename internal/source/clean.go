@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -101,13 +102,25 @@ func cleanURL(raw string, opts CleanOptions) string {
 		return ""
 	}
 	host := u.Hostname()
-	if host == "" {
+	// Only ASCII: lowering the case of other letters is not what IDNA
+	// does to them, so a host list could match another host than the one
+	// fetched.
+	if host == "" || strings.ContainsAny(host, "%") || !isASCII(host) {
 		return ""
 	}
 	if opts.AllowHost != nil && !opts.AllowHost(strings.ToLower(host)) {
 		return ""
 	}
 	return u.String()
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func cleanShape(s Shape) Shape {
@@ -1230,4 +1243,28 @@ func DecodeRefresh(raw []byte, opts CleanOptions) ([]Card, error) {
 		return nil, NewError(ErrPlugin, "片源返回缺少必需字段", fmt.Errorf("missing or invalid required field %q", "items"))
 	}
 	return CleanRefresh(decodeCards(top["items"]), opts), nil
+}
+
+// DecodePageError reads the error of a collection page (§6): the items
+// failed while the rest of the page came. It returns nil when the page
+// has none. A present error without a known code is ErrPlugin.
+func DecodePageError(raw []byte) *Error {
+	top, err := parseJSONObject(raw)
+	if err != nil {
+		return nil
+	}
+	val, exists := top["error"]
+	if !exists || rawIsNull(val) {
+		return nil
+	}
+	obj, ok := rawObject(val)
+	if !ok {
+		return NewError(ErrPlugin, "", nil)
+	}
+	code, _ := rawString(obj["code"])
+	e := NewError(ErrorCode(strings.TrimSpace(code)), rawOptString(obj, "message"), nil)
+	if secs, ok := rawNonNegFloat(obj["retryAfter"]); ok && secs > 0 && secs < 7*24*3600 {
+		e.RetryAfter = time.Duration(secs * float64(time.Second))
+	}
+	return e
 }

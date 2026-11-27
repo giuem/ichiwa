@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,19 +31,41 @@ func TestSelectStreams(t *testing.T) {
 	}
 }
 
-func TestSelectStreamsHEVC(t *testing.T) {
+func TestSelectStreamsDropsWhatTheDeviceCannotPlay(t *testing.T) {
 	hevc := source.Stream{URL: "hevc", Width: 1080, Height: 1920, Codec: "bytevc1", Container: source.ContainerMP4}
 	h264 := source.Stream{URL: "h264", Width: 720, Height: 1280, Codec: "h264", Container: source.ContainerMP4}
 	unknown := source.Stream{URL: "unknown", Width: 720, Height: 1280, Container: source.ContainerMP4}
+	av1 := source.Stream{URL: "av1", Width: 1080, Height: 1920, Codec: "av01.0.08M.08", Container: source.ContainerMP4}
+	vp9 := source.Stream{URL: "vp9", Width: 1080, Height: 1920, Codec: "vp9", Container: source.ContainerMP4}
 
-	if got := SelectStreams([]source.Stream{h264, hevc}, source.PlayPrefer{MaxHeight: 1080, HEVC: true}); got[0].URL != "hevc" {
-		t.Fatalf("HEVC-capable should prefer 1080p HEVC, got %s", got[0].URL)
+	urls := func(ss []source.Stream) string {
+		var out []string
+		for _, s := range ss {
+			out = append(out, s.URL)
+		}
+		return strings.Join(out, ",")
 	}
-	if got := SelectStreams([]source.Stream{hevc, h264}, source.PlayPrefer{MaxHeight: 1080, HEVC: false}); got[0].URL != "h264" {
-		t.Fatalf("non-HEVC should prefer H.264, got %s", got[0].URL)
+	if got := urls(SelectStreams([]source.Stream{h264, hevc, av1}, source.PlayPrefer{MaxHeight: 1080, HEVC: true})); got != "hevc,h264" {
+		t.Fatalf("HEVC-capable = %s", got)
 	}
-	if got := SelectStreams([]source.Stream{hevc, unknown}, source.PlayPrefer{MaxHeight: 1080, HEVC: false}); got[0].URL != "unknown" {
-		t.Fatalf("non-HEVC should prefer unknown codec over HEVC, got %s", got[0].URL)
+	if got := urls(SelectStreams([]source.Stream{hevc, h264, unknown, vp9}, source.PlayPrefer{MaxHeight: 1080, HEVC: false})); got != "h264,unknown" {
+		t.Fatalf("without HEVC = %s", got)
+	}
+	if got := SelectStreams([]source.Stream{hevc, av1}, source.PlayPrefer{MaxHeight: 1080}); len(got) != 0 {
+		t.Fatalf("nothing playable = %v", got)
+	}
+}
+
+func TestNoPlayableStream(t *testing.T) {
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mgr.Episode(context.Background(), "s", "m", "e", func(context.Context, source.PlayPrefer) (*source.Playback, error) {
+		return &source.Playback{Streams: []source.Stream{{URL: "https://x.example/a.mp4", Container: source.ContainerMP4, Codec: "av1"}}}, nil
+	})
+	if !errors.Is(err, ErrNoPlayableStream) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -253,5 +276,152 @@ func TestEpisodeMigratesLegacyCache(t *testing.T) {
 	gotData, err := os.ReadFile(gotPath)
 	if err != nil || !bytes.Equal(gotData, wantData) {
 		t.Fatalf("migrated data = %q, err = %v", gotData, err)
+	}
+}
+
+// Playing an episode that a preload is downloading waits for that
+// download rather than start another.
+func TestOpenSharesPreload(t *testing.T) {
+	release := make(chan struct{})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+		_, _ = w.Write([]byte(mp4Bytes))
+	}))
+	defer srv.Close()
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolves atomic.Int32
+	resolve := func(context.Context, source.PlayPrefer) (*source.Playback, error) {
+		resolves.Add(1)
+		return &source.Playback{Streams: []source.Stream{{URL: srv.URL + "/v.mp4", Container: source.ContainerMP4}}}, nil
+	}
+	mgr.Preload(context.Background(), "hongguo", "m", "e", 0, resolve)
+	for hits.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	opened := make(chan Item)
+	go func() {
+		it, err := mgr.Open(context.Background(), "hongguo", "m", "e", resolve)
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- it
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	it := <-opened
+	if it.Path == "" || resolves.Load() != 1 || hits.Load() != 1 {
+		t.Fatalf("Open = %+v; resolves %d, downloads %d", it, resolves.Load(), hits.Load())
+	}
+}
+
+// The built-in source's media go direct, as they always did, not through
+// a proxy the environment names.
+func TestBuiltinMediaUseNoProxy(t *testing.T) {
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := mgr.client(Policy{}).Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil {
+		t.Fatalf("transport = %#v", mgr.client(Policy{}).Transport)
+	}
+}
+
+// A play call no one waits for any more is canceled, so it doesn't hold
+// one of the plugin's slots (protocol §9).
+func TestOpenCancelsCallNoOneWaitsFor(t *testing.T) {
+	defer func(g time.Duration) { orphanGrace = g }(orphanGrace)
+	orphanGrace = 50 * time.Millisecond
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, ended := make(chan struct{}), make(chan struct{})
+	resolve := func(ctx context.Context, _ source.PlayPrefer) (*source.Playback, error) {
+		close(started)
+		<-ctx.Done()
+		close(ended)
+		return nil, ctx.Err()
+	}
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	errs := make(chan error, 2)
+	go func() { _, err := mgr.Open(ctx1, "p", "m", "e", resolve); errs <- err }()
+	<-started
+	go func() { _, err := mgr.Open(ctx2, "p", "m", "e", resolve); errs <- err }()
+	for {
+		mgr.mu.Lock()
+		n := 0
+		if j := mgr.inflight[CacheKey("p", "m", "e")]; j != nil {
+			n = j.waiters
+		}
+		mgr.mu.Unlock()
+		if n == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel1()
+	<-errs
+	select {
+	case <-ended:
+		t.Fatal("the call was canceled while a caller still waited")
+	case <-time.After(4 * orphanGrace):
+	}
+	cancel2()
+	<-errs
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call went on after its callers left")
+	}
+}
+
+// Playing an episode right after its preload was canceled takes over
+// the download, rather than cancel it and start anew.
+func TestOpenTakesOverCanceledPreload(t *testing.T) {
+	release := make(chan struct{})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+		_, _ = w.Write([]byte(mp4Bytes))
+	}))
+	defer srv.Close()
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolves atomic.Int32
+	resolve := func(ctx context.Context, _ source.PlayPrefer) (*source.Playback, error) {
+		resolves.Add(1)
+		return &source.Playback{Streams: []source.Stream{{URL: srv.URL + "/v.mp4", Container: source.ContainerMP4}}}, nil
+	}
+	pctx, pcancel := context.WithCancel(context.Background())
+	mgr.Preload(pctx, "hongguo", "m", "e", 0, resolve)
+	for hits.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	// As stopPlayer does: the preload stops, then play opens the episode.
+	pcancel()
+	time.Sleep(100 * time.Millisecond)
+	opened := make(chan Item)
+	go func() {
+		it, err := mgr.Open(context.Background(), "hongguo", "m", "e", resolve)
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- it
+	}()
+	time.Sleep(orphanGrace + 500*time.Millisecond)
+	close(release)
+	it := <-opened
+	if it.Path == "" || resolves.Load() != 1 || hits.Load() != 1 {
+		t.Fatalf("Open = %+v; resolves %d, downloads %d", it, resolves.Load(), hits.Load())
 	}
 }

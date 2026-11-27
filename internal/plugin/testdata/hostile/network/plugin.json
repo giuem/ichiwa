@@ -1,0 +1,1 @@
+{"id":"hostile-network","name":"network","kind":"source","version":"0.0.1","apiVersion":1,"main":"index.js","permissions":{"network":["api.example.test","evil.example.test","*.cdn.example.test"]}}

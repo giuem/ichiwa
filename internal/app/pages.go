@@ -299,7 +299,7 @@ func (app *App) feedPage(c *ui.Context, colID string) {
 	retry := func() { f.err = ""; app.loadMore(f) }
 	switch {
 	case len(f.items) == 0 && f.err != "":
-		app.centered(c, iconX, "加载失败", f.err, retry)
+		app.centered(c, iconX, "加载失败", f.errText(), retry)
 		return
 	case len(f.items) == 0:
 		app.skeletonGrid(c, 3)
@@ -308,7 +308,7 @@ func (app *App) feedPage(c *ui.Context, colID string) {
 	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("feed-"+colID)).TrackScroll(&f.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
 		app.grid(c, visible(f, n), episodesExtras)
-		app.feedFooter(c, f.loading, f.err, f.more, retry)
+		app.feedFooter(c, f.loading, f.errText(), f.more, retry)
 	})
 	app.pump(c, f)
 }
@@ -322,7 +322,10 @@ type rankState struct {
 }
 
 // loadRank loads a ranking from its start with the given filter selections.
-func (app *App) loadRank(filters map[string]string) {
+func (app *App) loadRank(filters map[string]string) { app.loadRankIn(app.pageContext(), filters) }
+
+// loadRankIn loads the ranking until ctx ends.
+func (app *App) loadRankIn(ctx context.Context, filters map[string]string) {
 	r := &app.rank
 	if len(r.filters) > 1 {
 		key0 := r.filters[0].Key
@@ -339,15 +342,9 @@ func (app *App) loadRank(filters map[string]string) {
 	r.chosen = maps.Clone(filters)
 	r.list.reset()
 	reqFilters := maps.Clone(filters)
-	r.list.fetch = func(cursor string) (feedPage, error) {
-		return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
-			ID:      pageRank,
-			Filters: reqFilters,
-			Cursor:  cursor,
-		}))
-	}
+	r.list.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: pageRank, Filters: reqFilters}))
 	r.list.onPage = r.loaded
-	app.loadMore(&r.list)
+	app.loadMoreIn(ctx, &r.list)
 }
 
 // loaded takes in a page of the ranking and updates its filter rows.
@@ -374,12 +371,14 @@ func (app *App) rankPage(c *ui.Context) {
 	p := app.pal
 	if l.fetch == nil {
 		app.loadRank(nil)
+	} else if !l.loaded && !l.loading && l.err == "" {
+		app.loadMore(l) // a load canceled as the page was left
 	}
 	retry := func() { l.err = ""; app.loadMore(l) }
 	app.header(c, "排行榜", "看看大家都在追什么", nil)
 	if len(r.filters) == 0 && !l.loaded {
 		if l.err != "" {
-			app.centered(c, iconX, "加载失败", l.err, retry)
+			app.centered(c, iconX, "加载失败", l.errText(), retry)
 		} else {
 			app.skeletonGrid(c, 3)
 		}
@@ -419,7 +418,7 @@ func (app *App) rankPage(c *ui.Context) {
 	}
 	if len(l.items) == 0 {
 		if l.err != "" {
-			app.centered(c, iconX, "加载失败", l.err, retry)
+			app.centered(c, iconX, "加载失败", l.errText(), retry)
 		} else if l.loaded && !l.more {
 			app.centered(c, iconTrophy, "暂无排行", "", nil)
 		} else {
@@ -430,7 +429,7 @@ func (app *App) rankPage(c *ui.Context) {
 	if l.items[0].Shape == source.ShapeCircle {
 		ui.Scroll(c.Key("rank-actors")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
 			app.actorGrid(c, l.items)
-			app.feedFooter(c, l.loading, l.err, l.more, retry)
+			app.feedFooter(c, l.loading, l.errText(), l.more, retry)
 		})
 		app.pump(c, l)
 		return
@@ -453,7 +452,7 @@ func (app *App) rankPage(c *ui.Context) {
 				return joinNonEmpty(fmt.Sprintf("第%d名", i+1), s.Note)
 			}}
 		})
-		app.feedFooter(c, l.loading, l.err, l.more, retry)
+		app.feedFooter(c, l.loading, l.errText(), l.more, retry)
 	})
 	app.pump(c, l)
 }
@@ -483,12 +482,10 @@ func (app *App) runSearch(q string) {
 		f.fetch = nil
 		return
 	}
-	f.fetch = func(cursor string) (feedPage, error) {
-		return pageResult(app.src.Search(context.Background(), source.SearchRequest{
-			Query:  q,
-			Cursor: cursor,
-		}))
-	}
+	f.exact = !app.builtin()
+	f.setFetch(app.src, func(ctx context.Context, src source.Source, cursor string) (feedPage, error) {
+		return pageResult(src.Search(ctx, source.SearchRequest{Query: q, Cursor: cursor}))
+	})
 	app.loadMore(f)
 }
 
@@ -503,9 +500,13 @@ func (app *App) loadHot() {
 	}
 	s.hotBusy = true
 	src := app.src
+	ctx := app.srcContext()
 	async(app, func() (*source.CollectionPage, error) {
-		return src.SearchHome(context.Background())
+		return src.SearchHome(ctx)
 	}, func(p *source.CollectionPage, err error) {
+		if ctx.Err() != nil {
+			return // the source was left: its search state is gone
+		}
 		s.hotBusy = false
 		if err != nil {
 			s.hotErr = errText(err)
@@ -543,6 +544,9 @@ func (app *App) searchPage(c *ui.Context) {
 		return
 	}
 	r := &s.results
+	if !r.loaded && !r.loading && r.err == "" {
+		app.loadMore(r) // a search canceled as the page was left
+	}
 	retry := func() { r.err = ""; app.loadMore(r) }
 	// The focus stays in the field, so nothing else says the search is done.
 	if r.loaded && !r.loading && r.err == "" && s.told != s.shown {
@@ -554,7 +558,7 @@ func (app *App) searchPage(c *ui.Context) {
 		case r.loading:
 			app.skeletonGrid(c, 2)
 		case r.err != "":
-			app.centered(c, iconX, "搜索失败", r.err, retry)
+			app.centered(c, iconX, "搜索失败", r.errText(), retry)
 		default:
 			app.centered(c, iconSearch, "没有找到“"+s.shown+"”", "换个关键词试试", nil)
 		}
@@ -565,7 +569,7 @@ func (app *App) searchPage(c *ui.Context) {
 	ui.Scroll(c.Key("results-"+q)).TrackScroll(&r.scroll).Grow(1).Padding(0, pagePad, 0).Children(func() {
 		ui.Text(c, fmt.Sprintf("“%s”的搜索结果", q)).FontSize(13).TextColor(p.muted).Margin(0, 0, 16)
 		app.grid(c, visible(r, n), episodesExtras)
-		app.feedFooter(c, r.loading, r.err, r.more, retry)
+		app.feedFooter(c, r.loading, r.errText(), r.more, retry)
 	})
 	app.pump(c, r)
 }

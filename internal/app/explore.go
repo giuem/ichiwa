@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"maps"
 	"strings"
@@ -117,13 +116,7 @@ func (app *App) filterPage(c *ui.Context) {
 	r := &fs.results
 	if r.fetch == nil {
 		chosen := maps.Clone(fs.chosen) // the fetch runs off the main thread
-		r.fetch = func(cursor string) (feedPage, error) {
-			return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
-				ID:      pageFilter,
-				Filters: chosen,
-				Cursor:  cursor,
-			}))
-		}
+		r.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: pageFilter, Filters: chosen}))
 		r.onPage = fs.applyPage
 		r.more = !r.loaded
 	}
@@ -140,13 +133,13 @@ func (app *App) filterPage(c *ui.Context) {
 		switch {
 		case len(r.items) > 0:
 			app.grid(c, visible(r, n), episodesExtras)
-			app.feedFooter(c, r.loading, r.err, r.more, retry)
+			app.feedFooter(c, r.loading, r.errText(), r.more, retry)
 		case r.loaded && !r.more && r.err == "":
 			ui.Text(c, "没有符合条件的短剧，换个条件试试").FontSize(13).TextColor(p.muted).Padding(40, 0).AlignSelf(ui.Center)
 		case !fs.rowsOK && r.err != "":
 			// Filter panel already shows the error and retry button.
 		default:
-			app.feedFooter(c, r.err == "", r.err, true, retry)
+			app.feedFooter(c, r.err == "", r.errText(), true, retry)
 		}
 	})
 	app.pump(c, r)
@@ -249,7 +242,14 @@ type personState struct {
 }
 
 func (app *App) openPerson(a Card) {
+	app.leavePage()
 	app.person = &personState{actor: a}
+}
+
+// closePerson leaves the person page for the page under it.
+func (app *App) closePerson() {
+	app.leavePage()
+	app.person = nil
 }
 
 func (app *App) loadPerson(ps *personState) {
@@ -259,13 +259,24 @@ func (app *App) loadPerson(ps *personState) {
 	ps.headerBusy, ps.headerErr = true, ""
 	src := app.src
 	colID := ps.actor.ID
+	ctx := app.pageContext()
 	async(app, func() (*source.CollectionPage, error) {
-		return src.Collection(context.Background(), source.CollectionRequest{ID: colID})
+		return src.Collection(ctx, source.CollectionRequest{ID: colID})
 	}, func(p *source.CollectionPage, err error) {
-		if app.person != ps {
+		if app.person != ps || ctx.Err() != nil {
 			return
 		}
 		ps.headerBusy = false
+		if err != nil && p != nil {
+			// The page came, its list failed: the header shows, and the
+			// works show the error, to retry.
+			ps.headerLoaded, ps.header = true, p.Header
+			ps.works = *newFeed(src, collectionFetch(source.CollectionRequest{ID: colID}))
+			ps.works.exact = !app.builtin()
+			ps.works.loaded, ps.works.err = true, errText(err)
+			ps.worksReady = true
+			return
+		}
 		if err != nil {
 			ps.headerErr = errText(err)
 			return
@@ -286,12 +297,8 @@ func (app *App) loadPerson(ps *personState) {
 			for _, sec := range p.Sections {
 				if sec.Collection != "" {
 					worksCol := sec.Collection
-					ps.works = *newFeed(func(cursor string) (feedPage, error) {
-						return pageResult(src.Collection(context.Background(), source.CollectionRequest{
-							ID:     worksCol,
-							Cursor: cursor,
-						}))
-					})
+					ps.works = *newFeed(src, collectionFetch(source.CollectionRequest{ID: worksCol}))
+					ps.works.exact = !app.builtin()
 					ps.worksReady = true
 					app.loadMore(&ps.works)
 					return
@@ -299,18 +306,14 @@ func (app *App) loadPerson(ps *personState) {
 			}
 		}
 		// Otherwise the source returned works inline on the first page.
-		ps.works = *newFeed(func(cursor string) (feedPage, error) {
-			return pageResult(src.Collection(context.Background(), source.CollectionRequest{
-				ID:     colID,
-				Cursor: cursor,
-			}))
-		})
+		ps.works = *newFeed(src, collectionFetch(source.CollectionRequest{ID: colID}))
+		ps.works.exact = !app.builtin()
 		ps.worksReady = true
 		ps.works.loaded = true
 		fp := feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}
 		fresh, added := ps.works.take(fp)
 		ps.works.more = ps.works.step(fp, fresh)
-		app.fill(&ps.works, added)
+		app.fill(app.srcContext(), &ps.works, added)
 	})
 }
 
@@ -322,7 +325,7 @@ func (app *App) personPage(c *ui.Context) {
 	}
 	f := &ps.works
 	retry := func() { f.err = ""; app.loadMore(f) }
-	back := func() { app.person = nil }
+	back := app.closePerson
 	c.OnShortcut(0, ui.KeyEscape, back)
 
 	name, avatar := ps.actor.Title, ps.actor.Image
@@ -352,13 +355,13 @@ func (app *App) personPage(c *ui.Context) {
 		switch {
 		case len(f.items) > 0:
 			app.grid(c, visible(f, n), episodesExtras)
-			app.feedFooter(c, f.loading, f.err, f.more, retry)
+			app.feedFooter(c, f.loading, f.errText(), f.more, retry)
 		case f.loaded && !f.more && f.err == "":
 			ui.Text(c, "暂无作品").FontSize(13).TextColor(p.muted).Padding(24, 0)
 		case ps.headerErr != "" && !ps.worksReady:
 			// Header retry is shown in personFacts right above.
 		default:
-			app.feedFooter(c, f.err == "", f.err, true, retry)
+			app.feedFooter(c, f.err == "", f.errText(), true, retry)
 		}
 	})
 	app.pump(c, f)
