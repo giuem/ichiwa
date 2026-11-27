@@ -49,6 +49,10 @@ type Feed struct {
 	scroll  ui.ScrollState
 	gen     int // bumped by reset, so results of earlier loads are dropped
 	stalls  int // pages in a row that brought nothing new
+	// exact takes a page without a cursor as the end, as the protocol
+	// says, rather than ask again: for plugins, whose lists end when
+	// they say.
+	exact bool
 
 	// cache is the file that keeps the first items of the feed for the
 	// next launch, empty for a feed not kept. stale tells the items came
@@ -64,7 +68,7 @@ func newFeed(fetch func(cursor string) (feedPage, error)) *Feed {
 
 // reset empties the feed, keeping where it loads from.
 func (f *Feed) reset() {
-	*f = Feed{fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache}
+	*f = Feed{fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache, exact: f.exact}
 }
 
 func (f *Feed) add(items []Card) {
@@ -155,6 +159,8 @@ func (f *Feed) step(p feedPage, fresh bool) bool {
 	case fresh && !end:
 		f.stalls = 0
 		return true
+	case f.exact && end:
+		return false
 	case len(f.items) == 0:
 		return false // nothing to show: an empty search, say, ends at once
 	}

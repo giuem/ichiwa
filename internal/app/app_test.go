@@ -533,7 +533,7 @@ func TestCapabilityHiding(t *testing.T) {
 		t.Error("search nav item shown without CapSearch")
 	}
 
-	w := &Watching{app: app, index: 0, detail: &Media{Episodes: []source.Episode{{ID: "e1"}}}}
+	w := &Watching{app: app, src: noCaps, index: 0, detail: &Media{Episodes: []source.Episode{{ID: "e1"}}}}
 	ttStage := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
 	ttStage.Frame()
 	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); ok {
@@ -545,7 +545,7 @@ func TestCapabilityHiding(t *testing.T) {
 		Name:         "Full",
 		Capabilities: []source.Capability{source.CapSearch, source.CapDanmaku},
 	}}
-	app.src = withCaps
+	app.src, w.src = withCaps, withCaps
 	tt.Frame()
 	if _, ok := tt.AccessByRole(ui.RoleButton, "搜索"); !ok {
 		t.Error("search nav item hidden with CapSearch")

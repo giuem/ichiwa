@@ -68,6 +68,7 @@ const chromeLinger = 3 * time.Second
 type Watching struct {
 	app      *App
 	sourceID string
+	src      source.Source // nil when the source is not loaded
 	show     Card
 
 	detail    *Media
@@ -129,6 +130,11 @@ type Watching struct {
 	// for where the user left it.
 	seasons      []Season
 	switchSeason func(s Season, ep int)
+}
+
+// has tells whether the drama's source has capability c.
+func (w *Watching) has(c source.Capability) bool {
+	return w.src != nil && w.src.Info().Has(c)
 }
 
 func (w *Watching) ref() source.Ref {
@@ -207,7 +213,13 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 	app.watch = w
 	go w.keepAwake()
 
-	src := app.src
+	src := app.sources.get(sourceID)
+	w.src = src
+	if src == nil {
+		w.loading = false
+		w.detailErr = "片源不可用：这部剧来自没有加载的片源"
+		return
+	}
 	async(app, func() (*Media, error) { return src.Media(context.Background(), s.ID) }, func(d *Media, err error) {
 		if app.watch != w {
 			return
@@ -354,12 +366,12 @@ func (w *Watching) play(i int, at float64) {
 	}
 	ref := w.ref()
 	app.lib.Progress(ref.Source, w.show, ep.ID, i, len(w.detail.Episodes), at, 0)
-	src, mgr := app.src, app.media
+	src, mgr := w.src, app.media
 	if src == nil || mgr == nil {
 		return
 	}
 	go func() {
-		path, err := mgr.Episode(context.Background(), ref.Source, ref.ID, ep.ID, func(ctx context.Context, prefer source.PlayPrefer) (*source.Playback, error) {
+		item, err := mgr.Open(context.Background(), ref.Source, ref.ID, ep.ID, func(ctx context.Context, prefer source.PlayPrefer) (*source.Playback, error) {
 			return src.Play(ctx, source.PlayRequest{MediaID: ref.ID, EpisodeID: ep.ID, Prefer: prefer})
 		})
 		app.win.Update(func() {
@@ -369,7 +381,11 @@ func (w *Watching) play(i int, at float64) {
 			w.loading = false
 			var p *ui.VideoPlayer
 			if err == nil {
-				p, err = video.Open(path)
+				if item.URL != "" {
+					p, err = video.OpenURL(item.URL)
+				} else {
+					p, err = video.Open(item.Path)
+				}
 			}
 			if err != nil {
 				w.failed(i, auto, err)
@@ -988,7 +1004,7 @@ func (app *App) watchView(c *ui.Context) {
 	}
 	c.OnShortcut(0, ui.KeyE, func() { w.toggleEpisodes(width, full) })
 	c.OnShortcut(0, ui.KeyA, w.toggleAutoplay)
-	if app.hasCap(source.CapDanmaku) {
+	if w.has(source.CapDanmaku) {
 		c.OnShortcut(0, ui.KeyD, w.toggleDanmaku)
 	}
 	c.OnShortcut(0, ui.KeyV, w.toggleMini)
@@ -1215,7 +1231,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				} else {
 					w.volOpen = false
 				}
-				if app.hasCap(source.CapDanmaku) {
+				if w.has(source.CapDanmaku) {
 					if symbolButton(c, "text.bubble.fill", 14, ternary(app.lib.Danmaku, app.pal.accent, white), "弹幕 (D)").KeyShortcuts(0, ui.KeyD).Role(ui.RoleToggleButton).Checked(app.lib.Danmaku).Clicked() {
 						w.toggleDanmaku()
 					}
@@ -1273,7 +1289,7 @@ func (app *App) playerMenu(w *Watching, full bool) func(m *ui.Menu) {
 		if m.Item("自动连播").Checked(app.lib.Autoplay).Trailing("A").Chosen() {
 			w.toggleAutoplay()
 		}
-		if app.hasCap(source.CapDanmaku) {
+		if w.has(source.CapDanmaku) {
 			if m.Item("弹幕").Checked(app.lib.Danmaku).Trailing("D").Chosen() {
 				w.toggleDanmaku()
 			}

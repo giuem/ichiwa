@@ -22,4 +22,6 @@ var (
 	iconX           = lucide(`<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`)
 	iconSliders     = lucide(`<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>`)
 	iconChevronLeft = lucide(`<path d="m15 18-6-6 6-6"/>`)
+	iconChevronDown = lucide(`<path d="m6 9 6 6 6-6"/>`)
+	iconScroll      = lucide(`<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>`)
 )

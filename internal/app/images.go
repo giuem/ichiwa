@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -24,6 +25,9 @@ type Posters struct {
 	slots   chan struct{}
 	entries map[string]*poster
 	redraw  func()
+	// route returns the client and headers for an image of a plugin;
+	// nil for one of a built-in source, which takes the plain client.
+	route func(url string) (*http.Client, map[string]string)
 }
 
 type poster struct {
@@ -87,12 +91,30 @@ func (p *Posters) Image(url string) *image.RGBA {
 	return nil
 }
 
+// maxPosterBytes caps the download of one image.
+const maxPosterBytes = 16 << 20
+
 func (p *Posters) load(key, url string) (*image.RGBA, error) {
 	sum := sha1.Sum([]byte(key))
 	file := filepath.Join(p.dir, hex.EncodeToString(sum[:]))
 	data, err := os.ReadFile(file)
 	if err != nil {
-		resp, err := p.http.Get(url)
+		client, headers := p.http, map[string]string(nil)
+		if p.route != nil {
+			if c, h := p.route(url); c != nil {
+				client, headers = c, h
+			}
+		}
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resp, err := client.Do(req.WithContext(ctx))
 		if err != nil {
 			return nil, err
 		}
@@ -100,9 +122,12 @@ func (p *Posters) load(key, url string) (*image.RGBA, error) {
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 		}
-		data, err = io.ReadAll(resp.Body)
+		data, err = io.ReadAll(io.LimitReader(resp.Body, maxPosterBytes+1))
 		if err != nil {
 			return nil, err
+		}
+		if len(data) > maxPosterBytes {
+			return nil, fmt.Errorf("image larger than %d bytes", maxPosterBytes)
 		}
 		_ = os.WriteFile(file, data, 0o644)
 	}

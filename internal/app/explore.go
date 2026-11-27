@@ -292,6 +292,7 @@ func (app *App) loadPerson(ps *personState) {
 							Cursor: cursor,
 						}))
 					})
+					ps.works.exact = !app.builtin()
 					ps.worksReady = true
 					app.loadMore(&ps.works)
 					return
@@ -305,6 +306,7 @@ func (app *App) loadPerson(ps *personState) {
 				Cursor: cursor,
 			}))
 		})
+		ps.works.exact = !app.builtin()
 		ps.worksReady = true
 		ps.works.loaded = true
 		fp := feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}

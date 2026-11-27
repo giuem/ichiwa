@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"os"
 	"runtime"
 	"time"
 
@@ -41,9 +42,17 @@ const (
 // App is the state the window shows.
 type App struct {
 	win     *mygo.Window
-	src     source.Source
+	src     source.Source // the source shown
+	sources registry      // every source loaded
+	dev     devState
 	media   *media.Manager
 	nav     []source.NavItem
+	navErr  string
+	navBusy bool
+	// cols are the collection pages of a plugin, by collection ID.
+	cols map[string]*colState
+	// dataDir keeps what the app must not lose.
+	dataDir string
 	posters *Posters
 	lib     *library.Library
 	// cacheDir keeps what the app may lose: covers, episodes, feeds.
@@ -217,6 +226,7 @@ func (app *App) sidebar(c *ui.Context) {
 	p := app.pal
 	top := max(c.TitleBar().Height, 28) + 10
 	ui.Column(c).Fill().Padding(top, 12, 14).Gap(2).DragWindow().Children(func() {
+		app.sourceSwitch(c)
 		app.navSection(c, "发现")
 		for _, item := range app.nav {
 			app.navItem(c, navIcon(item.Icon), item.Title, item.ID, 0)
@@ -227,6 +237,20 @@ func (app *App) sidebar(c *ui.Context) {
 		app.navSection(c, "我的")
 		app.navItem(c, iconClock, "继续观看", pageHistory, len(app.lib.History))
 		app.navItem(c, iconHeart, "追剧", pageFollows, len(app.lib.Follows))
+		if app.dev.plugin != nil {
+			b := ui.ButtonBase(c.Key("plugin-log")).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label("插件日志")
+			if app.dev.logOpen {
+				b.Current(ui.CurrentPage).Background(p.press)
+			}
+			b.Children(func() {
+				ui.Icon(c, iconScroll).Size(17, 17).TextColor(p.muted)
+				ui.Text(c, "插件日志").FontSize(13.5).FontWeight(500).TextColor(p.text)
+			})
+			if b.Clicked() {
+				app.dev.logOpen = true
+				app.person = nil
+			}
+		}
 		ui.Spacer(c)
 		ui.Row(c).Padding(0, 8, 6).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
@@ -262,7 +286,7 @@ func (app *App) navSection(c *ui.Context, title string) {
 
 func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count int) {
 	p := app.pal
-	selected := app.page == page && app.person == nil
+	selected := app.page == page && app.person == nil && !app.dev.logOpen
 	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label(label)
 	if selected {
 		b.Current(ui.CurrentPage)
@@ -293,6 +317,7 @@ func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count i
 		}
 	})
 	if b.Clicked() {
+		app.dev.logOpen = false
 		app.go2(page)
 	}
 }
@@ -302,8 +327,34 @@ func (app *App) content(c *ui.Context) {
 		app.centered(c, iconX, "启动失败", app.initErr, nil)
 		return
 	}
+	if app.dev.logOpen {
+		app.logPage(c)
+		return
+	}
 	if app.person != nil {
 		app.personPage(c)
+		return
+	}
+	switch app.page {
+	case pageSearch:
+		app.searchPage(c)
+		return
+	case pageHistory:
+		app.historyPage(c)
+		return
+	case pageFollows:
+		app.followsPage(c)
+		return
+	}
+	if !app.builtin() {
+		switch {
+		case app.page != "":
+			app.collectionPage(c, app.page)
+		case app.navErr != "":
+			app.centered(c, iconX, "片源加载失败", app.navErr, func() { app.navErr = ""; app.loadNav() })
+		default:
+			app.skeletonGrid(c, 3)
+		}
 		return
 	}
 	switch app.page {
@@ -311,12 +362,6 @@ func (app *App) content(c *ui.Context) {
 		app.rankPage(c)
 	case pageFilter:
 		app.filterPage(c)
-	case pageSearch:
-		app.searchPage(c)
-	case pageHistory:
-		app.historyPage(c)
-	case pageFollows:
-		app.followsPage(c)
 	default:
 		app.feedPage(c, app.page)
 	}
@@ -360,11 +405,13 @@ func Run() {
 		app.lib = library.Load(dataDir)
 		app.page = normalizeSavedPage(app.lib.Page)
 
+		app.dataDir = dataDir
 		src, err := hongguo.New(dataDir)
 		if err != nil {
 			app.initErr = err.Error()
 		} else {
 			app.src = src
+			app.sources.add(src)
 			if nav, nerr := src.Navigation(context.Background()); nerr == nil {
 				app.nav = nav
 			}
@@ -375,6 +422,7 @@ func Run() {
 				app.initErr = merr.Error()
 			} else {
 				app.media = mgr
+				mgr.SetPolicy(app.sources.mediaPolicy)
 			}
 		}
 
@@ -392,6 +440,15 @@ func Run() {
 			Content:              ui.View(app.view),
 		})
 		app.posters = newPosters(cacheDir, app.win.Invalidate)
+		app.posters.route = app.sources.imageRoute
+		// The developer mode's plugin folder, loaded at the last launch.
+		if dev := app.loadDevSettings(); dev.Dir != "" && app.initErr == "" {
+			if err := app.loadDev(dev.Dir); err != nil {
+				log.Printf("plugins: %s: %v", dev.Dir, err)
+			} else if os.Getenv("ICHIWA_PLUGIN_DIR") != "" || dev.Current == app.dev.plugin.Info().ID {
+				app.useSource(app.dev.plugin)
+			}
+		}
 		app.setMenu()
 		app.mediaKeys()
 		app.win.OnClose(func(e *mygo.CloseEvent) {

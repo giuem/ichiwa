@@ -30,6 +30,11 @@ func (app *App) tour() {
 			fmt.Fprintln(os.Stderr, "shot", name)
 		}
 		goTo := func(page string) { app.win.Update(func() { app.page = page }) }
+		if !app.builtin() {
+			app.pluginTour(shot, goTo)
+			mygo.RunOnMain(func() { mygo.App.Quit() })
+			return
+		}
 		shot("1-home", 8*time.Second)
 		goTo(pageComic)
 		shot("2-comic", 6*time.Second)
@@ -67,4 +72,34 @@ func (app *App) tour() {
 		shot("12-person", 6*time.Second)
 		mygo.RunOnMain(func() { mygo.App.Quit() })
 	}()
+}
+
+// pluginTour walks the pages of a plugin loaded with ICHIWA_PLUGIN_DIR,
+// written for the example plugin (internal/plugin/testdata/example).
+func (app *App) pluginTour(shot func(string, time.Duration), goTo func(string)) {
+	shot("p1-home", 6*time.Second)
+	goTo("rank")
+	shot("p2-rank", 3*time.Second)
+	goTo("filter")
+	shot("p3-filter", 3*time.Second)
+	app.win.Update(func() { app.col("filter").choose("genre", "奇幻") })
+	shot("p4-filter-fantasy", 3*time.Second)
+	app.win.Update(func() { app.col("filter").choose("genre", "broken") })
+	shot("p5-filter-broken", 3*time.Second)
+	app.win.Update(func() { app.openPerson(Card{Kind: source.CardCollection, ID: "person:p1", Title: "大兔子"}) })
+	shot("p6-person", 3*time.Second)
+	app.win.Update(func() { app.person = nil; app.page = pageSearch; app.search.query = "兔子"; app.runSearch("兔子") })
+	shot("p7-search", 3*time.Second)
+	app.win.Update(func() {
+		app.lib.Danmaku = true
+		app.open(app.sourceID(), Card{Kind: source.CardMedia, ID: "bunny", Title: "大兔子"}, 0)
+	})
+	shot("p8-player-mp4", 12*time.Second)
+	shot("p9-player-mp4-later", 4*time.Second)
+	app.win.Update(func() { app.open(app.sourceID(), Card{Kind: source.CardMedia, ID: "bipbop", Title: "测试信号"}, 0) })
+	shot("p10-player-hls", 12*time.Second)
+	app.win.Update(func() { app.closeWatch(); app.page = pageHistory })
+	shot("p11-history", 2*time.Second)
+	app.win.Update(func() { app.dev.logOpen = true })
+	shot("p12-log", 2*time.Second)
 }

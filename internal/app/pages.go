@@ -483,6 +483,7 @@ func (app *App) runSearch(q string) {
 		f.fetch = nil
 		return
 	}
+	f.exact = !app.builtin()
 	f.fetch = func(cursor string) (feedPage, error) {
 		return pageResult(app.src.Search(context.Background(), source.SearchRequest{
 			Query:  q,
