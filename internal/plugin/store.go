@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -167,6 +168,28 @@ func (c *Cache) Set(key, value string, ttl time.Duration) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.setLocked(key, value, ttl, n)
+	return nil
+}
+
+// Add stores value like Set, but only when key holds nothing or only an
+// expired value, and reports whether it did: one call among many running
+// at once wins, which is how a plugin locks between its calls.
+func (c *Cache) Add(key, value string, ttl time.Duration) (bool, error) {
+	n := len(key) + len(value)
+	if n > MaxCacheItemBytes {
+		return false, fmt.Errorf("host.cache 单项不能超过 %d KiB", MaxCacheItemBytes>>10)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if it, ok := c.items[key]; ok && (it.expires.IsZero() || c.now().Before(it.expires)) {
+		return false, nil
+	}
+	c.setLocked(key, value, ttl, n)
+	return true, nil
+}
+
+func (c *Cache) setLocked(key, value string, ttl time.Duration, n int) {
 	c.drop(key)
 	now := c.now()
 	for k, it := range c.items {
@@ -195,7 +218,6 @@ func (c *Cache) Set(key, value string, ttl time.Duration) error {
 	}
 	c.items[key] = it
 	c.size += n
-	return nil
 }
 
 func (c *Cache) Delete(key string) {
@@ -209,4 +231,68 @@ func (c *Cache) drop(key string) {
 		c.size -= len(key) + len(it.value)
 		delete(c.items, key)
 	}
+}
+
+// savedItem is a cache item as Save writes it.
+type savedItem struct {
+	Key     string    `json:"k"`
+	Value   string    `json:"v"`
+	Expires time.Time `json:"e,omitzero"`
+}
+
+// Save writes the cache's live items to path, oldest first, so that a
+// later LoadCache has them back with what is left of their time: the
+// command-line tool keeps a plugin's cache between its runs this way.
+func (c *Cache) Save(path string) error {
+	c.mu.Lock()
+	now := c.now()
+	items := make([]savedItem, 0, len(c.items))
+	seqs := make(map[string]uint64, len(c.items))
+	for k, it := range c.items {
+		if !it.expires.IsZero() && !now.Before(it.expires) {
+			continue
+		}
+		items = append(items, savedItem{Key: k, Value: it.value, Expires: it.expires})
+		seqs[k] = it.seq
+	}
+	c.mu.Unlock()
+	sort.Slice(items, func(i, j int) bool { return seqs[items[i].Key] < seqs[items[j].Key] })
+	data, err := json.Marshal(items)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// LoadCache reads a cache Save wrote; a missing file is an empty cache.
+func LoadCache(path string) (*Cache, error) {
+	c := NewCache()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return c, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var items []savedItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("%s 不是 host.cache 的存档：%w", path, err)
+	}
+	now := c.now()
+	for _, it := range items {
+		var ttl time.Duration
+		if !it.Expires.IsZero() {
+			if ttl = it.Expires.Sub(now); ttl <= 0 {
+				continue
+			}
+		}
+		if err := c.Set(it.Key, it.Value, ttl); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
 }

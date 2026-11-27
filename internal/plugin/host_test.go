@@ -14,9 +14,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,12 +157,53 @@ func TestHostDevice(t *testing.T) {
 
 func TestHostCache(t *testing.T) {
 	p := open(t, "hostapi", Options{})
-	if v := hostCall(t, p, "cache", nil); v["before"] != nil || v["after"] != "cached" || !strings.Contains(v["big"].(string), "256") {
+	if v := hostCall(t, p, "cache", nil); v["before"] != nil || v["after"] != "cached" || !strings.Contains(v["big"].(string), "256") ||
+		v["first"] != true || v["second"] != false || v["lock"] != "a" {
 		t.Fatalf("cache = %v", v)
 	}
-	// The cache outlives the call, not the plugin.
-	if v := hostCall(t, p, "cache", nil); v["before"] != "cached" {
+	// The cache outlives the call, not the plugin: the lock is still held.
+	if v := hostCall(t, p, "cache", nil); v["before"] != "cached" || v["first"] != false || v["lock"] != "a" {
 		t.Fatalf("cache across calls = %v", v)
+	}
+}
+
+// Of many calls adding the same key at once exactly one wins; once its
+// value expires the key can be taken again.
+func TestCacheAddIsAtomic(t *testing.T) {
+	c := NewCache()
+	now := time.Now()
+	c.now = func() time.Time { return now }
+	var wins atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := c.Add("lock", fmt.Sprint(i), 2*time.Second)
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				wins.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := wins.Load(); n != 1 {
+		t.Fatalf("%d calls took the lock, want 1", n)
+	}
+	if ok, _ := c.Add("lock", "late", time.Second); ok {
+		t.Fatal("took a lock that is still held")
+	}
+	now = now.Add(3 * time.Second)
+	if ok, _ := c.Add("lock", "next", time.Second); !ok {
+		t.Fatal("could not take an expired lock")
+	}
+	if v, _ := c.Get("lock"); v != "next" {
+		t.Fatalf("lock = %q", v)
+	}
+	if _, err := c.Add("big", strings.Repeat("x", MaxCacheItemBytes), 0); err == nil {
+		t.Fatal("an oversized add did not fail")
 	}
 }
 

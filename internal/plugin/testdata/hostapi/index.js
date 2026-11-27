@@ -63,7 +63,9 @@ export function collection(req) {
       host.cache.set("c", "cached");
       let big = "";
       try { host.cache.set("big", "x".repeat(300 * 1024)); } catch (e) { big = e.message; }
-      return { before, after: host.cache.get("c"), big };
+      const first = host.cache.add("lock", "a", 60);
+      const second = host.cache.add("lock", "b", 60);
+      return { before, after: host.cache.get("c"), big, first, second, lock: host.cache.get("lock") };
     }
     case "web":
       return {

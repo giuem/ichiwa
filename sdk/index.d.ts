@@ -296,6 +296,8 @@ export interface Host {
   cache: {
     get(key: string): string | undefined;
     set(key: string, value: string, ttlSeconds?: number): void;
+    /** 键不存在或已过期才写入，原子操作；写了返回 true。用来在同时运行的调用之间加锁，锁要带过期时间 */
+    add(key: string, value: string, ttlSeconds?: number): boolean;
     delete(key: string): void;
   };
   crypto: {

@@ -43,6 +43,7 @@ const host = freeze({
   cache: freeze({
     get: (k) => native.cacheGet(str(k)),
     set: (k, v, ttl) => { native.cacheSet(str(k), str(v), ttl === undefined || ttl === null ? 0 : Number(ttl)); },
+    add: (k, v, ttl) => native.cacheAdd(str(k), str(v), ttl === undefined || ttl === null ? 0 : Number(ttl)),
     delete: (k) => { native.cacheDelete(str(k)); },
   }),
   crypto: freeze({
@@ -210,12 +211,22 @@ func (c *callState) natives() map[string]any {
 			return moejs.Undefined(), nil
 		}),
 		"cacheSet": fn("set", 3, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
-			ttl, _ := r.ToNumber(arg(a, 2))
-			if math.IsNaN(ttl) || ttl < 0 {
-				return moejs.Undefined(), errors.New("ttlSeconds 必须是非负数")
+			d, err := cacheTTL(r, arg(a, 2))
+			if err != nil {
+				return moejs.Undefined(), err
 			}
-			d := time.Duration(math.Min(ttl, 365*24*3600) * float64(time.Second))
 			return moejs.Undefined(), p.cache.Set(c.str(arg(a, 0)), c.str(arg(a, 1)), d)
+		}),
+		"cacheAdd": fn("add", 3, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
+			d, err := cacheTTL(r, arg(a, 2))
+			if err != nil {
+				return moejs.Undefined(), err
+			}
+			added, err := p.cache.Add(c.str(arg(a, 0)), c.str(arg(a, 1)), d)
+			if err != nil {
+				return moejs.Undefined(), err
+			}
+			return moejs.Bool(added), nil
 		}),
 		"cacheDelete": fn("delete", 1, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			p.cache.Delete(c.str(arg(a, 0)))
@@ -361,4 +372,13 @@ func (c *callState) natives() map[string]any {
 			return c.u8(r, out)
 		}),
 	}
+}
+
+// cacheTTL reads host.cache's ttlSeconds: 0 for none, at most a year.
+func cacheTTL(r *moejs.Realm, v moejs.Value) (time.Duration, error) {
+	ttl, _ := r.ToNumber(v)
+	if math.IsNaN(ttl) || ttl < 0 {
+		return 0, errors.New("ttlSeconds 必须是非负数")
+	}
+	return time.Duration(math.Min(ttl, 365*24*3600) * float64(time.Second)), nil
 }
