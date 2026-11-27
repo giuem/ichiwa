@@ -194,7 +194,7 @@ throw host.error("rateLimited", "请求太频繁", { retryAfter: 60 });
 
 - `fetch` 只能访问 `permissions.network` 里的主机，每次跳转都重新检查，最多 10 跳；跳到别的主机时去掉 `Authorization` 和 `Cookie`。
 - 连接时一集检查域名解析出的 IP：本机、局域网、链路本地、CGNAT、组播等地址一律拒绝，域名在白名单里也不行。插件的请求不走系统代理。
-- 每个插件有自己的 Cookie，只在内存里：响应的 `Set-Cookie` 会保存，之后的请求自动带上。请求自己写了 `Cookie` 头时，一集不再附加保存的。
+- 每个插件有自己的 Cookie，只在内存里：响应的 `Set-Cookie` 会保存，之后的请求自动带上。请求自己写了 `Cookie` 头时（值为空也算），一集不再附加保存的，也不发出空的 `Cookie` 头；跳转后也一样。想不带任何 Cookie 发请求，就写 `Cookie: ""`。
 - 被拒绝的请求在插件日志里有一行说明。
 
 ## 出错

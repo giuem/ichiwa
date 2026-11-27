@@ -34,15 +34,26 @@ func (t *callTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !t.hosts.AllowsURL(req.URL) {
 		return nil, fmt.Errorf("%w: 插件没有声明 %s", netguard.ErrDenied, req.URL.Hostname())
 	}
-	if req.Header.Get("Cookie") == "" {
-		if cookies := t.jar.Cookies(req.URL); len(cookies) > 0 {
+	orig := req
+	if ownsCookies(req) {
+		// The plugin manages its cookies, even with an empty header,
+		// which goes unsent (§11).
+		if v := req.Header.Values("Cookie"); len(v) > 0 && strings.Join(v, "") == "" {
 			req = req.Clone(req.Context())
-			for _, c := range cookies {
-				req.AddCookie(c)
-			}
+			req.Header.Del("Cookie")
+		}
+	} else if cookies := t.jar.Cookies(req.URL); len(cookies) > 0 {
+		req = req.Clone(req.Context())
+		for _, c := range cookies {
+			req.AddCookie(c)
 		}
 	}
 	resp, err := t.base.RoundTrip(req)
+	if resp != nil {
+		// A redirect's request links back to this one as the plugin
+		// made it, for ownsCookies.
+		resp.Request = orig
+	}
 	if err != nil {
 		if errors.Is(err, netguard.ErrDenied) {
 			t.logs.Hostf("拒绝请求 %s：%v", netguard.Redact(req.URL), err)
@@ -55,6 +66,18 @@ func (t *callTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.jar.SetCookies(req.URL, rc)
 	}
 	return resp, nil
+}
+
+// ownsCookies tells whether the plugin set a Cookie header, even an empty
+// one, on the fetch req comes from: on req itself, or, for a redirect, on
+// the first request, as the header goes on a redirect to another host.
+func ownsCookies(req *http.Request) bool {
+	first := req
+	for first.Response != nil && first.Response.Request != nil {
+		first = first.Response.Request
+	}
+	_, own := first.Header["Cookie"]
+	return own
 }
 
 // allowRequest is webapi's Allow hook: every request and redirect must go

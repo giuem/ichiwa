@@ -39,6 +39,9 @@ func newNetEnv(t *testing.T) *netEnv {
 	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "host=%s auth=%s cookie=%s", r.Host, r.Header.Get("Authorization"), r.Header.Get("Cookie"))
 	})
+	mux.HandleFunc("/cookies", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%q", r.Header["Cookie"])
+	})
 	mux.HandleFunc("/set", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "s3cret", Path: "/"})
 		fmt.Fprint(w, "set")
@@ -201,9 +204,38 @@ func TestCookies(t *testing.T) {
 	if err != nil || !strings.HasSuffix(body, "cookie=own=1") {
 		t.Fatalf("own Cookie header = %q, %v", body, err)
 	}
+	// An empty Cookie header counts as the plugin's own too, and is not
+	// sent.
+	body, err = e.fetch(t, e.api("/cookies"), map[string]any{"headers": map[string]string{"Cookie": ""}})
+	if err != nil || body != "[]" {
+		t.Fatalf("empty Cookie header = %q, %v", body, err)
+	}
+	body, err = e.fetch(t, "http://none.cdn.example.test:"+e.goodPort+"/cookies", map[string]any{"headers": map[string]string{"Cookie": ""}})
+	if err != nil || body != "[]" {
+		t.Fatalf("empty Cookie header, none stored = %q, %v", body, err)
+	}
+	// The plugin's own Cookie header goes on a redirect to another host,
+	// and the stored cookies of that host are not added in its place.
+	other := "http://img.cdn.example.test:" + e.goodPort
+	if _, err := e.fetch(t, other+"/set", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{"mine=1", ""} {
+		body, err = e.fetch(t, e.api("/to?u="+other+"/cookies"), map[string]any{"headers": map[string]string{"Cookie": c}})
+		if err != nil || body != "[]" {
+			t.Fatalf("redirect with Cookie %q = %q, %v", c, body, err)
+		}
+	}
+	// Without a header of its own, the stored ones are sent after a
+	// redirect.
+	body, err = e.fetch(t, e.api("/to?u="+other+"/cookies"), nil)
+	if err != nil || body != `["sid=s3cret"]` {
+		t.Fatalf("redirect without a Cookie header = %q, %v", body, err)
+	}
+
 	// Cookies live in memory per plugin: another plugin has none.
-	other := open(t, "hostile/network", Options{Guard: e.p.opts.Guard})
-	page, err := other.Collection(context.Background(), source.CollectionRequest{ID: e.api("/echo")})
+	otherPlugin := open(t, "hostile/network", Options{Guard: e.p.opts.Guard})
+	page, err := otherPlugin.Collection(context.Background(), source.CollectionRequest{ID: e.api("/echo")})
 	if err != nil || strings.Contains(page.Title, "s3cret") {
 		t.Fatalf("cookie shared between plugins: %+v, %v", page, err)
 	}
