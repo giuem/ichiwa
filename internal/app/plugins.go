@@ -36,6 +36,10 @@ type registry struct {
 	mu      sync.Mutex
 	builtin []source.Source
 	dev     source.Source
+	// guard checks where images not of a loaded plugin go; nil uses the
+	// system resolver.
+	guard   *netguard.Guard
+	guarded *http.Client
 }
 
 func (r *registry) get(id string) source.Source {
@@ -104,22 +108,28 @@ func (r *registry) mediaPolicy(id string) media.Policy {
 
 // imageRoute picks how to download an image: through the plugin whose
 // hosts it is on, with the plugin's image headers and none of its
-// cookies; else, as an image of a built-in source, directly.
+// cookies. Any other image, of a built-in source or of a plugin not
+// loaded now (a record, a follow), goes through the guard: to any host,
+// but never to this machine or its network, every redirect included.
 func (r *registry) imageRoute(raw string) (*http.Client, map[string]string) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return nil, nil
-	}
-	for _, s := range r.all() {
-		p, ok := s.(*plugin.Plugin)
-		if !ok {
-			continue
-		}
-		if netguard.Hosts(p.Info().Network).AllowsURL(u) {
-			return p.ImageClient(), p.Info().ImageHeaders
+	if u, err := url.Parse(raw); err == nil {
+		for _, s := range r.all() {
+			if p, ok := s.(*plugin.Plugin); ok && netguard.Hosts(p.Info().Network).AllowsURL(u) {
+				return p.ImageClient(), p.Info().ImageHeaders
+			}
 		}
 	}
-	return nil, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.guarded == nil {
+		r.guarded = &http.Client{
+			Transport: r.guard.Transport(),
+			CheckRedirect: netguard.CheckRedirect(func(u *url.URL) bool {
+				return (u.Scheme == "http" || u.Scheme == "https") && u.User == nil
+			}),
+		}
+	}
+	return r.guarded, nil
 }
 
 // devState is the developer mode: a plugin folder, loaded and watched.

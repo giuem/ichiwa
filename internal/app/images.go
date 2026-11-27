@@ -25,8 +25,8 @@ type Posters struct {
 	slots   chan struct{}
 	entries map[string]*poster
 	redraw  func()
-	// route returns the client and headers for an image of a plugin;
-	// nil for one of a built-in source, which takes the plain client.
+	// route returns the client and headers for an image; nil takes the
+	// plain client, as in tests.
 	route func(url string) (*http.Client, map[string]string)
 }
 

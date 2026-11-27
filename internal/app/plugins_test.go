@@ -2,6 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +16,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/giuem/ichiwa/internal/netguard"
 	"github.com/giuem/ichiwa/internal/plugin"
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
@@ -143,7 +149,7 @@ func TestSourcePolicies(t *testing.T) {
 	if c, h := r.imageRoute("https://picsum.photos/seed/x/300/400"); c == nil || h["Referer"] == "" {
 		t.Fatal("a plugin's image does not go through the plugin")
 	}
-	if c, _ := r.imageRoute("https://p3-hongguo.example/cover.jpg"); c != nil {
+	if c, h := r.imageRoute("https://p3-hongguo.example/cover.jpg"); c == nil || c.Transport == p.ImageClient().Transport || h != nil {
 		t.Fatal("a built-in image went through a plugin")
 	}
 	if pol := r.mediaPolicy("example"); !pol.Sandboxed || !pol.Hosts.Allows("test-videos.co.uk") {
@@ -154,6 +160,43 @@ func TestSourcePolicies(t *testing.T) {
 	}
 	if pol := r.mediaPolicy("gone"); !pol.Sandboxed || len(pol.Hosts) != 0 {
 		t.Fatalf("unknown source policy = %+v", pol)
+	}
+}
+
+// An image not on a loaded plugin's hosts, as one of a record whose
+// plugin is gone, never reaches this machine or its network, by name or
+// by redirect.
+func TestImageOfNoPluginIsGuarded(t *testing.T) {
+	inside := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the inside server got %s", r.URL)
+	}))
+	defer inside.Close()
+	outside := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, inside.URL+"/router/reboot?now=1", http.StatusFound)
+	}))
+	defer outside.Close()
+	outsideAddr := netip.MustParseAddrPort(outside.Listener.Addr().String())
+	_, insidePort, _ := net.SplitHostPort(inside.Listener.Addr().String())
+	_, outsidePort, _ := net.SplitHostPort(outside.Listener.Addr().String())
+	r := &registry{guard: &netguard.Guard{
+		Lookup: func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+		},
+		Exempt: func(ap netip.AddrPort) bool { return ap == outsideAddr },
+	}}
+	for _, u := range []string{
+		"http://img.attacker.example:" + outsidePort + "/c.jpg", // redirects inside
+		"http://nas.attacker.example:" + insidePort + "/c.jpg",  // resolves inside
+		inside.URL + "/c.jpg",
+	} {
+		c, _ := r.imageRoute(u)
+		resp, err := c.Get(u)
+		if err == nil {
+			resp.Body.Close()
+			t.Errorf("%s fetched: %d", u, resp.StatusCode)
+		} else if !errors.Is(err, netguard.ErrDenied) {
+			t.Errorf("%s: %v", u, err)
+		}
 	}
 }
 
