@@ -196,6 +196,13 @@ interface CollectionPage {
   sections?: Section[];  // 分区，只在第一页读取，排在 items 前面
   items?: Card[];        // 一页最多 200 张
   cursor?: string;       // 为空表示没有下一页；≤ 4096 字节
+  error?: PageError;     // 列表部分失败：筛选行、介绍头、分区照常显示，列表处显示错误和重试
+}
+
+interface PageError {
+  code: ErrorCode;       // 见第 10 节
+  message?: string;
+  retryAfter?: number;   // 秒
 }
 
 interface Header {
@@ -224,7 +231,7 @@ interface Section {
 }
 ```
 
-筛选：用户改了某一行，宿主带着全部当前选择重新调用 `collection`（不带 cursor），插件在返回的 `filters` 里给出新的各行和选中值。各行之间的依赖（比如换了体裁，其他行的选项跟着变）由插件处理。排行榜就是带“榜单”筛选行、`layout: "ranked"` 的集合。
+筛选：用户改了某一行，宿主带着全部当前选择重新调用 `collection`（不带 cursor），插件在返回的 `filters` 里给出新的各行和选中值。如果筛选行拿到了、列表没拿到，返回筛选行并在 `error` 里说明，用户还能改筛选或重试；整页都拿不到才抛错。各行之间的依赖（比如换了体裁，其他行的选项跟着变）由插件处理。排行榜就是带“榜单”筛选行、`layout: "ranked"` 的集合。
 
 ### 媒体详情
 
