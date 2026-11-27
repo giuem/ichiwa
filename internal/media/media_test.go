@@ -318,3 +318,16 @@ func TestOpenSharesPreload(t *testing.T) {
 		t.Fatalf("Open = %+v; resolves %d, downloads %d", it, resolves.Load(), hits.Load())
 	}
 }
+
+// The built-in source's media go direct, as they always did, not through
+// a proxy the environment names.
+func TestBuiltinMediaUseNoProxy(t *testing.T) {
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := mgr.client(Policy{}).Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil {
+		t.Fatalf("transport = %#v", mgr.client(Policy{}).Transport)
+	}
+}

@@ -125,7 +125,7 @@ func New(cacheDir string) (*Manager, error) {
 	guard := &netguard.Guard{}
 	m := &Manager{
 		cacheDir: dir,
-		http:     &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: 30 * time.Second}},
+		http:     &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second}},
 		limit:    DefaultCacheLimit,
 		guard:    guard,
 		sandbox:  guard.Transport(),
