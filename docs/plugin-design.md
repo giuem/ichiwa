@@ -110,13 +110,13 @@ plugin.zip
 
 | 字段 | 规则 |
 | --- | --- |
-| `id` | `^[a-z0-9][a-z0-9._-]{0,63}$`。安装后不能变，和发布它的 GitHub 仓库绑定 |
+| `id` | `^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$` 或单个字符 `^[a-z0-9]$`：不能以 `.`、`-`、`_` 结尾（Windows 会去掉目录名末尾的点）。安装后不能变，和发布它的 GitHub 仓库绑定 |
 | `name`、`description` | 显示给用户，分别不超过 32 和 200 字 |
 | `kind` | 目前只有 `source` |
 | `version` | 语义化版本，和 Release 标签 `v<version>` 一致 |
 | `apiVersion` | 协议大版本，目前是 `1`。宿主不支持的大版本拒绝安装 |
 | `minAppVersion` | 可选。用到某个版本才加入的宿主 API 时填。格式同一集的版本号 `YYYY.MDD.N`，逐段按数字比较 |
-| `permissions.network` | 插件能访问的主机：精确域名，或 `*.example.com`（必须是可注册域名的子域）。不能写 IP、`localhost`、端口 |
+| `permissions.network` | 插件能访问的主机：精确域名，或 `*.example.com`（必须是可注册域名的子域）。只能是 ASCII（国际化域名写 punycode）；不能写 IP（包括 `0x08.0x08.0x08.0x08` 这类变形写法）、`localhost`、端口 |
 | `images.headers` | 可选。宿主下载图片时附带的请求头，只允许 `Referer`、`User-Agent`、`Origin` |
 | `capabilities` | 可选能力，见第 5 节 |
 
