@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,19 +31,41 @@ func TestSelectStreams(t *testing.T) {
 	}
 }
 
-func TestSelectStreamsHEVC(t *testing.T) {
+func TestSelectStreamsDropsWhatTheDeviceCannotPlay(t *testing.T) {
 	hevc := source.Stream{URL: "hevc", Width: 1080, Height: 1920, Codec: "bytevc1", Container: source.ContainerMP4}
 	h264 := source.Stream{URL: "h264", Width: 720, Height: 1280, Codec: "h264", Container: source.ContainerMP4}
 	unknown := source.Stream{URL: "unknown", Width: 720, Height: 1280, Container: source.ContainerMP4}
+	av1 := source.Stream{URL: "av1", Width: 1080, Height: 1920, Codec: "av01.0.08M.08", Container: source.ContainerMP4}
+	vp9 := source.Stream{URL: "vp9", Width: 1080, Height: 1920, Codec: "vp9", Container: source.ContainerMP4}
 
-	if got := SelectStreams([]source.Stream{h264, hevc}, source.PlayPrefer{MaxHeight: 1080, HEVC: true}); got[0].URL != "hevc" {
-		t.Fatalf("HEVC-capable should prefer 1080p HEVC, got %s", got[0].URL)
+	urls := func(ss []source.Stream) string {
+		var out []string
+		for _, s := range ss {
+			out = append(out, s.URL)
+		}
+		return strings.Join(out, ",")
 	}
-	if got := SelectStreams([]source.Stream{hevc, h264}, source.PlayPrefer{MaxHeight: 1080, HEVC: false}); got[0].URL != "h264" {
-		t.Fatalf("non-HEVC should prefer H.264, got %s", got[0].URL)
+	if got := urls(SelectStreams([]source.Stream{h264, hevc, av1}, source.PlayPrefer{MaxHeight: 1080, HEVC: true})); got != "hevc,h264" {
+		t.Fatalf("HEVC-capable = %s", got)
 	}
-	if got := SelectStreams([]source.Stream{hevc, unknown}, source.PlayPrefer{MaxHeight: 1080, HEVC: false}); got[0].URL != "unknown" {
-		t.Fatalf("non-HEVC should prefer unknown codec over HEVC, got %s", got[0].URL)
+	if got := urls(SelectStreams([]source.Stream{hevc, h264, unknown, vp9}, source.PlayPrefer{MaxHeight: 1080, HEVC: false})); got != "h264,unknown" {
+		t.Fatalf("without HEVC = %s", got)
+	}
+	if got := SelectStreams([]source.Stream{hevc, av1}, source.PlayPrefer{MaxHeight: 1080}); len(got) != 0 {
+		t.Fatalf("nothing playable = %v", got)
+	}
+}
+
+func TestNoPlayableStream(t *testing.T) {
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mgr.Episode(context.Background(), "s", "m", "e", func(context.Context, source.PlayPrefer) (*source.Playback, error) {
+		return &source.Playback{Streams: []source.Stream{{URL: "https://x.example/a.mp4", Container: source.ContainerMP4, Codec: "av1"}}}, nil
+	})
+	if !errors.Is(err, ErrNoPlayableStream) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
