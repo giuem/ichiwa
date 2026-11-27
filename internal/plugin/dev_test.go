@@ -33,7 +33,6 @@ func TestWatchDirReloads(t *testing.T) {
 		t.Fatal("first load")
 	}
 	write := func(body string) error {
-		time.Sleep(30 * time.Millisecond) // a new modification time
 		os.WriteFile(filepath.Join(dir, "index.js"), []byte(body), 0o644)
 		select {
 		case err := <-reloads:

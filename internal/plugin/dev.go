@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -12,9 +14,9 @@ import (
 // DevInterval is how often the developer mode looks for changed files.
 const DevInterval = time.Second
 
-// fingerprint sums the names, sizes and times of the files of a plugin
-// folder, the ones ReadDir reads, so that a change shows without reading
-// them.
+// fingerprint sums the names and contents of the files of a plugin
+// folder, the ones ReadDir reads. A folder is small, and contents tell a
+// change that a coarse modification time would miss.
 func fingerprint(dir string) string {
 	h := sha256.New()
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -32,7 +34,13 @@ func fingerprint(dir string) string {
 		if err != nil {
 			return nil
 		}
-		fmt.Fprintf(h, "%s:%d:%d:%v;", p, info.Size(), info.ModTime().UnixNano(), info.Mode())
+		fmt.Fprintf(h, "%s:%d:%v;", p, info.Size(), info.Mode().Type())
+		if info.Mode().IsRegular() && info.Size() <= MaxUnpackedBytes {
+			if f, err := os.Open(p); err == nil {
+				_, _ = io.Copy(h, f)
+				f.Close()
+			}
+		}
 		return nil
 	})
 	return fmt.Sprintf("%x", h.Sum(nil))

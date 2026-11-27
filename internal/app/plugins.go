@@ -184,7 +184,7 @@ func (app *App) loadDev(dir string) error {
 			}
 			app.toast = "插件已重新加载"
 			if app.src == source.Source(p) {
-				app.useSource(p) // the navigation and pages may have changed
+				app.refreshSource() // the navigation and pages may have changed
 			}
 		})
 	})
@@ -262,6 +262,44 @@ func (app *App) useSource(s source.Source) {
 		app.setMenu()
 	}
 	app.saveDevSettings()
+}
+
+// refreshSource loads the pages of the source shown again, as a plugin
+// reloaded, keeping the page shown when its navigation still has it and
+// the player open.
+func (app *App) refreshSource() {
+	app.feeds = map[string]*Feed{}
+	app.cols = map[string]*colState{}
+	app.search = searchState{}
+	app.person = nil
+	app.warmed = false
+	src, page := app.src, app.page
+	app.navBusy = true
+	async(app, func() ([]source.NavItem, error) {
+		return src.Navigation(context.Background())
+	}, func(nav []source.NavItem, err error) {
+		if app.src != src {
+			return
+		}
+		app.navBusy = false
+		if err != nil {
+			app.navErr = errText(err)
+			return
+		}
+		app.nav, app.navErr = nav, ""
+		switch page {
+		case pageSearch, pageHistory, pageFollows:
+			return
+		}
+		for _, it := range nav {
+			if it.ID == page {
+				return
+			}
+		}
+		if len(nav) > 0 {
+			app.page = nav[0].ID
+		}
+	})
 }
 
 // builtin tells whether the source shown is built into the app, as
