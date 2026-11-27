@@ -13,6 +13,10 @@ import (
 	"github.com/giuem/ichiwa/internal/netguard"
 )
 
+// MaxFetches is how many requests one call has in flight at once; more
+// wait their turn.
+const MaxFetches = 16
+
 func newJar() *cookiejar.Jar {
 	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	return jar
@@ -23,6 +27,8 @@ func newJar() *cookiejar.Jar {
 // notes a network failure, so that a call that fails after one is
 // reported as a network error rather than the plugin's.
 type callTransport struct {
+	// slots bounds the requests of one call in flight at once.
+	slots  chan struct{}
 	hosts  netguard.Hosts
 	jar    *cookiejar.Jar
 	base   http.RoundTripper
@@ -34,6 +40,12 @@ func (t *callTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !t.hosts.AllowsURL(req.URL) {
 		return nil, fmt.Errorf("%w: 插件没有声明 %s", netguard.ErrDenied, req.URL.Hostname())
 	}
+	select {
+	case t.slots <- struct{}{}:
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
+	defer func() { <-t.slots }()
 	orig := req
 	if ownsCookies(req) {
 		// The plugin manages its cookies, even with an empty header,
@@ -99,6 +111,7 @@ func allowRequest(hosts netguard.Hosts, logs *Logs) func(*http.Request) error {
 func (p *Plugin) client(hosts netguard.Hosts, failed *atomic.Bool) *http.Client {
 	return &http.Client{
 		Transport: &callTransport{
+			slots:  make(chan struct{}, MaxFetches),
 			hosts:  hosts,
 			jar:    p.jar,
 			base:   p.transport,

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -248,6 +249,50 @@ func TestNetworkFailureIsNetworkError(t *testing.T) {
 	_, err := e.fetch(t, "http://api.example.test:"+strings.Split(addr, ":")[1]+"/echo", nil)
 	if code(err) != source.ErrNetwork {
 		t.Fatalf("a refused connection: code %q, %v", code(err), err)
+	}
+	// Caught, the network error is not what the call failed with.
+	_, err = e.p.Collection(context.Background(), source.CollectionRequest{
+		ID: "http://api.example.test:" + strings.Split(addr, ":")[1] + "/echo", Filters: map[string]string{"caught": "1"},
+	})
+	if code(err) != source.ErrPlugin {
+		t.Fatalf("an error after a caught network error: code %q, %v", code(err), err)
+	}
+}
+
+// A call that fetches thousands of URLs at once has a few in flight at a
+// time.
+func TestFetchFloodIsBounded(t *testing.T) {
+	var now, peak atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := now.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		now.Add(-1)
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+	ap := netip.MustParseAddrPort(srv.Listener.Addr().String())
+	guard := &netguard.Guard{
+		Lookup: func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+		},
+		Exempt: func(a netip.AddrPort) bool { return a == ap },
+	}
+	p := open(t, "hostile/network", Options{Guard: guard, Timeout: 30 * time.Second})
+	page, err := p.Collection(context.Background(), source.CollectionRequest{
+		// Each on a host of its own, which the transport does not bound.
+		ID: "http://h{i}.cdn.example.test:" + strconv.Itoa(int(ap.Port())) + "/x", Filters: map[string]string{"flood": "500"},
+	})
+	if err != nil || page.Title != "500" {
+		t.Fatalf("flood = %+v, %v", page, err)
+	}
+	if n := peak.Load(); n > MaxFetches {
+		t.Fatalf("%d requests at once", n)
 	}
 }
 

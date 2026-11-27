@@ -17,9 +17,21 @@ import (
 // the globals host and console (§8) over the natives Go gives it, and the
 // function that calls an export. Errors made by host.error are marked in
 // a WeakSet the plugin cannot reach, so that only they carry an error
-// code (§10).
+// code (§10). So are the errors fetch rejects with, so that a call that
+// fails with one, uncaught, is a network error rather than the plugin's.
 const helperSource = `"use strict";
 const marks = new WeakSet();
+const fetchErrors = new WeakSet();
+const realFetch = globalThis.fetch;
+if (typeof realFetch === "function") {
+  const fetch = function fetch(input, init) {
+    return realFetch(input, init).then(undefined, (e) => {
+      if (e !== null && (typeof e === "object" || typeof e === "function")) fetchErrors.add(e);
+      throw e;
+    });
+  };
+  Object.defineProperty(globalThis, "fetch", { value: fetch, writable: true, configurable: true, enumerable: false });
+}
 const str = (v) => String(v);
 const freeze = Object.freeze;
 const host = freeze({
@@ -78,7 +90,7 @@ const describe = (e) => {
     if (marks.has(e)) {
       return { host: true, code: str(e.code), message: str(e.message), retryAfter: typeof e.retryAfter === "number" ? e.retryAfter : 0 };
     }
-    return { host: false, text: e instanceof Error ? (e.stack || str(e)) : show(e) };
+    return { host: false, fetch: fetchErrors.has(e), text: e instanceof Error ? (e.stack || str(e)) : show(e) };
   } catch { return { host: false, text: "无法读取的异常" }; }
 };
 const invoke = (fn, arg, resolve, reject) => {

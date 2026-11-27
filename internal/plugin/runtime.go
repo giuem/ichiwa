@@ -211,6 +211,7 @@ type thrown struct {
 	Message    string  `json:"message"`
 	RetryAfter float64 `json:"retryAfter"`
 	Text       string  `json:"text"`
+	Fetch      bool    `json:"fetch"` // fetch rejected with it
 }
 
 func (p *Plugin) run(ctx context.Context, fn string, argJSON []byte) (json.RawMessage, error) {
@@ -319,9 +320,6 @@ func (p *Plugin) run(ctx context.Context, fn string, argJSON []byte) (json.RawMe
 		return nil, source.NewError(source.ErrPlugin, "片源占用内存过多", err)
 	case err != nil:
 		p.logs.add("error", errorText(rt, err))
-		if netFailed.Load() {
-			return nil, source.NewError(source.ErrNetwork, "", err)
-		}
 		return nil, source.NewError(source.ErrPlugin, "", err)
 	case failure != nil:
 		return nil, p.failure(failure, netFailed.Load())
@@ -348,7 +346,8 @@ func errorText(rt *moejs.Runtime, err error) string {
 
 // failure turns what the plugin threw into a *source.Error (§10): a
 // host.error keeps its code, anything else is the plugin's error, or a
-// network error when a fetch of the call failed on the network.
+// network error when it is what a fetch rejected with, uncaught, and a
+// fetch of the call failed on the network (not refused by the sandbox).
 func (p *Plugin) failure(t *thrown, netFailed bool) error {
 	if t.Host {
 		code := source.ErrorCode(strings.TrimSpace(t.Code))
@@ -359,7 +358,7 @@ func (p *Plugin) failure(t *thrown, netFailed bool) error {
 		return e
 	}
 	p.logs.add("error", t.Text)
-	if netFailed {
+	if t.Fetch && netFailed {
 		return source.NewError(source.ErrNetwork, "", errors.New(t.Text))
 	}
 	return source.NewError(source.ErrPlugin, "", errors.New(t.Text))
