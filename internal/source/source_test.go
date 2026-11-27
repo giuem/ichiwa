@@ -536,3 +536,32 @@ func TestEnumsAreTrimmed(t *testing.T) {
 		t.Errorf("encryption = %+v, %v", e, ok)
 	}
 }
+
+func TestDecodePageError(t *testing.T) {
+	cases := []struct {
+		raw   string
+		code  ErrorCode
+		msg   string
+		retry time.Duration
+	}{
+		{`{"items":[]}`, "", "", 0},
+		{`{"error":null}`, "", "", 0},
+		{`{"error":{"code":"network","message":" 列表取不到 "}}`, ErrNetwork, "列表取不到", 0},
+		{`{"error":{"code":"rateLimited","retryAfter":12.5}}`, ErrRateLimited, "", 12500 * time.Millisecond},
+		{`{"error":{"code":"teapot"}}`, ErrPlugin, "", 0},
+		{`{"error":"broken"}`, ErrPlugin, "", 0},
+		{`{"error":{"code":"notFound","retryAfter":-3}}`, ErrNotFound, "", 0},
+	}
+	for _, c := range cases {
+		e := DecodePageError([]byte(c.raw))
+		if c.code == "" {
+			if e != nil {
+				t.Errorf("%s: %v", c.raw, e)
+			}
+			continue
+		}
+		if e == nil || e.Code != c.code || e.Message != c.msg || e.RetryAfter != c.retry {
+			t.Errorf("%s: %+v", c.raw, e)
+		}
+	}
+}

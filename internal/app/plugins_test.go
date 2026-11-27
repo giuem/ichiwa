@@ -125,3 +125,30 @@ func TestPluginSource(t *testing.T) {
 	}
 	drain()
 }
+
+// Images and media of a plugin go through its own policy; a built-in
+// source's take the plain client; an unknown source reaches nothing.
+func TestSourcePolicies(t *testing.T) {
+	p, err := plugin.Open(filepath.Join("..", "plugin", "testdata", "example"), plugin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r registry
+	r.add(&sourcetest.Source{InfoData: source.Info{ID: "hongguo"}})
+	r.add(p)
+	if c, h := r.imageRoute("https://picsum.photos/seed/x/300/400"); c == nil || h["Referer"] == "" {
+		t.Fatal("a plugin's image does not go through the plugin")
+	}
+	if c, _ := r.imageRoute("https://p3-hongguo.example/cover.jpg"); c != nil {
+		t.Fatal("a built-in image went through a plugin")
+	}
+	if pol := r.mediaPolicy("example"); !pol.Sandboxed || !pol.Hosts.Allows("test-videos.co.uk") {
+		t.Fatalf("plugin policy = %+v", pol)
+	}
+	if pol := r.mediaPolicy("hongguo"); pol.Sandboxed {
+		t.Fatal("the built-in source is sandboxed")
+	}
+	if pol := r.mediaPolicy("gone"); !pol.Sandboxed || len(pol.Hosts) != 0 {
+		t.Fatalf("unknown source policy = %+v", pol)
+	}
+}
