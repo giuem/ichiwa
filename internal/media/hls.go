@@ -188,18 +188,37 @@ func (p *hlsProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	resp, err := s.fetch(r.Context(), target, r.Header.Get("Range"))
-	if err != nil {
+	// A playlist is rewritten whole, so a range of it is never asked for:
+	// players ask for "bytes=0-" now and then.
+	rng := r.Header.Get("Range")
+	if name := strings.ToLower(parts[2]); strings.HasSuffix(name, ".m3u8") || strings.HasSuffix(name, ".m3u") {
+		rng = ""
+	}
+	fail := func(err error) {
 		if errors.Is(err, netguard.ErrDenied) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 		} else {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 		}
+	}
+	resp, err := s.fetch(r.Context(), target, rng)
+	if err != nil {
+		fail(err)
 		return
 	}
-	defer resp.Body.Close()
 	br := bufio.NewReader(resp.Body)
-	if ok, _ := isPlaylist(resp, br); ok && resp.StatusCode == http.StatusOK {
+	playlist, _ := isPlaylist(resp, br) // peeks: the body stays whole
+	if playlist && resp.StatusCode == http.StatusPartialContent {
+		resp.Body.Close()
+		if resp, err = s.fetch(r.Context(), target, ""); err != nil {
+			fail(err)
+			return
+		}
+		br = bufio.NewReader(resp.Body)
+		playlist, _ = isPlaylist(resp, br)
+	}
+	defer resp.Body.Close()
+	if playlist && resp.StatusCode == http.StatusOK {
 		body, err := io.ReadAll(io.LimitReader(br, maxPlaylistBytes+1))
 		if err != nil || len(body) > maxPlaylistBytes {
 			http.Error(w, "bad gateway", http.StatusBadGateway)

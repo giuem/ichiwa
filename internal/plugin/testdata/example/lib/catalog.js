@@ -81,10 +81,12 @@ export function streams(s) {
       height: 1080,
     }];
   }
+  // 同样 720p 时宿主按这里的顺序挑。示例站的 HEVC 文件标成 hev1，苹果的播放器
+  // 只放 hvc1，所以 H.264 放在前面；HEVC 那路演示“设备放不了的编码会被去掉”。
   return [
-    { url: clip(s.video, "h265", 720), container: "mp4", codec: "hevc", width: 1280, height: 720 },
     { url: clip(s.video, "h264", 720), container: "mp4", codec: "h264", width: 1280, height: 720,
       backupUrls: [clip(s.video, "h264", 360)] },
+    { url: clip(s.video, "h265", 720), container: "mp4", codec: "hevc", width: 1280, height: 720 },
     { url: clip(s.video, "h264", 360), container: "mp4", codec: "h264", width: 640, height: 360 },
   ];
 }

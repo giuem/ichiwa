@@ -135,7 +135,8 @@ func TestHLSProxy(t *testing.T) {
 		switch r.URL.Path {
 		case "/master.m3u8":
 			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			fmt.Fprintf(w, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nlow/index.m3u8\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"%s\"\n", e.url("a.ok.example.test", "/audio.m3u8"))
+			body := fmt.Sprintf("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nlow/index.m3u8\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"%s\"\n", e.url("a.ok.example.test", "/audio.m3u8"))
+			http.ServeContent(w, r, "master.m3u8", time.Time{}, strings.NewReader(body))
 		case "/low/index.m3u8":
 			// No content type: sniffed. A key, a declared segment, an
 			// undeclared one, a local file and a redirect.
@@ -179,6 +180,12 @@ func TestHLSProxy(t *testing.T) {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(b)
+	}
+	// Players ask for a range of a playlist now and then; the answer is
+	// the whole playlist, rewritten, even where the server honors ranges.
+	code, ranged := get(it.URL, map[string]string{"Range": "bytes=0-"})
+	if code != 200 || strings.Contains(ranged, "\nlow/index.m3u8") {
+		t.Fatalf("ranged master = %d\n%s", code, ranged)
 	}
 	code, master := get(it.URL, nil)
 	if code != 200 || strings.Contains(master, "cdn.example.test") || strings.Contains(master, "ok.example.test") {

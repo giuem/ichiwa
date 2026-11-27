@@ -96,7 +96,7 @@ func TestExampleAllFunctions(t *testing.T) {
 	}
 
 	pb, err := p.Play(ctx, source.PlayRequest{MediaID: "bunny", EpisodeID: "bunny-1", Prefer: source.PlayPrefer{MaxHeight: 1080, HEVC: true}})
-	if err != nil || len(pb.Streams) != 3 || pb.Streams[0].Codec != "hevc" || pb.ExpiresAt == 0 {
+	if err != nil || len(pb.Streams) != 3 || pb.Streams[1].Codec != "hevc" || pb.ExpiresAt == 0 {
 		t.Fatalf("play = %+v, %v", pb, err)
 	}
 	if _, err := p.Play(ctx, source.PlayRequest{MediaID: "bunny", EpisodeID: "bunny-6"}); code(err) != source.ErrUnavailable {
