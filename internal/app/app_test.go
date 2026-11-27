@@ -62,7 +62,7 @@ func TestVisibleWholeRows(t *testing.T) {
 // A reset feed keeps its source, starts over, and tells loads under way
 // apart from new ones.
 func TestFeedReset(t *testing.T) {
-	f := newFeed(func(string) (feedPage, error) { return feedPage{}, nil })
+	f := newFeed(&sourcetest.Source{}, func(context.Context, source.Source, string) (feedPage, error) { return feedPage{}, nil })
 	f.add([]Card{{Kind: source.CardMedia, ID: "a"}})
 	f.cursor, f.more, f.loading = "c", false, true
 	f.reset()

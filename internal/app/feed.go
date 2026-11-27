@@ -36,8 +36,12 @@ func pageResult(p *source.CollectionPage, err error) (feedPage, error) {
 // they are scrolled to, and a page that doesn't fill the view loads the
 // next at once.
 type Feed struct {
-	fetch  func(cursor string) (feedPage, error) // runs off the main thread
-	onPage func(feedPage)                        // runs on the main thread
+	// src is the source the feed loads from, and fetch loads a page of
+	// it, off the main thread; set together by setFetch, so that a feed
+	// keeps to its source when the app switches to another.
+	src    source.Source
+	fetch  fetchFunc
+	onPage func(feedPage) // runs on the main thread
 
 	items   []Card
 	seen    map[string]bool
@@ -62,13 +66,28 @@ type Feed struct {
 	changed bool
 }
 
-func newFeed(fetch func(cursor string) (feedPage, error)) *Feed {
-	return &Feed{fetch: fetch, more: true}
+// fetchFunc loads the page of a feed at cursor from src.
+type fetchFunc func(ctx context.Context, src source.Source, cursor string) (feedPage, error)
+
+func newFeed(src source.Source, fetch fetchFunc) *Feed {
+	return &Feed{src: src, fetch: fetch, more: true}
+}
+
+// setFetch sets where f loads from.
+func (f *Feed) setFetch(src source.Source, fetch fetchFunc) { f.src, f.fetch = src, fetch }
+
+// collectionFetch loads the pages of the collection req names.
+func collectionFetch(req source.CollectionRequest) fetchFunc {
+	return func(ctx context.Context, src source.Source, cursor string) (feedPage, error) {
+		r := req
+		r.Cursor = cursor
+		return pageResult(src.Collection(ctx, r))
+	}
 }
 
 // reset empties the feed, keeping where it loads from.
 func (f *Feed) reset() {
-	*f = Feed{fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache, exact: f.exact}
+	*f = Feed{src: f.src, fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache, exact: f.exact}
 }
 
 func (f *Feed) add(items []Card) {
@@ -104,22 +123,34 @@ func (f *Feed) take(p feedPage) (fresh bool, added []Card) {
 	return len(f.items) > before, f.items[before:]
 }
 
-// loadMore loads the next page of f, unless one is loading or f ended.
-func (app *App) loadMore(f *Feed) {
-	if f.loading || !f.more || f.fetch == nil {
+// loadMore loads the next page of f, unless one is loading or f ended,
+// for the page shown: leaving it cancels the load.
+func (app *App) loadMore(f *Feed) { app.loadMoreIn(app.pageContext(), f) }
+
+// loadMoreIn loads the next page of f until ctx ends. A load canceled
+// leaves f as it was before, to load again when shown.
+func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
+	if f.loading || !f.more || f.fetch == nil || f.src == nil {
 		return
 	}
 	f.loading, f.err = true, ""
-	fetch, cursor, gen := f.fetch, f.cursor, f.gen
+	src, fetch, cursor, gen := f.src, f.fetch, f.cursor, f.gen
 	wait := time.Duration(f.stalls) * stallWait
 	async(app, func() (feedPage, error) {
-		time.Sleep(wait)
-		return fetch(cursor)
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return feedPage{}, ctx.Err()
+		}
+		return fetch(ctx, src, cursor)
 	}, func(p feedPage, err error) {
 		if f.gen != gen {
 			return
 		}
 		f.loading = false
+		if ctx.Err() != nil {
+			return // canceled by the app: not an error, and dropped
+		}
 		if err != nil {
 			f.loaded = true
 			if p.page != nil && f.onPage != nil {
@@ -134,7 +165,7 @@ func (app *App) loadMore(f *Feed) {
 		if f.onPage != nil {
 			f.onPage(p)
 		}
-		app.fill(f, added)
+		app.fill(ctx, f, added)
 		app.warm()
 	})
 }
@@ -174,8 +205,9 @@ func cardLacking(c Card) bool {
 
 // fill looks up the covers and badges that new media cards lack via Refresh,
 // and merges them in when they arrive.
-func (app *App) fill(f *Feed, fresh []Card) {
-	if !app.hasCap(source.CapRefresh) {
+func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
+	src := f.src
+	if src == nil || !src.Info().Has(source.CapRefresh) {
 		return
 	}
 	var ids []string
@@ -188,12 +220,11 @@ func (app *App) fill(f *Feed, fresh []Card) {
 		return
 	}
 	gen := f.gen
-	src := app.src
 	async(app, func() ([]Card, error) {
 		var filled []Card
-		for start := 0; start < len(ids); start += source.MaxRefreshIDs {
+		for start := 0; start < len(ids) && ctx.Err() == nil; start += source.MaxRefreshIDs {
 			batch := ids[start:min(start+source.MaxRefreshIDs, len(ids))]
-			got, err := src.Refresh(context.Background(), batch)
+			got, err := src.Refresh(ctx, batch)
 			if err != nil {
 				continue
 			}
@@ -201,7 +232,7 @@ func (app *App) fill(f *Feed, fresh []Card) {
 		}
 		return filled, nil
 	}, func(filled []Card, _ error) {
-		if f.gen != gen || len(filled) == 0 {
+		if f.gen != gen || len(filled) == 0 || ctx.Err() != nil {
 			return
 		}
 		byID := make(map[string]Card, len(filled))
@@ -251,12 +282,7 @@ func visible(f *Feed, n int) []Card {
 func (app *App) feed(colID string) *Feed {
 	f := app.feeds[colID]
 	if f == nil {
-		f = newFeed(func(cursor string) (feedPage, error) {
-			return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
-				ID:     colID,
-				Cursor: cursor,
-			}))
-		})
+		f = newFeed(app.src, collectionFetch(source.CollectionRequest{ID: colID}))
 		if name := feedCacheNames[colID]; name != "" && app.cacheDir != "" {
 			f.cache = filepath.Join(app.cacheDir, "feeds", app.sourceID(), name+".json")
 			f.items = loadFeedCache(f.cache)
@@ -398,9 +424,10 @@ func (app *App) warm() {
 		app.loadHot()
 		return
 	}
+	// For the source, not the page: they are for the pages to come.
 	for _, ch := range []string{pageRecommend, pageLive, pageComic} {
 		if f := app.feed(ch); !f.loaded {
-			app.loadMore(f)
+			app.loadMoreIn(app.srcContext(), f)
 		}
 	}
 	if app.rank.list.fetch == nil {

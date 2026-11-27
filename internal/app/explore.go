@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"maps"
 	"strings"
@@ -117,13 +116,7 @@ func (app *App) filterPage(c *ui.Context) {
 	r := &fs.results
 	if r.fetch == nil {
 		chosen := maps.Clone(fs.chosen) // the fetch runs off the main thread
-		r.fetch = func(cursor string) (feedPage, error) {
-			return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
-				ID:      pageFilter,
-				Filters: chosen,
-				Cursor:  cursor,
-			}))
-		}
+		r.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: pageFilter, Filters: chosen}))
 		r.onPage = fs.applyPage
 		r.more = !r.loaded
 	}
@@ -249,7 +242,14 @@ type personState struct {
 }
 
 func (app *App) openPerson(a Card) {
+	app.leavePage()
 	app.person = &personState{actor: a}
+}
+
+// closePerson leaves the person page for the page under it.
+func (app *App) closePerson() {
+	app.leavePage()
+	app.person = nil
 }
 
 func (app *App) loadPerson(ps *personState) {
@@ -259,10 +259,11 @@ func (app *App) loadPerson(ps *personState) {
 	ps.headerBusy, ps.headerErr = true, ""
 	src := app.src
 	colID := ps.actor.ID
+	ctx := app.pageContext()
 	async(app, func() (*source.CollectionPage, error) {
-		return src.Collection(context.Background(), source.CollectionRequest{ID: colID})
+		return src.Collection(ctx, source.CollectionRequest{ID: colID})
 	}, func(p *source.CollectionPage, err error) {
-		if app.person != ps {
+		if app.person != ps || ctx.Err() != nil {
 			return
 		}
 		ps.headerBusy = false
@@ -286,12 +287,7 @@ func (app *App) loadPerson(ps *personState) {
 			for _, sec := range p.Sections {
 				if sec.Collection != "" {
 					worksCol := sec.Collection
-					ps.works = *newFeed(func(cursor string) (feedPage, error) {
-						return pageResult(src.Collection(context.Background(), source.CollectionRequest{
-							ID:     worksCol,
-							Cursor: cursor,
-						}))
-					})
+					ps.works = *newFeed(src, collectionFetch(source.CollectionRequest{ID: worksCol}))
 					ps.works.exact = !app.builtin()
 					ps.worksReady = true
 					app.loadMore(&ps.works)
@@ -300,19 +296,14 @@ func (app *App) loadPerson(ps *personState) {
 			}
 		}
 		// Otherwise the source returned works inline on the first page.
-		ps.works = *newFeed(func(cursor string) (feedPage, error) {
-			return pageResult(src.Collection(context.Background(), source.CollectionRequest{
-				ID:     colID,
-				Cursor: cursor,
-			}))
-		})
+		ps.works = *newFeed(src, collectionFetch(source.CollectionRequest{ID: colID}))
 		ps.works.exact = !app.builtin()
 		ps.worksReady = true
 		ps.works.loaded = true
 		fp := feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}
 		fresh, added := ps.works.take(fp)
 		ps.works.more = ps.works.step(fp, fresh)
-		app.fill(&ps.works, added)
+		app.fill(ctx, &ps.works, added)
 	})
 }
 
@@ -324,7 +315,7 @@ func (app *App) personPage(c *ui.Context) {
 	}
 	f := &ps.works
 	retry := func() { f.err = ""; app.loadMore(f) }
-	back := func() { app.person = nil }
+	back := app.closePerson
 	c.OnShortcut(0, ui.KeyEscape, back)
 
 	name, avatar := ps.actor.Title, ps.actor.Image

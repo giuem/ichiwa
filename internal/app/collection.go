@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"maps"
 
@@ -81,12 +80,8 @@ func (app *App) collectionPage(c *ui.Context, id string) {
 	cs := app.col(id)
 	p := app.pal
 	r := &cs.results
-	src := app.src
 	if r.fetch == nil {
-		chosen := maps.Clone(cs.chosen)
-		r.fetch = func(cursor string) (feedPage, error) {
-			return pageResult(src.Collection(context.Background(), source.CollectionRequest{ID: id, Filters: chosen, Cursor: cursor}))
-		}
+		r.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: id, Filters: maps.Clone(cs.chosen)}))
 		r.onPage = cs.applyPage
 		r.more = !r.loaded
 		r.exact = true
@@ -187,11 +182,13 @@ func (app *App) section(c *ui.Context, cs *colState, sec Section, n int) {
 	if len(items) == 0 && sec.Collection != "" {
 		f = cs.sections[sec.Collection]
 		if f == nil {
-			src, colID := app.src, sec.Collection
-			f = newFeed(func(cursor string) (feedPage, error) {
-				return pageResult(src.Collection(context.Background(), source.CollectionRequest{ID: colID}))
-			})
+			f = newFeed(app.src, collectionFetch(source.CollectionRequest{ID: sec.Collection}))
 			cs.sections[sec.Collection] = f
+		}
+		// A section is one page: loaded when shown, again when a load
+		// was canceled as the page was left.
+		if !f.loaded && !f.loading && f.err == "" {
+			f.more = true
 			app.loadMore(f)
 		}
 		f.more = false

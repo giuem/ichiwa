@@ -339,13 +339,7 @@ func (app *App) loadRank(filters map[string]string) {
 	r.chosen = maps.Clone(filters)
 	r.list.reset()
 	reqFilters := maps.Clone(filters)
-	r.list.fetch = func(cursor string) (feedPage, error) {
-		return pageResult(app.src.Collection(context.Background(), source.CollectionRequest{
-			ID:      pageRank,
-			Filters: reqFilters,
-			Cursor:  cursor,
-		}))
-	}
+	r.list.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: pageRank, Filters: reqFilters}))
 	r.list.onPage = r.loaded
 	app.loadMore(&r.list)
 }
@@ -484,12 +478,9 @@ func (app *App) runSearch(q string) {
 		return
 	}
 	f.exact = !app.builtin()
-	f.fetch = func(cursor string) (feedPage, error) {
-		return pageResult(app.src.Search(context.Background(), source.SearchRequest{
-			Query:  q,
-			Cursor: cursor,
-		}))
-	}
+	f.setFetch(app.src, func(ctx context.Context, src source.Source, cursor string) (feedPage, error) {
+		return pageResult(src.Search(ctx, source.SearchRequest{Query: q, Cursor: cursor}))
+	})
 	app.loadMore(f)
 }
 
@@ -504,9 +495,13 @@ func (app *App) loadHot() {
 	}
 	s.hotBusy = true
 	src := app.src
+	ctx := app.srcContext()
 	async(app, func() (*source.CollectionPage, error) {
-		return src.SearchHome(context.Background())
+		return src.SearchHome(ctx)
 	}, func(p *source.CollectionPage, err error) {
+		if ctx.Err() != nil {
+			return // the source was left: its search state is gone
+		}
 		s.hotBusy = false
 		if err != nil {
 			s.hotErr = errText(err)

@@ -44,11 +44,16 @@ type App struct {
 	win     *mygo.Window
 	src     source.Source // the source shown
 	sources registry      // every source loaded
-	dev     devState
-	media   *media.Manager
-	nav     []source.NavItem
-	navErr  string
-	navBusy bool
+	// srcCtx is canceled when the app leaves the source shown, pageCtx
+	// when it leaves the page shown (§9): a call they canceled is dropped
+	// without an error. Both are made when first asked for.
+	srcCtx, pageCtx   context.Context
+	srcStop, pageStop context.CancelFunc
+	dev               devState
+	media             *media.Manager
+	nav               []source.NavItem
+	navErr            string
+	navBusy           bool
 	// cols are the collection pages of a plugin, by collection ID.
 	cols map[string]*colState
 	// dataDir keeps what the app must not lose.
@@ -144,8 +149,44 @@ func async[T any](app *App, work func() (T, error), done func(T, error)) {
 	}()
 }
 
+// srcContext is the context of the calls for the source shown.
+func (app *App) srcContext() context.Context {
+	if app.srcCtx == nil {
+		app.srcCtx, app.srcStop = context.WithCancel(context.Background())
+	}
+	return app.srcCtx
+}
+
+// pageContext is the context of the calls for the page shown.
+func (app *App) pageContext() context.Context {
+	if app.pageCtx == nil {
+		app.pageCtx, app.pageStop = context.WithCancel(app.srcContext())
+	}
+	return app.pageCtx
+}
+
+// leavePage cancels the calls for the page shown.
+func (app *App) leavePage() {
+	if app.pageStop != nil {
+		app.pageStop()
+	}
+	app.pageCtx, app.pageStop = nil, nil
+}
+
+// leaveSource cancels the calls for the source shown and its pages.
+func (app *App) leaveSource() {
+	app.leavePage()
+	if app.srcStop != nil {
+		app.srcStop()
+	}
+	app.srcCtx, app.srcStop = nil, nil
+}
+
 // go2 shows a page of the sidebar.
 func (app *App) go2(page string) {
+	if page != app.page || app.person != nil {
+		app.leavePage()
+	}
 	app.page = page
 	app.person = nil
 	app.lib.Page = page
@@ -248,7 +289,7 @@ func (app *App) sidebar(c *ui.Context) {
 			})
 			if b.Clicked() {
 				app.dev.logOpen = true
-				app.person = nil
+				app.closePerson()
 			}
 		}
 		ui.Spacer(c)

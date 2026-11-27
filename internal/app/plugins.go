@@ -339,6 +339,7 @@ func (app *App) useSource(s source.Source) {
 	if app.watch != nil {
 		app.closeWatch()
 	}
+	app.leaveSource()
 	app.src = s
 	app.nav, app.navErr = nil, ""
 	app.feeds = map[string]*Feed{}
@@ -365,17 +366,19 @@ func (app *App) useSource(s source.Source) {
 // reloaded, keeping the page shown when its navigation still has it and
 // the player open.
 func (app *App) refreshSource() {
+	app.leaveSource()
 	app.feeds = map[string]*Feed{}
 	app.cols = map[string]*colState{}
 	app.search = searchState{}
 	app.person = nil
 	app.warmed = false
 	src, page := app.src, app.page
+	ctx := app.srcContext()
 	app.navBusy = true
 	async(app, func() ([]source.NavItem, error) {
-		return src.Navigation(context.Background())
+		return src.Navigation(ctx)
 	}, func(nav []source.NavItem, err error) {
-		if app.src != src {
+		if app.src != src || ctx.Err() != nil {
 			return
 		}
 		app.navBusy = false
@@ -413,11 +416,12 @@ func (app *App) loadNav() {
 	if src == nil {
 		return
 	}
+	ctx := app.srcContext()
 	app.navBusy = true
 	async(app, func() ([]source.NavItem, error) {
-		return src.Navigation(context.Background())
+		return src.Navigation(ctx)
 	}, func(nav []source.NavItem, err error) {
-		if app.src != src {
+		if app.src != src || ctx.Err() != nil {
 			return
 		}
 		app.navBusy = false
@@ -463,7 +467,7 @@ func (app *App) sourceMenu(m *ui.Menu) {
 			}
 			if app.dev.plugin != nil && m.Item("插件日志").Chosen() {
 				app.dev.logOpen = true
-				app.person = nil
+				app.closePerson()
 			}
 			if m.Item("关闭开发者模式").Chosen() {
 				app.unloadDev()
