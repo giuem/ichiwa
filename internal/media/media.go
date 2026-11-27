@@ -200,6 +200,15 @@ func (m *Manager) open(ctx context.Context, sourceID, mediaID, episodeID string,
 	jobKey := key
 	if !hls {
 		jobKey += ":mp4"
+	} else if it, err, ok := m.waitFor(ctx, key+":mp4"); ok {
+		// A preload of the episode is downloading it: playing takes its
+		// file rather than ask the source again.
+		if err == nil && it.Path != "" {
+			return it, nil
+		}
+		if ctx.Err() != nil {
+			return Item{}, ctx.Err()
+		}
 	}
 	return m.runSingle(ctx, jobKey, func() (Item, error) {
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -240,6 +249,23 @@ func (m *Manager) Preload(ctx context.Context, sourceID, mediaID, episodeID stri
 		}
 		_, _ = m.Episode(ctx, sourceID, mediaID, episodeID, resolve)
 	}()
+}
+
+// waitFor waits for the job of key when one runs; ok tells whether one
+// did.
+func (m *Manager) waitFor(ctx context.Context, key string) (it Item, err error, ok bool) {
+	m.mu.Lock()
+	job := m.inflight[key]
+	m.mu.Unlock()
+	if job == nil {
+		return Item{}, nil, false
+	}
+	select {
+	case <-job.done:
+		return job.item, job.err, true
+	case <-ctx.Done():
+		return Item{}, ctx.Err(), true
+	}
 }
 
 func (m *Manager) runSingle(ctx context.Context, key string, work func() (Item, error)) (Item, error) {

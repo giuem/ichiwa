@@ -278,3 +278,43 @@ func TestEpisodeMigratesLegacyCache(t *testing.T) {
 		t.Fatalf("migrated data = %q, err = %v", gotData, err)
 	}
 }
+
+// Playing an episode that a preload is downloading waits for that
+// download rather than start another.
+func TestOpenSharesPreload(t *testing.T) {
+	release := make(chan struct{})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+		_, _ = w.Write([]byte(mp4Bytes))
+	}))
+	defer srv.Close()
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolves atomic.Int32
+	resolve := func(context.Context, source.PlayPrefer) (*source.Playback, error) {
+		resolves.Add(1)
+		return &source.Playback{Streams: []source.Stream{{URL: srv.URL + "/v.mp4", Container: source.ContainerMP4}}}, nil
+	}
+	mgr.Preload(context.Background(), "hongguo", "m", "e", 0, resolve)
+	for hits.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	opened := make(chan Item)
+	go func() {
+		it, err := mgr.Open(context.Background(), "hongguo", "m", "e", resolve)
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- it
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	it := <-opened
+	if it.Path == "" || resolves.Load() != 1 || hits.Load() != 1 {
+		t.Fatalf("Open = %+v; resolves %d, downloads %d", it, resolves.Load(), hits.Load())
+	}
+}
