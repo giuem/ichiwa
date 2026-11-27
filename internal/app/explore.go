@@ -267,6 +267,16 @@ func (app *App) loadPerson(ps *personState) {
 			return
 		}
 		ps.headerBusy = false
+		if err != nil && p != nil {
+			// The page came, its list failed: the header shows, and the
+			// works show the error, to retry.
+			ps.headerLoaded, ps.header = true, p.Header
+			ps.works = *newFeed(src, collectionFetch(source.CollectionRequest{ID: colID}))
+			ps.works.exact = !app.builtin()
+			ps.works.loaded, ps.works.err = true, errText(err)
+			ps.worksReady = true
+			return
+		}
 		if err != nil {
 			ps.headerErr = errText(err)
 			return

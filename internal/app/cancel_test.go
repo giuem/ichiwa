@@ -215,3 +215,33 @@ func TestRateLimitedListWaits(t *testing.T) {
 		t.Fatalf("after the wait: calls %d", calls.Load())
 	}
 }
+
+// A person page whose list failed keeps the header it came with, and its
+// works show the error, to retry.
+func TestPersonPageKeepsHeaderOfFailedList(t *testing.T) {
+	var calls atomic.Int32
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a"},
+		OnCollection: func(ctx context.Context, r source.CollectionRequest) (*source.CollectionPage, error) {
+			if calls.Add(1) == 1 {
+				return &source.CollectionPage{Header: &source.Header{Title: "演员甲", Description: "简介"}},
+					source.NewError(source.ErrNetwork, "列表暂时取不到", nil)
+			}
+			return &source.CollectionPage{Items: []source.Card{{Kind: source.CardMedia, ID: "m", Title: "剧"}}}, nil
+		},
+	}
+	app, run := cancelApp(t, src)
+	app.openPerson(Card{Kind: source.CardCollection, ID: "p", Title: "甲"})
+	ps := app.person
+	app.loadPerson(ps)
+	run(5 * time.Second)
+	if ps.header == nil || ps.header.Title != "演员甲" || ps.headerErr != "" || ps.works.err != "列表暂时取不到" {
+		t.Fatalf("header %+v, headerErr %q, works err %q", ps.header, ps.headerErr, ps.works.err)
+	}
+	ps.works.err = ""
+	app.loadMore(&ps.works)
+	run(5 * time.Second)
+	if len(ps.works.items) != 1 || ps.header == nil {
+		t.Fatalf("retry: %+v", ps.works.items)
+	}
+}
