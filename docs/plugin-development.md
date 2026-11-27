@@ -177,6 +177,7 @@ return {
 host.storage.get("deviceId");              // 持久保存，总量 64 KiB，超出时 set 抛错
 host.storage.set("deviceId", id);
 host.cache.set("token", t, 600);           // 内存缓存，一集退出就没了，总量 4 MiB、单项 256 KiB
+host.cache.add("lock", id, 5);             // 键不存在或已过期才写，原子操作，写了返回 true：用来加锁
 host.crypto.md5("abc");                    // 也有 sha1、sha256、hmac
 host.crypto.aes({ mode: "cbc", key, iv, data, decrypt: true });   // ecb、cbc、ctr、gcm
 host.crypto.rsa({ publicKey: pem, data, padding: "oaep-sha256" }); // 公钥加密，公钥最多 16384 位
@@ -189,6 +190,19 @@ throw host.error("rateLimited", "请求太频繁", { retryAfter: 60 });
 `Bytes` 参数可以是字符串（按 UTF-8）或 `Uint8Array`，返回的字节都是 `Uint8Array`。完整签名见 [index.d.ts](../sdk/index.d.ts)。
 
 **每次调用都是一个新的运行时**，调用结束就销毁，全局变量留不到下一次。要跨调用保存的东西放 `host.storage`（设备号、长期令牌）或 `host.cache`（短期令牌、接口结果）。
+
+同一个插件的多个调用会**同时**运行，各是各的运行时，只共享 `host.storage` 和 `host.cache`。调用返回、出错或被取消后，还没完成的请求、定时器和 `finally` 都不会再执行，所以锁和“进行中”这类标记一定要带过期时间。在调用之间加锁用 `host.cache.add`：
+
+```js
+const token = host.crypto.uuid();
+if (host.cache.add("register-lock", token, 5)) {
+  // 拿到了锁；耗时长就定期 host.cache.set 续期，做完 host.cache.delete
+} else {
+  // 别的调用正在注册：等一会儿再读结果
+}
+```
+
+`ichiwa-plugin call` 默认每次都从空的缓存开始；加 `-cache <文件>` 可以让 `host.cache` 在多次调用之间保留，复现这类跨调用的行为。
 
 ## 网络
 

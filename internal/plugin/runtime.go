@@ -377,3 +377,6 @@ func (p *Plugin) failure(t *thrown, netFailed bool) error {
 // UseStorage replaces the plugin's host.storage, for the command line
 // tool, which keeps it in a file of the developer's choice.
 func (p *Plugin) UseStorage(s *Storage) { p.storage = s }
+
+// UseCache replaces the plugin's host.cache, before its first call.
+func (p *Plugin) UseCache(c *Cache) { p.cache = c }

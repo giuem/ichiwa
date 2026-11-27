@@ -74,6 +74,31 @@ func TestCallKeepsStorage(t *testing.T) {
 	}
 }
 
+// -cache keeps host.cache, with its expiry, between runs: a lock taken
+// in one run is still held in the next.
+func TestCallKeepsCache(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "cache.json")
+	hostapi := filepath.Join("..", "..", "internal", "plugin", "testdata", "hostapi")
+	run := func() map[string]any {
+		t.Helper()
+		var out, logs bytes.Buffer
+		if err := call([]string{"-raw", "-cache", file, hostapi, "collection", `{"id":"cache"}`}, &out, &logs); err != nil {
+			t.Fatalf("call: %v\n%s", err, logs.String())
+		}
+		var v map[string]any
+		if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+			t.Fatalf("%v: %s", err, out.String())
+		}
+		return v
+	}
+	if v := run(); v["before"] != nil || v["first"] != true {
+		t.Fatalf("first run = %v", v)
+	}
+	if v := run(); v["before"] != "cached" || v["first"] != false || v["lock"] != "a" {
+		t.Fatalf("second run = %v", v)
+	}
+}
+
 func TestPack(t *testing.T) {
 	zip := filepath.Join(t.TempDir(), "plugin.zip")
 	var out bytes.Buffer

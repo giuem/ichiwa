@@ -29,10 +29,12 @@ import (
 const usage = `用法：
   ichiwa-plugin check <目录或 zip>
       检查清单、文件和导出的函数，不运行代码。
-  ichiwa-plugin call [-raw] [-storage 文件] <目录或 zip> <函数> ['<JSON 参数>']
+  ichiwa-plugin call [-raw] [-storage 文件] [-cache 文件] <目录或 zip> <函数> ['<JSON 参数>']
       在和一集相同的沙箱里调用一个函数，打印一集收到的结果和插件日志。
       -raw 打印插件返回的原始 JSON，不经过一集的检查和清洗。
       -storage 把 host.storage 存到这个文件，多次调用之间保留；不给就只在内存里。
+      -cache   把 host.cache 存到这个文件（连同过期时间），多次调用之间保留，
+               用来复现锁、续页这类跨调用的行为；不给就每次都是空的。
   ichiwa-plugin pack [-o plugin.zip] <目录>
       检查并打包成 plugin.zip。
 
@@ -99,6 +101,7 @@ func call(args []string, out, logOut io.Writer) error {
 	fs.SetOutput(logOut)
 	raw := fs.Bool("raw", false, "")
 	storage := fs.String("storage", "", "")
+	cacheFile := fs.String("cache", "", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -117,6 +120,18 @@ func call(args []string, out, logOut io.Writer) error {
 	}
 	if dataDir != "" {
 		p.UseStorage(plugin.OpenStorage(*storage))
+	}
+	if *cacheFile != "" {
+		c, err := plugin.LoadCache(*cacheFile)
+		if err != nil {
+			return err
+		}
+		p.UseCache(c)
+		defer func() {
+			if err := c.Save(*cacheFile); err != nil {
+				fmt.Fprintln(logOut, "保存 host.cache 失败：", err)
+			}
+		}()
 	}
 	fn := rest[1]
 	var arg json.RawMessage
