@@ -1,0 +1,23 @@
+{
+  "id": "example",
+  "name": "示例片源",
+  "description": "一集插件协议的示例：几部开放授权的短片，覆盖全部函数。",
+  "kind": "source",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "main": "index.js",
+  "license": "MIT",
+  "homepage": "https://github.com/giuem/ichiwa",
+  "permissions": {
+    "network": [
+      "picsum.photos",
+      "fastly.picsum.photos",
+      "test-videos.co.uk",
+      "devstreaming-cdn.apple.com"
+    ]
+  },
+  "images": {
+    "headers": { "Referer": "https://picsum.photos/" }
+  },
+  "capabilities": ["search", "search.suggest", "search.home", "danmaku", "refresh"]
+}

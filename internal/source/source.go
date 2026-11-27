@@ -45,7 +45,12 @@ type Info struct {
 	Version      string            `json:"version,omitempty"`
 	Icon         []byte            `json:"-"`
 	ImageHeaders map[string]string `json:"-"`
-	Capabilities []Capability      `json:"capabilities,omitempty"`
+	// Network lists the hosts a plugin declared (permissions.network):
+	// its images and media must be on them, and the host fetches them
+	// through the network guard. Nil for a built-in source, which the
+	// host trusts.
+	Network      []string     `json:"-"`
+	Capabilities []Capability `json:"capabilities,omitempty"`
 }
 
 // Has reports whether the source supports capability c.
