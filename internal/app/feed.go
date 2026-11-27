@@ -394,6 +394,10 @@ func (app *App) warm() {
 		return
 	}
 	app.warmed = true
+	if !app.builtin() { // a plugin's pages load as they are opened
+		app.loadHot()
+		return
+	}
 	for _, ch := range []string{pageRecommend, pageLive, pageComic} {
 		if f := app.feed(ch); !f.loaded {
 			app.loadMore(f)
