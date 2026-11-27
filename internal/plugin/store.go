@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -74,6 +75,9 @@ func (s *Storage) Set(key, value string) error {
 		return fmt.Errorf("host.storage 超出 %d KiB 的总量", MaxStorageBytes>>10)
 	}
 	prev := s.size
+	// A string the plugin made may share the memory of a much larger
+	// one, which the storage would keep alive: it keeps a copy.
+	key, value = strings.Clone(key), strings.Clone(value)
 	s.values[key] = value
 	s.size = size
 	if err := s.save(); err != nil {
@@ -212,7 +216,9 @@ func (c *Cache) setLocked(key, value string, ttl time.Duration, n int) {
 		c.drop(oldest)
 	}
 	c.seq++
-	it := &cacheItem{value: value, seq: c.seq}
+	// A copy, as for Storage.Set.
+	key = strings.Clone(key)
+	it := &cacheItem{value: strings.Clone(value), seq: c.seq}
 	if ttl > 0 {
 		it.expires = now.Add(ttl)
 	}

@@ -67,6 +67,18 @@ export function collection(req) {
       const second = host.cache.add("lock", "b", 60);
       return { before, after: host.cache.get("c"), big, first, second, lock: host.cache.get("lock") };
     }
+    case "slices": {
+      // Tokens cut out of big pages, as a plugin does: each shares
+      // the page's memory in the engine.
+      const n = Number(a.n), at = Number(a.at);
+      for (let i = at; i < at + n; i++) {
+        const page = "y".repeat(2 << 20) + '{"token":"' + "t".repeat(40) + i + '"}';
+        const token = /"token":"([^"]+)"/.exec(page)[1];
+        host.cache.set("k" + i, token);
+        host.storage.set("s" + i, token);
+      }
+      return { last: host.cache.get("k" + (at + n - 1)) };
+    }
     case "web":
       return {
         url: new URL("/a?b=1", "https://example.com/x").href,

@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -317,4 +319,30 @@ func TestRSARefusesHugeKeys(t *testing.T) {
 			t.Errorf("%d-bit key took %v", bits, d)
 		}
 	}
+}
+
+// A value cut out of a big string keeps none of it alive in host.cache
+// or host.storage.
+func TestStoredSlicesKeepNoPage(t *testing.T) {
+	p := open(t, "hostapi", Options{})
+	heap := func() uint64 {
+		runtime.GC()
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return m.HeapAlloc
+	}
+	before := heap()
+	for i := range 10 {
+		v := hostCall(t, p, "slices", map[string]string{"n": "4", "at": strconv.Itoa(i * 4)})
+		if want := strings.Repeat("t", 40) + strconv.Itoa(i*4+3); v["last"] != want {
+			t.Fatalf("last = %v", v["last"])
+		}
+	}
+	after := heap()
+	// 40 values of about 50 bytes, in each store; their pages were 80 MiB.
+	if grew := int64(after) - int64(before); grew > 24<<20 {
+		t.Fatalf("the heap kept %d MiB", grew>>20)
+	}
+	runtime.KeepAlive(p)
 }
