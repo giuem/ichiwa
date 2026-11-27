@@ -179,7 +179,7 @@ host.storage.set("deviceId", id);
 host.cache.set("token", t, 600);           // 内存缓存，一集退出就没了，总量 4 MiB、单项 256 KiB
 host.crypto.md5("abc");                    // 也有 sha1、sha256、hmac
 host.crypto.aes({ mode: "cbc", key, iv, data, decrypt: true });   // ecb、cbc、ctr、gcm
-host.crypto.rsa({ publicKey: pem, data, padding: "oaep-sha256" }); // 公钥加密
+host.crypto.rsa({ publicKey: pem, data, padding: "oaep-sha256" }); // 公钥加密，公钥最多 16384 位
 host.crypto.randomBytes(16); host.crypto.uuid();
 host.encoding.base64(bytes); host.encoding.fromBase64(s);         // 也有 hex、utf8、gunzip、inflate
 host.device();                              // { platform, appVersion, locale }

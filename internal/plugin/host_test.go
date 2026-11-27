@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"regexp"
 	"strings"
 	"testing"
@@ -250,5 +251,22 @@ func TestCacheLimits(t *testing.T) {
 	}
 	if v, ok := c.Get(string(rune('a' + 19))); !ok || v != item {
 		t.Fatal("the newest item is gone")
+	}
+}
+
+// A key whose modulus is huge is refused at once: encrypting with it
+// could not be interrupted.
+func TestRSARefusesHugeKeys(t *testing.T) {
+	for _, bits := range []uint{maxRSABits + 8, 512 << 13} {
+		n := new(big.Int).Lsh(big.NewInt(1), bits-1)
+		n.Add(n, big.NewInt(1))
+		der := x509.MarshalPKCS1PublicKey(&rsa.PublicKey{N: n, E: 0x7fffffff})
+		start := time.Now()
+		if _, err := rsaEncrypt(base64.StdEncoding.EncodeToString(der), []byte("x"), "pkcs1"); err == nil {
+			t.Errorf("%d-bit key used", bits)
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Errorf("%d-bit key took %v", bits, d)
+		}
 	}
 }

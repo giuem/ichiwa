@@ -156,6 +156,10 @@ func aesCrypt(o aesOptions) ([]byte, error) {
 	return nil, fmt.Errorf("不支持的 AES 模式 %q", o.Mode)
 }
 
+// maxRSABits caps the modulus of a key: the native encryption cannot be
+// interrupted, and a huge modulus with a huge exponent runs for minutes.
+const maxRSABits = 16384
+
 // rsaEncrypt encrypts data with a public key in PEM (PKIX or PKCS #1) or
 // in bare base64 DER.
 func rsaEncrypt(publicKey string, data []byte, padding string) ([]byte, error) {
@@ -185,6 +189,9 @@ func rsaEncrypt(publicKey string, data []byte, padding string) ([]byte, error) {
 		pub = k
 	} else {
 		return nil, errors.New("无法解析公钥")
+	}
+	if pub.N.BitLen() > maxRSABits {
+		return nil, fmt.Errorf("公钥超过 %d 位", maxRSABits)
 	}
 	switch padding {
 	case "pkcs1":
