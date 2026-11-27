@@ -181,9 +181,19 @@ func (app *App) saveDevSettings() {
 	}
 }
 
+// userLocale is the language the user reads first, for plugins, which
+// may serve content in it; zh-CN when the system does not say.
+func userLocale() string {
+	if langs := mygo.App.PreferredLanguages(); len(langs) > 0 && langs[0] != "" {
+		return langs[0]
+	}
+	return "zh-CN"
+}
+
 func (app *App) pluginOptions() plugin.Options {
 	return plugin.Options{
 		AppVersion: mygo.App.Version(),
+		Locale:     userLocale(),
 		DataDir:    filepath.Join(app.dataDir, "plugins", "data"),
 	}
 }

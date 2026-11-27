@@ -186,7 +186,7 @@ func (c *callState) natives() map[string]any {
 	return map[string]any{
 		"platform":   platformName(),
 		"appVersion": p.opts.AppVersion,
-		"locale":     "zh-CN",
+		"locale":     p.locale(),
 		"log": fn("log", 2, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			p.logs.add(c.str(arg(a, 0)), c.str(arg(a, 1)))
 			return moejs.Undefined(), nil

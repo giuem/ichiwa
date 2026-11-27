@@ -146,6 +146,10 @@ func TestHostDevice(t *testing.T) {
 	if v["appVersion"] != "2026.1127.1" || v["locale"] != "zh-CN" || v["platform"] != platformName() {
 		t.Fatalf("device = %v", v)
 	}
+	v = hostCall(t, open(t, "hostapi", Options{Locale: "en-US"}), "device", nil)
+	if v["locale"] != "en-US" {
+		t.Fatalf("device = %v", v)
+	}
 }
 
 func TestHostCache(t *testing.T) {

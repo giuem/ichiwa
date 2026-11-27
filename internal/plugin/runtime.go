@@ -38,6 +38,9 @@ type Options struct {
 	// AppVersion is this app's version, for minAppVersion and
 	// host.device().
 	AppVersion string
+	// Locale is the user's language, a BCP 47 tag, for host.device()
+	// and Intl; "" is zh-CN.
+	Locale string
 	// DataDir keeps each plugin's host.storage, in DataDir/<id>/; ""
 	// keeps it in memory.
 	DataDir string
@@ -141,6 +144,13 @@ func (p *Plugin) Package() *Package { return p.cur.Load().pkg }
 // Logs returns the plugin's log.
 func (p *Plugin) Logs() *Logs { return p.logs }
 
+func (p *Plugin) locale() string {
+	if p.opts.Locale != "" {
+		return p.opts.Locale
+	}
+	return "zh-CN"
+}
+
 func (p *Plugin) timeout(fn string) time.Duration {
 	long := fn == "media" || fn == "play"
 	switch {
@@ -219,7 +229,7 @@ func (p *Plugin) run(ctx context.Context, fn string, argJSON []byte) (json.RawMe
 	rt := moejs.NewRuntime(moejs.Options{
 		MemoryLimit:        MemoryLimit,
 		DisableDynamicCode: true,
-		Locale:             "zh-CN",
+		Locale:             p.locale(),
 	})
 	loop, err := eventloop.New(rt, eventloop.Options{})
 	if err != nil {
