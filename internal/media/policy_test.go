@@ -267,6 +267,7 @@ func TestRewritePlaylistBypasses(t *testing.T) {
 	}
 	for _, c := range []struct{ name, in string }{
 		{"lines ended by CR alone", "#EXTM3U\r#EXTINF:2,\rhttp://" + inside + "/seg0.ts\r"},
+		{"a URI after a tag's CR", "#EXTM3U\n#EXTINF:2,\rhttp://" + inside + "/x.ts\n"},
 		{"a URI after a comment's CR", "#EXTM3U\n#EXTINF:2,\n# x\rhttp://" + inside + "/seg0.ts\n"},
 		{"a tag and URI after a comment's CR", "#EXTM3U\n# x\r#EXTINF:2,\rhttp://" + inside + "/secret-admin?action=reboot\n"},
 		{"blank space around URI's =", "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128, URI = \"http://" + inside + "/key.bin\"\n#EXTINF:2,\nseg.ts\n"},
@@ -299,6 +300,15 @@ func TestRewritePlaylistBypasses(t *testing.T) {
 	for _, in := range []string{"#EXTM3U\n#EXTINF:2,\x00http://" + inside + "/s.ts\n", "#EXTM3U\n# \x0bhttp://" + inside + "/s.ts\n"} {
 		if out, err := rewritePlaylist([]byte(in), base, proxify); err == nil {
 			t.Errorf("%q rewritten to %q", in, out)
+		}
+	}
+	// A playlist whose lines end at CR alone plays, its segments proxied.
+	for in, want := range map[string]string{
+		"#EXTM3U\r#EXTINF:2,\rseg0.ts\r":                 "#EXTM3U\n#EXTINF:2,\nPROXY/s/http://cdn.example.test/v/seg0.ts\n",
+		"#EXTM3U\n#EXTINF:2,\rseg0.ts\n#EXT-X-ENDLIST\n": "#EXTM3U\n#EXTINF:2,\nPROXY/s/http://cdn.example.test/v/seg0.ts\n#EXT-X-ENDLIST\n",
+	} {
+		if out, err := rewritePlaylist([]byte(in), base, proxify); err != nil || string(out) != want {
+			t.Errorf("%q rewritten = %v %q, want %q", in, err, out, want)
 		}
 	}
 	// What is understood comes out whole, addresses proxied by kind.
