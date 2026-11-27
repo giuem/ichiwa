@@ -351,3 +351,90 @@ func TestSearchLoadsAgainAfterCancel(t *testing.T) {
 		t.Fatalf("search shown again: calls %d, %+v", calls.Load(), r)
 	}
 }
+
+// Covers asked for as a page is left still come, for the cards shown
+// when it is shown again.
+func TestCoversComeAfterPageLeft(t *testing.T) {
+	release, refreshing := make(chan struct{}), make(chan struct{}, 1)
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a", Capabilities: []source.Capability{source.CapRefresh}},
+		OnCollection: func(ctx context.Context, r source.CollectionRequest) (*source.CollectionPage, error) {
+			return &source.CollectionPage{Items: []source.Card{{Kind: source.CardMedia, ID: "m", Title: "剧"}}}, nil
+		},
+		OnRefresh: func(ctx context.Context, ids []string) ([]source.Card, error) {
+			refreshing <- struct{}{}
+			<-release
+			return []source.Card{{Kind: source.CardMedia, ID: "m", Image: "cover", Badges: []string{"全1集"}}}, ctx.Err()
+		},
+	}
+	app, run := cancelApp(t, src)
+	app.page = pageRecommend
+	f := app.feed(pageRecommend)
+	app.loadMore(f)
+	run(5 * time.Second)
+	waitEntered(t, refreshing)
+	app.go2(pageRank)
+	close(release)
+	run(5 * time.Second)
+	if len(f.items) != 1 || f.items[0].Image != "cover" {
+		t.Fatalf("items = %+v", f.items)
+	}
+}
+
+// Searching anew, or refreshing a feed, cancels the calls for what it
+// showed before: its next page and its covers.
+func TestResetCancelsFeedCalls(t *testing.T) {
+	canceled := make(chan string, 4)
+	entered := make(chan struct{}, 4)
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a", Capabilities: []source.Capability{source.CapSearch, source.CapRefresh}},
+		OnSearch: func(ctx context.Context, r source.SearchRequest) (*source.CollectionPage, error) {
+			if r.Query == "后来" {
+				return &source.CollectionPage{}, nil
+			}
+			entered <- struct{}{}
+			<-ctx.Done()
+			canceled <- "search"
+			return nil, ctx.Err()
+		},
+		OnCollection: func(ctx context.Context, r source.CollectionRequest) (*source.CollectionPage, error) {
+			return &source.CollectionPage{Items: []source.Card{{Kind: source.CardMedia, ID: "m", Title: "剧"}}}, nil
+		},
+		OnRefresh: func(ctx context.Context, ids []string) ([]source.Card, error) {
+			entered <- struct{}{}
+			<-ctx.Done()
+			canceled <- "refresh"
+			return nil, ctx.Err()
+		},
+	}
+	app, run := cancelApp(t, src)
+	app.runSearch("先前")
+	waitEntered(t, entered)
+	app.runSearch("后来")
+	select {
+	case what := <-canceled:
+		if what != "search" {
+			t.Fatalf("canceled %s", what)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("searching anew left the earlier search running")
+	}
+
+	f := app.feed(pageRecommend)
+	app.loadMore(f)
+	for f.loading {
+		run(5 * time.Second)
+	}
+	waitEntered(t, entered)
+	f.reset()
+	select {
+	case what := <-canceled:
+		if what != "refresh" {
+			t.Fatalf("canceled %s", what)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("refreshing the feed left its covers loading")
+	}
+	for run(300 * time.Millisecond) {
+	}
+}

@@ -313,7 +313,7 @@ func (app *App) loadPerson(ps *personState) {
 		fp := feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}
 		fresh, added := ps.works.take(fp)
 		ps.works.more = ps.works.step(fp, fresh)
-		app.fill(ctx, &ps.works, added)
+		app.fill(app.srcContext(), &ps.works, added)
 	})
 }
 

@@ -72,6 +72,11 @@ type Feed struct {
 	cache   string
 	stale   bool
 	changed bool
+
+	// life ends when the feed resets, canceling the calls for what it
+	// showed; end ends it.
+	life context.Context
+	end  context.CancelFunc
 }
 
 // fetchFunc loads the page of a feed at cursor from src.
@@ -93,10 +98,24 @@ func collectionFetch(req source.CollectionRequest) fetchFunc {
 	}
 }
 
-// reset empties the feed, keeping where it loads from.
+// reset empties the feed, keeping where it loads from, and cancels its
+// calls.
 func (f *Feed) reset() {
+	if f.end != nil {
+		f.end()
+	}
 	*f = Feed{src: f.src, fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache, exact: f.exact,
 		retryAt: f.retryAt, waitErr: f.waitErr}
+}
+
+// context is ctx, canceled also when f resets; done releases it.
+func (f *Feed) context(ctx context.Context) (_ context.Context, done func()) {
+	if f.life == nil {
+		f.life, f.end = context.WithCancel(context.Background())
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(f.life, cancel)
+	return ctx, func() { stop(); cancel() }
 }
 
 func (f *Feed) add(items []Card) {
@@ -149,6 +168,7 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 	f.loading, f.err = true, ""
 	src, fetch, cursor, gen := f.src, f.fetch, f.cursor, f.gen
 	wait := time.Duration(f.stalls) * stallWait
+	ctx, done := f.context(ctx)
 	async(app, func() (feedPage, error) {
 		select {
 		case <-time.After(wait):
@@ -157,6 +177,7 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 		}
 		return fetch(ctx, src, cursor)
 	}, func(p feedPage, err error) {
+		defer done()
 		if f.gen != gen {
 			return
 		}
@@ -183,7 +204,9 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 		if f.onPage != nil {
 			f.onPage(p)
 		}
-		app.fill(ctx, f, added)
+		// Covers come for the source rather than the page, so that
+		// cards shown again have them.
+		app.fill(app.srcContext(), f, added)
 		app.warm()
 	})
 }
@@ -270,6 +293,7 @@ func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
 		return
 	}
 	gen := f.gen
+	ctx, done := f.context(ctx)
 	async(app, func() ([]Card, error) {
 		var filled []Card
 		for start := 0; start < len(ids) && ctx.Err() == nil; start += source.MaxRefreshIDs {
@@ -282,6 +306,7 @@ func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
 		}
 		return filled, nil
 	}, func(filled []Card, _ error) {
+		defer done()
 		if f.gen != gen || len(filled) == 0 || ctx.Err() != nil {
 			return
 		}
