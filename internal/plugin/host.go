@@ -152,7 +152,14 @@ func (c *callState) u8(r *moejs.Realm, b []byte) (moejs.Value, error) {
 	return engine.ObjectValue(obj), nil
 }
 
-func (c *callState) strValue(s string) (moejs.Value, error) { return moejs.String(s), nil }
+// strValue hands s to JavaScript, charged to the memory limit: a string
+// a native makes is memory the plugin did not allocate itself.
+func (c *callState) strValue(r *moejs.Realm, s string) (moejs.Value, error) {
+	if err := r.ChargeMemory(len(s)); err != nil {
+		return moejs.Undefined(), err
+	}
+	return moejs.String(s), nil
+}
 
 type native = func(r *moejs.Realm, args []moejs.Value) (moejs.Value, error)
 
@@ -172,9 +179,9 @@ func (c *callState) natives() map[string]any {
 			p.logs.add(c.str(arg(a, 0)), c.str(arg(a, 1)))
 			return moejs.Undefined(), nil
 		}),
-		"storageGet": fn("get", 1, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
+		"storageGet": fn("get", 1, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			if v, ok := p.storage.Get(c.str(arg(a, 0))); ok {
-				return moejs.String(v), nil
+				return c.strValue(r, v)
 			}
 			return moejs.Undefined(), nil
 		}),
@@ -184,9 +191,9 @@ func (c *callState) natives() map[string]any {
 		"storageDelete": fn("delete", 1, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			return moejs.Undefined(), p.storage.Delete(c.str(arg(a, 0)))
 		}),
-		"cacheGet": fn("get", 1, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
+		"cacheGet": fn("get", 1, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			if v, ok := p.cache.Get(c.str(arg(a, 0))); ok {
-				return moejs.String(v), nil
+				return c.strValue(r, v)
 			}
 			return moejs.Undefined(), nil
 		}),
@@ -202,7 +209,7 @@ func (c *callState) natives() map[string]any {
 			p.cache.Delete(c.str(arg(a, 0)))
 			return moejs.Undefined(), nil
 		}),
-		"digest": fn("digest", 2, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
+		"digest": fn("digest", 2, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			data, err := c.bytesArg(arg(a, 1), "data")
 			if err != nil {
 				return moejs.Undefined(), err
@@ -211,9 +218,9 @@ func (c *callState) natives() map[string]any {
 			if err != nil {
 				return moejs.Undefined(), err
 			}
-			return moejs.String(s), nil
+			return c.strValue(r, s)
 		}),
-		"hmac": fn("hmac", 3, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
+		"hmac": fn("hmac", 3, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			key, err := c.bytesArg(arg(a, 1), "key")
 			if err != nil {
 				return moejs.Undefined(), err
@@ -226,7 +233,7 @@ func (c *callState) natives() map[string]any {
 			if err != nil {
 				return moejs.Undefined(), err
 			}
-			return moejs.String(s), nil
+			return c.strValue(r, s)
 		}),
 		"aes": fn("aes", 1, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			o := arg(a, 0)
@@ -291,12 +298,12 @@ func (c *callState) natives() map[string]any {
 		"uuid": fn("uuid", 0, func(_ *moejs.Realm, _ []moejs.Value) (moejs.Value, error) {
 			return moejs.String(uuid4()), nil
 		}),
-		"hex": fn("hex", 1, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
+		"hex": fn("hex", 1, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			b, err := c.bytesArg(arg(a, 0), "b")
 			if err != nil {
 				return moejs.Undefined(), err
 			}
-			return moejs.String(hex.EncodeToString(b)), nil
+			return c.strValue(r, hex.EncodeToString(b))
 		}),
 		"fromHex": fn("fromHex", 1, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			b, err := hex.DecodeString(c.str(arg(a, 0)))
@@ -305,12 +312,12 @@ func (c *callState) natives() map[string]any {
 			}
 			return c.u8(r, b)
 		}),
-		"base64": fn("base64", 1, func(_ *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
+		"base64": fn("base64", 1, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			b, err := c.bytesArg(arg(a, 0), "b")
 			if err != nil {
 				return moejs.Undefined(), err
 			}
-			return moejs.String(base64.StdEncoding.EncodeToString(b)), nil
+			return c.strValue(r, base64.StdEncoding.EncodeToString(b))
 		}),
 		"fromBase64": fn("fromBase64", 1, func(r *moejs.Realm, a []moejs.Value) (moejs.Value, error) {
 			b, err := decodeBase64(c.str(arg(a, 0)))

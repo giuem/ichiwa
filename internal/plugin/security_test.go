@@ -279,6 +279,13 @@ func TestMemoryLimit(t *testing.T) {
 	if code(err) != source.ErrPlugin || source.Message(err) != "片源占用内存过多" {
 		t.Fatalf("memory blow-up: %v", err)
 	}
+	// Strings the host makes count too.
+	for _, id := range []string{"hex", "base64"} {
+		_, err := p.Collection(context.Background(), source.CollectionRequest{ID: id})
+		if code(err) != source.ErrPlugin || source.Message(err) != "片源占用内存过多" {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
 }
 
 func TestDynamicCodeRefused(t *testing.T) {
