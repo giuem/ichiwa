@@ -286,13 +286,46 @@ func TestFetchFloodIsBounded(t *testing.T) {
 	p := open(t, "hostile/network", Options{Guard: guard, Timeout: 30 * time.Second})
 	page, err := p.Collection(context.Background(), source.CollectionRequest{
 		// Each on a host of its own, which the transport does not bound.
-		ID: "http://h{i}.cdn.example.test:" + strconv.Itoa(int(ap.Port())) + "/x", Filters: map[string]string{"flood": "500"},
+		ID: "http://h{i}.cdn.example.test:" + strconv.Itoa(int(ap.Port())) + "/x", Filters: map[string]string{"flood": "250"},
 	})
-	if err != nil || page.Title != "500" {
+	if err != nil || page.Title != "250" {
 		t.Fatalf("flood = %+v, %v", page, err)
 	}
 	if n := peak.Load(); n > MaxFetches {
 		t.Fatalf("%d requests at once", n)
+	}
+}
+
+// A call makes MaxCallFetches requests at most: the rest fail at once,
+// and the log says so once.
+func TestFetchTotalIsBounded(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+	ap := netip.MustParseAddrPort(srv.Listener.Addr().String())
+	guard := &netguard.Guard{
+		Lookup: func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+		},
+		Exempt: func(a netip.AddrPort) bool { return a == ap },
+	}
+	p := open(t, "hostile/network", Options{Guard: guard, Timeout: 30 * time.Second})
+	req := source.CollectionRequest{
+		ID: "http://h{i}.cdn.example.test:" + strconv.Itoa(int(ap.Port())) + "/x", Filters: map[string]string{"settle": "400"},
+	}
+	page, err := p.Collection(context.Background(), req)
+	if err != nil || page.Title != strconv.Itoa(MaxCallFetches) || hits.Load() != MaxCallFetches {
+		t.Fatalf("flood = %+v, %v; %d requests", page, err, hits.Load())
+	}
+	if n := strings.Count(p.Logs().Text(), "这次调用已经发了"); n != 1 {
+		t.Fatalf("%d log lines:\n%s", n, p.Logs().Text())
+	}
+	// The next call has its own.
+	if page, err := p.Collection(context.Background(), req); err != nil || page.Title != strconv.Itoa(MaxCallFetches) {
+		t.Fatalf("next call = %+v, %v", page, err)
 	}
 }
 

@@ -14,8 +14,12 @@ import (
 )
 
 // MaxFetches is how many requests one call has in flight at once; more
-// wait their turn.
-const MaxFetches = 16
+// wait their turn. MaxCallFetches is how many it makes in all, redirects
+// included; more fail.
+const (
+	MaxFetches     = 16
+	MaxCallFetches = 256
+)
 
 func newJar() *cookiejar.Jar {
 	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
@@ -27,8 +31,10 @@ func newJar() *cookiejar.Jar {
 // notes a network failure, so that a call that fails after one is
 // reported as a network error rather than the plugin's.
 type callTransport struct {
-	// slots bounds the requests of one call in flight at once.
+	// slots bounds the requests of one call in flight at once, and sent
+	// counts them all.
 	slots  chan struct{}
+	sent   atomic.Int32
 	hosts  netguard.Hosts
 	jar    *cookiejar.Jar
 	base   http.RoundTripper
@@ -39,6 +45,12 @@ type callTransport struct {
 func (t *callTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !t.hosts.AllowsURL(req.URL) {
 		return nil, fmt.Errorf("%w: 插件没有声明 %s", netguard.ErrDenied, req.URL.Hostname())
+	}
+	if n := t.sent.Add(1); n > MaxCallFetches {
+		if n == MaxCallFetches+1 {
+			t.logs.Hostf("拒绝请求 %s：这次调用已经发了 %d 个请求", netguard.Redact(req.URL), MaxCallFetches)
+		}
+		return nil, fmt.Errorf("%w: 一次调用最多发 %d 个请求", netguard.ErrDenied, MaxCallFetches)
 	}
 	select {
 	case t.slots <- struct{}{}:
