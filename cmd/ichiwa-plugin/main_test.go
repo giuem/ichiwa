@@ -99,6 +99,20 @@ func TestCallKeepsCache(t *testing.T) {
 	}
 }
 
+// A cache that can't be saved fails the run, after printing its result.
+func TestCallFailsUnsavedCache(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "missing", "cache.json")
+	hostapi := filepath.Join("..", "..", "internal", "plugin", "testdata", "hostapi")
+	var out, logs bytes.Buffer
+	err := call([]string{"-raw", "-cache", file, hostapi, "collection", `{"id":"cache"}`}, &out, &logs)
+	if err == nil || !strings.Contains(err.Error(), "保存 host.cache 失败") {
+		t.Fatalf("call = %v", err)
+	}
+	if !strings.Contains(out.String(), `"first": true`) {
+		t.Fatalf("output = %s", out.String())
+	}
+}
+
 func TestPack(t *testing.T) {
 	zip := filepath.Join(t.TempDir(), "plugin.zip")
 	var out bytes.Buffer

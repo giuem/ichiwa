@@ -96,7 +96,7 @@ func orNone(s []string) []string {
 	return s
 }
 
-func call(args []string, out, logOut io.Writer) error {
+func call(args []string, out, logOut io.Writer) (callErr error) {
 	fs := flag.NewFlagSet("call", flag.ContinueOnError)
 	fs.SetOutput(logOut)
 	raw := fs.Bool("raw", false, "")
@@ -127,9 +127,16 @@ func call(args []string, out, logOut io.Writer) error {
 			return err
 		}
 		p.UseCache(c)
+		// A cache not saved fails the run, so that the next doesn't
+		// silently start without it.
 		defer func() {
 			if err := c.Save(*cacheFile); err != nil {
-				fmt.Fprintln(logOut, "保存 host.cache 失败：", err)
+				err = fmt.Errorf("保存 host.cache 失败：%w", err)
+				if callErr != nil {
+					fmt.Fprintln(logOut, err)
+				} else {
+					callErr = err
+				}
 			}
 		}()
 	}
