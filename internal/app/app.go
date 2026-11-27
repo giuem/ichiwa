@@ -49,11 +49,13 @@ type App struct {
 	// without an error. Both are made when first asked for.
 	srcCtx, pageCtx   context.Context
 	srcStop, pageStop context.CancelFunc
-	dev               devState
-	media             *media.Manager
-	nav               []source.NavItem
-	navErr            string
-	navBusy           bool
+	// locale is the user's language, for plugins; "" in tests.
+	locale  string
+	dev     devState
+	media   *media.Manager
+	nav     []source.NavItem
+	navErr  string
+	navBusy bool
 	// cols are the collection pages of a plugin, by collection ID.
 	cols map[string]*colState
 	// dataDir keeps what the app must not lose.
@@ -447,6 +449,7 @@ func Run() {
 		app.page = normalizeSavedPage(app.lib.Page)
 
 		app.dataDir = dataDir
+		app.locale = userLocale()
 		src, err := hongguo.New(dataDir)
 		if err != nil {
 			app.initErr = err.Error()

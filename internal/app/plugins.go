@@ -193,7 +193,7 @@ func userLocale() string {
 func (app *App) pluginOptions() plugin.Options {
 	return plugin.Options{
 		AppVersion: mygo.App.Version(),
-		Locale:     userLocale(),
+		Locale:     app.locale,
 		DataDir:    filepath.Join(app.dataDir, "plugins", "data"),
 	}
 }
