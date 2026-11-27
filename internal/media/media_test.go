@@ -331,3 +331,97 @@ func TestBuiltinMediaUseNoProxy(t *testing.T) {
 		t.Fatalf("transport = %#v", mgr.client(Policy{}).Transport)
 	}
 }
+
+// A play call no one waits for any more is canceled, so it doesn't hold
+// one of the plugin's slots (protocol §9).
+func TestOpenCancelsCallNoOneWaitsFor(t *testing.T) {
+	defer func(g time.Duration) { orphanGrace = g }(orphanGrace)
+	orphanGrace = 50 * time.Millisecond
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, ended := make(chan struct{}), make(chan struct{})
+	resolve := func(ctx context.Context, _ source.PlayPrefer) (*source.Playback, error) {
+		close(started)
+		<-ctx.Done()
+		close(ended)
+		return nil, ctx.Err()
+	}
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	errs := make(chan error, 2)
+	go func() { _, err := mgr.Open(ctx1, "p", "m", "e", resolve); errs <- err }()
+	<-started
+	go func() { _, err := mgr.Open(ctx2, "p", "m", "e", resolve); errs <- err }()
+	for {
+		mgr.mu.Lock()
+		n := 0
+		if j := mgr.inflight[CacheKey("p", "m", "e")]; j != nil {
+			n = j.waiters
+		}
+		mgr.mu.Unlock()
+		if n == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel1()
+	<-errs
+	select {
+	case <-ended:
+		t.Fatal("the call was canceled while a caller still waited")
+	case <-time.After(4 * orphanGrace):
+	}
+	cancel2()
+	<-errs
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call went on after its callers left")
+	}
+}
+
+// Playing an episode right after its preload was canceled takes over
+// the download, rather than cancel it and start anew.
+func TestOpenTakesOverCanceledPreload(t *testing.T) {
+	release := make(chan struct{})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+		_, _ = w.Write([]byte(mp4Bytes))
+	}))
+	defer srv.Close()
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolves atomic.Int32
+	resolve := func(ctx context.Context, _ source.PlayPrefer) (*source.Playback, error) {
+		resolves.Add(1)
+		return &source.Playback{Streams: []source.Stream{{URL: srv.URL + "/v.mp4", Container: source.ContainerMP4}}}, nil
+	}
+	pctx, pcancel := context.WithCancel(context.Background())
+	mgr.Preload(pctx, "hongguo", "m", "e", 0, resolve)
+	for hits.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	// As stopPlayer does: the preload stops, then play opens the episode.
+	pcancel()
+	time.Sleep(100 * time.Millisecond)
+	opened := make(chan Item)
+	go func() {
+		it, err := mgr.Open(context.Background(), "hongguo", "m", "e", resolve)
+		if err != nil {
+			t.Error(err)
+		}
+		opened <- it
+	}()
+	time.Sleep(orphanGrace + 500*time.Millisecond)
+	close(release)
+	it := <-opened
+	if it.Path == "" || resolves.Load() != 1 || hits.Load() != 1 {
+		t.Fatalf("Open = %+v; resolves %d, downloads %d", it, resolves.Load(), hits.Load())
+	}
+}

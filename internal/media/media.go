@@ -52,7 +52,16 @@ type fetchJob struct {
 	done chan struct{}
 	item Item
 	err  error
+	// waiters counts the callers waiting for the job; cancel ends its
+	// work once none has for orphanGrace. Both are guarded by Manager.mu.
+	waiters int
+	cancel  context.CancelFunc
 }
+
+// orphanGrace is how long a job no caller waits for goes on before it is
+// canceled: playing an episode cancels its preload just before it asks
+// for the episode, and takes over the download the preload started.
+var orphanGrace = 2 * time.Second
 
 // Item is what the player opens: a local file, or the loopback URL of an
 // HLS stream.
@@ -210,9 +219,7 @@ func (m *Manager) open(ctx context.Context, sourceID, mediaID, episodeID string,
 			return Item{}, ctx.Err()
 		}
 	}
-	return m.runSingle(ctx, jobKey, func() (Item, error) {
-		fetchCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
+	return m.runSingle(ctx, jobKey, func(fetchCtx context.Context) (Item, error) {
 		pb, err := resolve(fetchCtx, Prefer())
 		if err != nil {
 			return Item{}, err
@@ -256,39 +263,72 @@ func (m *Manager) Preload(ctx context.Context, sourceID, mediaID, episodeID stri
 func (m *Manager) waitFor(ctx context.Context, key string) (it Item, err error, ok bool) {
 	m.mu.Lock()
 	job := m.inflight[key]
+	if job != nil {
+		job.waiters++
+	}
 	m.mu.Unlock()
 	if job == nil {
 		return Item{}, nil, false
 	}
-	select {
-	case <-job.done:
-		return job.item, job.err, true
-	case <-ctx.Done():
-		return Item{}, ctx.Err(), true
-	}
+	it, err = m.await(ctx, key, job)
+	return it, err, true
 }
 
-func (m *Manager) runSingle(ctx context.Context, key string, work func() (Item, error)) (Item, error) {
+// runSingle runs work for key, or joins the job that runs it already.
+// The work stops, its context canceled, when no caller has waited for it
+// for orphanGrace, and after three minutes.
+func (m *Manager) runSingle(ctx context.Context, key string, work func(context.Context) (Item, error)) (Item, error) {
 	m.mu.Lock()
 	job, ok := m.inflight[key]
 	if !ok {
-		job = &fetchJob{done: make(chan struct{})}
+		jobCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		job = &fetchJob{done: make(chan struct{}), cancel: cancel}
 		m.inflight[key] = job
 		go func() {
-			job.item, job.err = work()
+			defer cancel()
+			job.item, job.err = work(jobCtx)
 			m.mu.Lock()
-			delete(m.inflight, key)
+			if m.inflight[key] == job {
+				delete(m.inflight, key)
+			}
 			m.mu.Unlock()
 			close(job.done)
 		}()
 	}
+	job.waiters++
 	m.mu.Unlock()
+	return m.await(ctx, key, job)
+}
+
+// await waits for job, which counts the caller among its waiters, until
+// ctx ends.
+func (m *Manager) await(ctx context.Context, key string, job *fetchJob) (Item, error) {
 	select {
 	case <-job.done:
+		m.mu.Lock()
+		job.waiters--
+		m.mu.Unlock()
 		return job.item, job.err
 	case <-ctx.Done():
-		return Item{}, ctx.Err()
 	}
+	m.mu.Lock()
+	job.waiters--
+	if job.waiters == 0 {
+		time.AfterFunc(orphanGrace, func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if job.waiters > 0 {
+				return
+			}
+			// A caller to come starts the work anew.
+			if m.inflight[key] == job {
+				delete(m.inflight, key)
+			}
+			job.cancel()
+		})
+	}
+	m.mu.Unlock()
+	return Item{}, ctx.Err()
 }
 
 // ErrNoPlayableStream is the error of an episode none of whose streams
