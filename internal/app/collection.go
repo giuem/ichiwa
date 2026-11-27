@@ -20,7 +20,8 @@ type colState struct {
 	rows   []FilterRow
 	chosen map[string]string
 	first  *source.CollectionPage // the first page: title, header, sections, layout
-	// haveFirst tells first is the first page of the current choice.
+	// haveFirst tells first is the first page of the current choice, one
+	// whose list did not fail: a retry's first page replaces one that did.
 	haveFirst bool
 	results   Feed
 	sections  map[string]*Feed // sections the host loads, by collection ID
@@ -43,7 +44,7 @@ func (cs *colState) applyPage(fp feedPage) {
 	if fp.page == nil || cs.haveFirst {
 		return
 	}
-	cs.haveFirst = true
+	cs.haveFirst = !fp.failed
 	cs.first = fp.page
 	cs.rows = fp.page.Filters
 	next := map[string]string{}

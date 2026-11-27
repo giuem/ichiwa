@@ -363,3 +363,28 @@ func TestDevReloadKeepsLastGoodCode(t *testing.T) {
 		t.Fatalf("fixed: title %q, shown %v", title(), app.src)
 	}
 }
+
+// A first page whose list failed shows what it has, and the retry's
+// first page replaces it whole: header, sections and filters.
+func TestRetryReplacesFailedFirstPage(t *testing.T) {
+	cs := &colState{id: "x"}
+	failed := &source.CollectionPage{Filters: []FilterRow{{Key: "old", Title: "旧"}}}
+	cs.applyPage(feedPage{page: failed, failed: true})
+	if cs.first != failed || len(cs.rows) != 1 {
+		t.Fatalf("failed page not shown: %+v", cs)
+	}
+	good := &source.CollectionPage{
+		Header:   &source.Header{Title: "新的"},
+		Sections: []Section{{Title: "分区"}},
+		Filters:  []FilterRow{{Key: "new", Title: "新"}, {Key: "more", Title: "多"}},
+	}
+	cs.applyPage(feedPage{page: good})
+	if cs.first != good || len(cs.rows) != 2 || cs.rows[0].Key != "new" {
+		t.Fatalf("retry's page dropped: %+v", cs)
+	}
+	// Later pages do not replace the first.
+	cs.applyPage(feedPage{page: &source.CollectionPage{}})
+	if cs.first != good {
+		t.Fatal("a later page replaced the first")
+	}
+}

@@ -22,6 +22,9 @@ type feedPage struct {
 	cursor string
 	more   bool
 	page   *source.CollectionPage // full protocol page for onPage (filters, header, sections)
+	// failed tells the page came with an error: its list failed, and a
+	// retry asks for it again.
+	failed bool
 }
 
 func pageResult(p *source.CollectionPage, err error) (feedPage, error) {
@@ -154,6 +157,7 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 		if err != nil {
 			f.loaded = true
 			if p.page != nil && f.onPage != nil {
+				p.failed = true
 				f.onPage(p)
 			}
 			f.err = errText(err)
