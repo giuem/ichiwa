@@ -179,3 +179,39 @@ func TestLeavingPageCancelsCalls(t *testing.T) {
 		t.Fatal("a source's own Canceled shows no error")
 	}
 }
+
+// A list the source rate-limited waits out retryAfter before asking
+// again, counting down in its error (protocol §10).
+func TestRateLimitedListWaits(t *testing.T) {
+	var calls atomic.Int32
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a"},
+		OnCollection: func(ctx context.Context, r source.CollectionRequest) (*source.CollectionPage, error) {
+			calls.Add(1)
+			e := source.NewError(source.ErrRateLimited, "请求太频繁", nil)
+			e.RetryAfter = 30 * time.Second
+			return nil, e
+		},
+	}
+	app, run := cancelApp(t, src)
+	f := app.feed(pageRecommend)
+	app.loadMore(f)
+	run(5 * time.Second)
+	if got := f.errText(); got != "请求太频繁（30 秒后可以重试）" {
+		t.Fatalf("error = %q", got)
+	}
+	// A retry meanwhile asks nothing and keeps the error.
+	f.err = ""
+	app.loadMore(f)
+	if calls.Load() != 1 || f.loading || f.err == "" {
+		t.Fatalf("retry during the wait: calls %d, %+v", calls.Load(), f)
+	}
+	// Once the wait is over, it asks again.
+	f.retryAt = time.Now().Add(-time.Second)
+	f.err = ""
+	app.loadMore(f)
+	run(5 * time.Second)
+	if calls.Load() != 2 {
+		t.Fatalf("after the wait: calls %d", calls.Load())
+	}
+}

@@ -56,6 +56,10 @@ type Feed struct {
 	scroll  ui.ScrollState
 	gen     int // bumped by reset, so results of earlier loads are dropped
 	stalls  int // pages in a row that brought nothing new
+	// retryAt is when a source that limited the rate lets the feed ask
+	// again (protocol §10); the error stays until then.
+	retryAt time.Time
+	waitErr string
 	// exact takes a page without a cursor as the end, as the protocol
 	// says, rather than ask again: for plugins, whose lists end when
 	// they say.
@@ -90,7 +94,8 @@ func collectionFetch(req source.CollectionRequest) fetchFunc {
 
 // reset empties the feed, keeping where it loads from.
 func (f *Feed) reset() {
-	*f = Feed{src: f.src, fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache, exact: f.exact}
+	*f = Feed{src: f.src, fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache, exact: f.exact,
+		retryAt: f.retryAt, waitErr: f.waitErr}
 }
 
 func (f *Feed) add(items []Card) {
@@ -136,6 +141,10 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 	if f.loading || !f.more || f.fetch == nil || f.src == nil {
 		return
 	}
+	if f.retryWait() > 0 {
+		f.err = f.waitErr // a retry clears it: it stays until the wait ends
+		return
+	}
 	f.loading, f.err = true, ""
 	src, fetch, cursor, gen := f.src, f.fetch, f.cursor, f.gen
 	wait := time.Duration(f.stalls) * stallWait
@@ -161,6 +170,10 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 				f.onPage(p)
 			}
 			f.err = errText(err)
+			if wait := source.RetryAfter(err); wait > 0 {
+				f.retryAt, f.waitErr = time.Now().Add(wait), f.err
+				app.countdown(f.retryAt)
+			}
 			return
 		}
 		f.loaded = true
@@ -172,6 +185,38 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 		app.fill(ctx, f, added)
 		app.warm()
 	})
+}
+
+// retryWait is how many seconds the feed still waits to ask again.
+func (f *Feed) retryWait() int {
+	if d := time.Until(f.retryAt); d > 0 {
+		return int(d.Seconds()) + 1
+	}
+	return 0
+}
+
+// errText is the feed's error as shown, with the wait before a retry.
+func (f *Feed) errText() string {
+	if f.err == "" {
+		return ""
+	}
+	if s := f.retryWait(); s > 0 {
+		return fmt.Sprintf("%s（%d 秒后可以重试）", f.err, s)
+	}
+	return f.err
+}
+
+// countdown redraws the window each second until, for a countdown.
+func (app *App) countdown(until time.Time) {
+	if app.win == nil {
+		return
+	}
+	go func() {
+		for time.Now().Before(until) {
+			time.Sleep(time.Second)
+			app.win.Invalidate()
+		}
+	}()
 }
 
 // A source ends a list early now and then: Hongguo's feeds answer a page

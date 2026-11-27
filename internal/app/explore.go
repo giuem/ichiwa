@@ -133,13 +133,13 @@ func (app *App) filterPage(c *ui.Context) {
 		switch {
 		case len(r.items) > 0:
 			app.grid(c, visible(r, n), episodesExtras)
-			app.feedFooter(c, r.loading, r.err, r.more, retry)
+			app.feedFooter(c, r.loading, r.errText(), r.more, retry)
 		case r.loaded && !r.more && r.err == "":
 			ui.Text(c, "没有符合条件的短剧，换个条件试试").FontSize(13).TextColor(p.muted).Padding(40, 0).AlignSelf(ui.Center)
 		case !fs.rowsOK && r.err != "":
 			// Filter panel already shows the error and retry button.
 		default:
-			app.feedFooter(c, r.err == "", r.err, true, retry)
+			app.feedFooter(c, r.err == "", r.errText(), true, retry)
 		}
 	})
 	app.pump(c, r)
@@ -345,13 +345,13 @@ func (app *App) personPage(c *ui.Context) {
 		switch {
 		case len(f.items) > 0:
 			app.grid(c, visible(f, n), episodesExtras)
-			app.feedFooter(c, f.loading, f.err, f.more, retry)
+			app.feedFooter(c, f.loading, f.errText(), f.more, retry)
 		case f.loaded && !f.more && f.err == "":
 			ui.Text(c, "暂无作品").FontSize(13).TextColor(p.muted).Padding(24, 0)
 		case ps.headerErr != "" && !ps.worksReady:
 			// Header retry is shown in personFacts right above.
 		default:
-			app.feedFooter(c, f.err == "", f.err, true, retry)
+			app.feedFooter(c, f.err == "", f.errText(), true, retry)
 		}
 	})
 	app.pump(c, f)

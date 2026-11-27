@@ -112,7 +112,7 @@ func (app *App) collectionPage(c *ui.Context, id string) {
 	})
 	if !r.loaded && len(r.items) == 0 && cs.first == nil {
 		if r.err != "" {
-			app.centered(c, iconX, "加载失败", r.err, retry)
+			app.centered(c, iconX, "加载失败", r.errText(), retry)
 		} else {
 			app.skeletonGrid(c, 3)
 		}
@@ -162,9 +162,9 @@ func (app *App) collectionPage(c *ui.Context, id string) {
 				}
 				return episodesExtras(i, s)
 			})
-			app.feedFooter(c, r.loading, r.err, r.more, retry)
+			app.feedFooter(c, r.loading, r.errText(), r.more, retry)
 		case r.err != "":
-			app.feedFooter(c, false, r.err, true, retry)
+			app.feedFooter(c, false, r.errText(), true, retry)
 		case r.loading:
 			app.feedFooter(c, true, "", true, retry)
 		case cs.first == nil || len(cs.first.Sections) == 0:
@@ -219,7 +219,7 @@ func (app *App) section(c *ui.Context, cs *colState, sec Section, n int) {
 				return episodesExtras(i, s)
 			})
 		case f != nil && f.err != "":
-			app.feedFooter(c, false, f.err, true, func() { f.err = ""; f.more = true; app.loadMore(f) })
+			app.feedFooter(c, false, f.errText(), true, func() { f.err = ""; f.more = true; app.loadMore(f) })
 		case f != nil && f.loading:
 			app.feedFooter(c, true, "", true, nil)
 		}

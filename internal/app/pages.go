@@ -299,7 +299,7 @@ func (app *App) feedPage(c *ui.Context, colID string) {
 	retry := func() { f.err = ""; app.loadMore(f) }
 	switch {
 	case len(f.items) == 0 && f.err != "":
-		app.centered(c, iconX, "加载失败", f.err, retry)
+		app.centered(c, iconX, "加载失败", f.errText(), retry)
 		return
 	case len(f.items) == 0:
 		app.skeletonGrid(c, 3)
@@ -308,7 +308,7 @@ func (app *App) feedPage(c *ui.Context, colID string) {
 	n, _ := columns(app.contentWidth(c))
 	ui.Scroll(c.Key("feed-"+colID)).TrackScroll(&f.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
 		app.grid(c, visible(f, n), episodesExtras)
-		app.feedFooter(c, f.loading, f.err, f.more, retry)
+		app.feedFooter(c, f.loading, f.errText(), f.more, retry)
 	})
 	app.pump(c, f)
 }
@@ -373,7 +373,7 @@ func (app *App) rankPage(c *ui.Context) {
 	app.header(c, "排行榜", "看看大家都在追什么", nil)
 	if len(r.filters) == 0 && !l.loaded {
 		if l.err != "" {
-			app.centered(c, iconX, "加载失败", l.err, retry)
+			app.centered(c, iconX, "加载失败", l.errText(), retry)
 		} else {
 			app.skeletonGrid(c, 3)
 		}
@@ -413,7 +413,7 @@ func (app *App) rankPage(c *ui.Context) {
 	}
 	if len(l.items) == 0 {
 		if l.err != "" {
-			app.centered(c, iconX, "加载失败", l.err, retry)
+			app.centered(c, iconX, "加载失败", l.errText(), retry)
 		} else if l.loaded && !l.more {
 			app.centered(c, iconTrophy, "暂无排行", "", nil)
 		} else {
@@ -424,7 +424,7 @@ func (app *App) rankPage(c *ui.Context) {
 	if l.items[0].Shape == source.ShapeCircle {
 		ui.Scroll(c.Key("rank-actors")).TrackScroll(&l.scroll).Grow(1).Padding(4, pagePad, 0).Children(func() {
 			app.actorGrid(c, l.items)
-			app.feedFooter(c, l.loading, l.err, l.more, retry)
+			app.feedFooter(c, l.loading, l.errText(), l.more, retry)
 		})
 		app.pump(c, l)
 		return
@@ -447,7 +447,7 @@ func (app *App) rankPage(c *ui.Context) {
 				return joinNonEmpty(fmt.Sprintf("第%d名", i+1), s.Note)
 			}}
 		})
-		app.feedFooter(c, l.loading, l.err, l.more, retry)
+		app.feedFooter(c, l.loading, l.errText(), l.more, retry)
 	})
 	app.pump(c, l)
 }
@@ -550,7 +550,7 @@ func (app *App) searchPage(c *ui.Context) {
 		case r.loading:
 			app.skeletonGrid(c, 2)
 		case r.err != "":
-			app.centered(c, iconX, "搜索失败", r.err, retry)
+			app.centered(c, iconX, "搜索失败", r.errText(), retry)
 		default:
 			app.centered(c, iconSearch, "没有找到“"+s.shown+"”", "换个关键词试试", nil)
 		}
@@ -561,7 +561,7 @@ func (app *App) searchPage(c *ui.Context) {
 	ui.Scroll(c.Key("results-"+q)).TrackScroll(&r.scroll).Grow(1).Padding(0, pagePad, 0).Children(func() {
 		ui.Text(c, fmt.Sprintf("“%s”的搜索结果", q)).FontSize(13).TextColor(p.muted).Margin(0, 0, 16)
 		app.grid(c, visible(r, n), episodesExtras)
-		app.feedFooter(c, r.loading, r.err, r.more, retry)
+		app.feedFooter(c, r.loading, r.errText(), r.more, retry)
 	})
 	app.pump(c, r)
 }
