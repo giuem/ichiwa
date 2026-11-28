@@ -76,6 +76,27 @@ func TestNoSourceGuides(t *testing.T) {
 	accessOf(t, tt, ui.RoleHeading, "片源")
 }
 
+// With sources installed and all turned off, the guide says so: there is
+// one to turn on, not to add.
+func TestAllSourcesOffGuides(t *testing.T) {
+	app := viewApp(t, lightPalette(), namedSource("a", "甲片源"))
+	app.SetSourceOn("a", false)
+	app.Go(core.PageHistory)
+	app.Go("")
+	tt := ui.NewTester(func(c *ui.Context) {
+		ui.Row(c).Fill().Children(func() {
+			ui.Column(c).Width(sidebarWidth).Children(func() { app.sidebar(c) })
+			ui.Column(c).Grow(1).Children(func() { app.content(c) })
+		})
+	}, 1100, 700)
+	tt.Frame()
+	accessOf(t, tt, ui.RoleButton, "打开片源")
+	accessOf(t, tt, ui.RoleHeading, "没有打开的片源")
+	if tt.HasText("还没有片源") || tt.HasText("添加片源") {
+		t.Error("the guide asks to add a source with one installed")
+	}
+}
+
 // The sources page turns a source off and on with a switch the keyboard
 // and screen readers reach.
 func TestSourcesPageSwitches(t *testing.T) {

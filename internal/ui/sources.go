@@ -65,8 +65,9 @@ func (app *App) sourceMenu(m *ui.Menu) {
 func (app *App) sourceSwitch(c *ui.Context) {
 	p := app.pal
 	if app.Src == nil {
+		label := ternary(len(app.Sources.All()) > 0, "打开片源", "添加片源")
 		b := ui.ButtonBase(c.Key("source")).Height(38).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).
-			Label("添加片源")
+			Label(label)
 		if app.Page == core.PageSources {
 			b.Current(ui.CurrentPage)
 		}
@@ -75,7 +76,7 @@ func (app *App) sourceSwitch(c *ui.Context) {
 			ui.Box(c).Size(24, 24).Radius(7).Center().Background(p.accent.Alpha(0.12)).Children(func() {
 				ui.Text(c, "+").FontSize(16).Bold().TextColor(p.accent)
 			})
-			ui.Text(c, "添加片源").FontSize(13.5).FontWeight(600).TextColor(p.text).Grow(1).SingleLine()
+			ui.Text(c, label).FontSize(13.5).FontWeight(600).TextColor(p.text).Grow(1).SingleLine()
 		})
 		if b.Clicked() {
 			app.Go(core.PageSources)
@@ -99,17 +100,21 @@ func (app *App) sourceSwitch(c *ui.Context) {
 }
 
 // guidePage shows, while no source is on, what sources are and where to
-// add one.
+// add one, or, with some installed and all turned off, to turn one on.
 func (app *App) guidePage(c *ui.Context) {
 	p := app.pal
-	app.tell(c, "还没有片源")
+	title, text := "还没有片源", "片源提供可以看的剧。添加一个片源，就能在这里浏览、搜索和播放。"
+	if len(app.Sources.All()) > 0 {
+		title, text = "没有打开的片源", "装好的片源都关掉了。在片源页打开一个，就能在这里浏览、搜索和播放。"
+	}
+	app.tell(c, title)
 	ui.Box(c).Height(max(c.TitleBar().Height, 28) + 10).DragWindow()
 	ui.Column(c).Grow(1).Center().Gap(10).Padding(40).Children(func() {
 		ui.Box(c).Size(64, 64).Radius(999).Background(p.surface).Center().Margin(0, 0, 6).Children(func() {
 			ui.Icon(c, iconFilm).Size(26, 26).TextColor(p.muted)
 		})
-		ui.Text(c, "还没有片源").FontSize(16).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
-		ui.Text(c, "片源提供可以看的剧。添加一个片源，就能在这里浏览、搜索和播放。").FontSize(13).TextColor(p.muted).TextAlign(ui.Center).MaxWidth(420)
+		ui.Text(c, title).FontSize(16).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
+		ui.Text(c, text).FontSize(13).TextColor(p.muted).TextAlign(ui.Center).MaxWidth(420)
 		app.primary(c, nil, "管理片源").Margin(10, 0, 0).OnClick(func() { app.Go(core.PageSources) })
 	})
 }
