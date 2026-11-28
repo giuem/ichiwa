@@ -40,6 +40,12 @@ func launch(t *testing.T, dir string) *App {
 	t.Cleanup(func() {
 		app.leaveSource()
 		app.Lib.Close()
+		// Windows removes no file still open.
+		for _, s := range app.Sources.All() {
+			if c, ok := s.(interface{ Close() error }); ok {
+				c.Close()
+			}
+		}
 	})
 	for app.NavBusy && h.run(5*time.Second) {
 	}

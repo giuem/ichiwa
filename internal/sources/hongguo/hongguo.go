@@ -36,6 +36,7 @@ const (
 // Source implements source.Source using openhongguo.
 type Source struct {
 	client *sdk.Client
+	logs   *os.File // the SDK's log, nil when it did not open
 
 	calendarBudget time.Duration // max wait for calendar notes in Media; defaults to defaultCalendarBudget
 	profileWait    time.Duration // max wait for an actor's profile after their works; defaults to defaultProfileWait
@@ -58,21 +59,35 @@ var _ source.Source = (*Source)(nil)
 // in dataDir.
 func New(dataDir string) (*Source, error) {
 	opts := sdk.Options{RetryAttempts: 3, DeviceResets: sdk.Int(3)}
-	if l := openLog(filepath.Join(dataDir, "sdk.log")); l != nil {
-		opts.Logger = l
+	logs := openLog(filepath.Join(dataDir, "sdk.log"))
+	if logs != nil {
+		opts.Logger = log.New(logs, "", log.LstdFlags)
 	}
 	client, err := adapters.NewClient(filepath.Join(dataDir, "anonymous.json"), opts)
 	if err != nil {
+		if logs != nil {
+			logs.Close()
+		}
 		return nil, err
 	}
 	return &Source{
 		client: client,
+		logs:   logs,
 		days:   map[string]calDay{},
 		panels: map[string]panelCache{},
 	}, nil
 }
 
-func openLog(path string) *log.Logger {
+// Close closes the SDK's log, which the source keeps open while the app
+// runs; the source is not called after.
+func (s *Source) Close() error {
+	if s.logs == nil {
+		return nil
+	}
+	return s.logs.Close()
+}
+
+func openLog(path string) *os.File {
 	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
 	if fi, err := os.Stat(path); err == nil && fi.Size() > 1<<20 {
 		flags |= os.O_TRUNC
@@ -81,7 +96,7 @@ func openLog(path string) *log.Logger {
 	if err != nil {
 		return nil
 	}
-	return log.New(f, "", log.LstdFlags)
+	return f
 }
 
 func withTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
