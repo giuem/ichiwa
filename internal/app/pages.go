@@ -45,6 +45,9 @@ type searchState struct {
 	Suggests   []string
 	SuggestFor string
 	suggestGen int
+	// suggestStop cancels the asking for suggestions under way, waiting
+	// or called.
+	suggestStop context.CancelFunc
 	Focus      bool
 	Told       string // the query screen readers were told the results of
 }
@@ -56,8 +59,7 @@ func (app *App) RunSearch(q string) {
 	f := &s.Results
 	f.reset()
 	s.Shown, s.Told = q, ""
-	s.Suggests, s.SuggestFor = nil, ""
-	s.suggestGen++
+	s.stopSuggest()
 	if q == "" {
 		f.fetch = nil
 		return
@@ -82,11 +84,16 @@ func (app *App) Typed(q string) {
 		return
 	}
 	if !app.HasCap(source.CapSearchSuggest) || q == s.Shown {
-		s.Suggests, s.SuggestFor = nil, ""
+		s.stopSuggest()
 		return
 	}
+	if s.suggestStop != nil {
+		s.suggestStop() // typing goes on: only the last word typed asks
+	}
 	s.suggestGen++
-	gen, src, ctx := s.suggestGen, app.Src, app.pageContext()
+	ctx, stop := context.WithCancel(app.pageContext())
+	gen, src := s.suggestGen, app.Src
+	s.suggestStop = stop
 	async(app, func() ([]string, error) {
 		select {
 		case <-time.After(suggestWait):
@@ -95,11 +102,23 @@ func (app *App) Typed(q string) {
 		}
 		return src.Suggest(ctx, q)
 	}, func(words []string, err error) {
+		defer stop()
 		if s.suggestGen != gen || ctx.Err() != nil || err != nil {
 			return
 		}
+		s.suggestStop = nil
 		s.Suggests, s.SuggestFor = words, q
 	})
+}
+
+// stopSuggest drops the suggestions, and stops asking for them.
+func (s *searchState) stopSuggest() {
+	if s.suggestStop != nil {
+		s.suggestStop()
+		s.suggestStop = nil
+	}
+	s.suggestGen++
+	s.Suggests, s.SuggestFor = nil, ""
 }
 
 // loadHot loads the search home sections, once.

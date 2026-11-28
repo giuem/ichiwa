@@ -81,3 +81,38 @@ func TestSearchLoadingAcrossSwitch(t *testing.T) {
 		t.Errorf("the results stay loading: loading %v, items %d", r.Loading, len(r.Items))
 	}
 }
+
+// Suggestions wait for typing to rest: only the last of quick keystrokes
+// asks the source, and a search run asks nothing more.
+func TestSuggestWaitsForTyping(t *testing.T) {
+	var calls atomic.Int32
+	var asked atomic.Value
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a", Capabilities: []source.Capability{source.CapSearch, source.CapSearchSuggest}},
+		OnSuggest: func(ctx context.Context, q string) ([]string, error) {
+			calls.Add(1)
+			asked.Store(q)
+			return []string{q + "一"}, nil
+		},
+	}
+	app, run := cancelApp(t, src)
+	for _, q := range []string{"兔", "兔子", "兔子的", "兔子的家", "兔子的家人"} {
+		app.Typed(q)
+	}
+	for run(suggestWait + 300*time.Millisecond) {
+	}
+	if n := calls.Load(); n != 1 || asked.Load() != "兔子的家人" {
+		t.Errorf("asked %d times, last for %v", n, asked.Load())
+	}
+	if app.Search.SuggestFor != "兔子的家人" {
+		t.Errorf("suggests for %q", app.Search.SuggestFor)
+	}
+
+	app.Typed("猫")
+	app.RunSearch("猫")
+	for run(suggestWait + 300*time.Millisecond) {
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("a search run still asked for suggestions: %d calls", n)
+	}
+}
