@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -33,6 +34,10 @@ func (app *App) tour() {
 			fmt.Fprintln(os.Stderr, "shot", name)
 		}
 		goTo := func(page string) { app.win.Update(func() { app.Go(page) }) }
+		// What the tour changes of the settings goes back as it was.
+		var danmaku bool
+		var off map[string]bool
+		mygo.RunOnMain(func() { danmaku, off = app.Lib.Danmaku, maps.Clone(app.Lib.Off) })
 		hg := app.SourceID() == hongguo.SourceID
 		query, filterKey, filterValue, actors := "兔子", "genre", "奇幻", ""
 		if hg {
@@ -119,8 +124,10 @@ func (app *App) tour() {
 		shot("32-no-source", 2*time.Second)
 		app.win.Update(func() {
 			for _, s := range app.Sources.All() {
-				app.SetSourceOn(s.Info().ID, true)
+				app.SetSourceOn(s.Info().ID, !off[s.Info().ID])
 			}
+			app.Lib.Danmaku = danmaku
+			app.Lib.MarkDirty()
 		})
 		mygo.RunOnMain(func() { mygo.App.Quit() })
 	}()
