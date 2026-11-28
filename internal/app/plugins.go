@@ -263,8 +263,12 @@ func (app *App) reloaded(p *plugin.Plugin, err error) {
 		return
 	}
 	app.Toast = "插件已重新加载"
+	// The navigation and pages may have changed: they load again, now
+	// or when it shows.
 	if app.Src == source.Source(p) {
-		app.refreshSource() // the navigation and pages may have changed
+		app.refreshSource()
+	} else {
+		delete(app.kept, p.Info().ID)
 	}
 }
 

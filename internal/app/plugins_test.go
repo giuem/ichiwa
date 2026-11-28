@@ -270,3 +270,43 @@ func TestRetryReplacesFailedFirstPage(t *testing.T) {
 		t.Fatal("a later page replaced the first")
 	}
 }
+
+// A plugin reloaded while another source shows comes back with its new
+// navigation and pages, not those it showed before.
+func TestDevReloadedAwayShowsAnew(t *testing.T) {
+	app, _, done := devApp(t)
+	other := navSource("other", "o1")
+	app.Sources.Add(other)
+	app.UseSource(other)
+	dir := writeDevDir(t, devJS("一"))
+	if err := app.LoadDev(dir); err != nil {
+		t.Fatal(err)
+	}
+	p := app.Dev.Plugin
+	run := func() {
+		for app.NavBusy {
+			select {
+			case fn := <-done:
+				fn()
+			case <-time.After(10 * time.Second):
+				t.Fatal("the navigation never came")
+			}
+		}
+	}
+	app.SwitchSource(p)
+	run()
+	if len(app.Nav) != 1 || app.Nav[0].Title != "一" {
+		t.Fatalf("nav = %+v", app.Nav)
+	}
+	app.SwitchSource(other)
+	run()
+	if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte(devJS("二")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.ReloadDev()
+	app.SwitchSource(p)
+	run()
+	if len(app.Nav) != 1 || app.Nav[0].Title != "二" {
+		t.Fatalf("after the reload, nav = %+v", app.Nav)
+	}
+}
