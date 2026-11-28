@@ -96,10 +96,10 @@ func (app *App) tour() {
 				app.Open(app.SourceID(), Card{Kind: source.CardMedia, ID: "bipbop", Title: "测试信号"}, 0)
 			})
 			shot("22-player-hls", 12*time.Second)
-			app.win.Update(func() { app.CloseWatch(); app.Dev.LogOpen = true })
+			app.win.Update(func() { app.CloseWatch(); app.Go(core.PageSources); app.LogOf = app.SourceID() })
 			shot("23-log", 2*time.Second)
 		}
-		app.win.Update(func() { app.CloseWatch(); app.Dev.LogOpen = false; app.Go(core.PageSources) })
+		app.win.Update(func() { app.CloseWatch(); app.Go(core.PageSources) })
 		shot("30-sources", 2*time.Second)
 		app.win.Update(func() {
 			for _, s := range app.SourcesOn() {

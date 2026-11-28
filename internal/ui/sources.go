@@ -110,11 +110,16 @@ func (app *App) guidePage(c *ui.Context) {
 	})
 }
 
-// sourcesPage manages the sources: which are on, and the developer mode.
+// sourcesPage manages the sources: which are on, their logs, and the
+// developer mode. Installing and updating come to it later.
 func (app *App) sourcesPage(c *ui.Context) {
+	if app.LogOf != "" {
+		app.logPage(c, app.LogOf)
+		return
+	}
 	p := app.pal
 	app.header(c, "片源", "打开的片源会出现在侧栏顶部，可以随时切换", nil)
-	ui.Scroll(c.Key("sources")).Grow(1).Padding(0, pagePad, 28).Gap(28).Children(func() {
+	ui.Scroll(c.Key("sources")).Grow(1).Padding(0, pagePad, 28).Gap(30).Children(func() {
 		ui.Column(c).Gap(10).Children(func() {
 			app.sectionTitle(c, "已安装")
 			all := app.Sources.All()
@@ -125,6 +130,70 @@ func (app *App) sourcesPage(c *ui.Context) {
 				app.sourceRow(c, s)
 			}
 		})
+		ui.Column(c).Gap(8).MaxWidth(720).Children(func() {
+			app.sectionTitle(c, "添加片源")
+			ui.Text(c, "以后可以在这里从片源仓库安装新的片源，并更新已经装好的片源。").FontSize(13).LineHeight(1.5).TextColor(p.muted)
+		})
+		app.devSection(c)
+	})
+}
+
+// devSection is the developer mode: a plugin loaded from a folder,
+// reloaded as its files change.
+func (app *App) devSection(c *ui.Context) {
+	p := app.pal
+	ui.Column(c).Gap(10).MaxWidth(720).Children(func() {
+		app.sectionTitle(c, "开发者模式")
+		ui.Text(c, "从本机的文件夹加载正在开发的片源插件，文件改动后自动重新加载。").FontSize(13).LineHeight(1.5).TextColor(p.muted)
+		if app.Dev.Dir != "" {
+			ui.Column(c).Gap(4).Padding(12, 14).Radius(12).Background(p.surface).Children(func() {
+				ui.Text(c, "文件夹").FontSize(11.5).FontWeight(600).TextColor(p.muted)
+				ui.Text(c, app.Dev.Dir).FontSize(12.5).TextColor(p.text).Selectable()
+				if app.Dev.Err != "" {
+					ui.Text(c, "加载失败："+app.Dev.Err).FontSize(12).TextColor(p.accent).Role(ui.RoleAlert).Margin(4, 0, 0)
+				}
+			})
+		}
+		ui.Row(c).Gap(10).Wrap().Children(func() {
+			app.secondary(c, nil, ternary(app.Dev.Dir == "", "选择文件夹…", "换一个文件夹…")).OnClick(app.pickDevFolder)
+			if app.Dev.Dir != "" {
+				app.secondary(c, iconRefresh, "重新加载").OnClick(app.ReloadDev)
+				app.secondary(c, iconX, "关闭开发者模式").OnClick(func() {
+					app.UnloadDev()
+					app.SaveDevSettings()
+				})
+			}
+		})
+	})
+}
+
+// logPageLines is how much of a log the page shows: the newest lines.
+const logPageLines = 500
+
+// logPage shows the log of the source id as it grows.
+func (app *App) logPage(c *ui.Context, id string) {
+	p := app.pal
+	lines, ok := app.LogLines(id, logPageLines)
+	if !ok {
+		app.LogOf = ""
+		return
+	}
+	_ = app.Dev.LogGen // it changes as lines come, redrawing them
+	name := app.SourceName(id)
+	c.OnShortcut(0, ui.KeyEscape, func() { app.LogOf = "" })
+	bar := c.TitleBar()
+	app.tell(c, name+"的日志")
+	ui.Row(c).Padding(max(bar.Height, 28)+4, pagePad-8, 6).Gap(6).AlignItems(ui.Center).DragWindow().Children(func() {
+		iconButton(c, iconChevronLeft, 18, p.muted, "返回").OnClick(func() { app.LogOf = "" })
+		ui.Text(c, name+"的日志").FontSize(20).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
+	})
+	if len(lines) == 0 {
+		lines = []string{"还没有日志"}
+	}
+	ui.Scroll(c.Key("log-"+id)).Grow(1).Padding(4, pagePad, 24).Children(func() {
+		for i, l := range lines {
+			ui.Text(c.Key(i), l).FontSize(12).TextColor(p.text).Selectable()
+		}
 	})
 }
 
@@ -157,6 +226,9 @@ func (app *App) sourceRow(c *ui.Context, s source.Source) {
 				ui.Text(c, info.Description).FontSize(12).TextColor(p.muted).MaxLines(2)
 			}
 		})
+		if core.HasLog(s) {
+			app.secondary(c.Key("log"), iconScroll, "日志").Label(info.Name + "的日志").OnClick(func() { app.LogOf = id })
+		}
 		on := app.SourceOn(id)
 		ui.Switch(c.Key("on"), &on).Label("打开" + info.Name).OnClick(func() {
 			app.SetSourceOn(id, on)

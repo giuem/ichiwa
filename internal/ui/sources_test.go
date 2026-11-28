@@ -2,12 +2,14 @@ package ui
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
 	core "github.com/giuem/ichiwa/internal/app"
+	"github.com/giuem/ichiwa/internal/plugin"
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
 )
@@ -137,4 +139,41 @@ func TestRecordsAcrossSources(t *testing.T) {
 	if app.Page != core.PageSources || app.Unavailable != nil {
 		t.Fatalf("page %q, unavailable %+v", app.Page, app.Unavailable)
 	}
+}
+
+// A plugin's log opens from its row on the sources page and goes back;
+// a built-in source has none. The developer mode offers a folder.
+func TestSourcesPageLogs(t *testing.T) {
+	p, err := plugin.Open(filepath.Join("..", "plugin", "testdata", "example"), plugin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Navigation(context.Background()); err != nil { // something to log
+		t.Fatal(err)
+	}
+	builtin := namedSource("hongguo", "红果短剧")
+	app := viewApp(t, lightPalette(), builtin, p)
+	app.Go(core.PageSources)
+	tt := ui.NewTester(app.content, 1000, 700)
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleButton, "红果短剧的日志"); ok {
+		t.Error("a built-in source offers a log")
+	}
+	accessOf(t, tt, ui.RoleButton, "选择文件夹…")
+	if err := tt.Click("示例片源的日志"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	accessOf(t, tt, ui.RoleHeading, "示例片源的日志")
+	if lines, _ := app.LogLines("example", 10); len(lines) == 0 {
+		t.Fatal("no lines")
+	}
+	if err := tt.Click("返回"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if app.LogOf != "" {
+		t.Fatal("back left the log open")
+	}
+	accessOf(t, tt, ui.RoleHeading, "片源")
 }

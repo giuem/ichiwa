@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -133,9 +134,8 @@ type devState struct {
 	Plugin *plugin.Plugin
 	Err    string
 	stop   context.CancelFunc
-	// logOpen shows the plugin's log page; logGen counts lines, to redraw.
-	LogOpen bool
-	LogGen  int
+	// LogGen counts the lines of the plugin's log, to redraw them.
+	LogGen int
 }
 
 // devSettings is what the developer mode keeps between launches.
@@ -371,4 +371,28 @@ func (app *App) LoadNav() {
 			app.srcPage, app.Lib.Page = app.Page, app.Page
 		}
 	})
+}
+
+// HasLog tells s keeps a log: it is a plugin.
+func HasLog(s source.Source) bool {
+	_, ok := s.(*plugin.Plugin)
+	return ok
+}
+
+// LogLines is the last n lines of the log of the source id, and whether
+// it keeps one.
+func (app *App) LogLines(id string, n int) ([]string, bool) {
+	p, ok := app.Sources.Get(id).(*plugin.Plugin)
+	if !ok {
+		return nil, false
+	}
+	var lines []string
+	for _, e := range p.Logs().Tail(n) {
+		// An entry may hold several lines; the last ones show.
+		lines = append(lines, strings.Split(e.String(), "\n")...)
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines, true
 }

@@ -122,6 +122,8 @@ type App struct {
 
 	// Watch is the player page, over the rest while it is open.
 	Watch *Watching
+	// LogOf is the source whose log the sources page shows, "" for none.
+	LogOf string
 	// Unavailable is a record of a source not available that the user
 	// opened, to tell about; nil when there is none.
 	Unavailable *Unavailable
@@ -285,6 +287,7 @@ func (app *App) Go(page string) {
 		app.leavePage()
 	}
 	app.Page = page
+	app.LogOf = ""
 	if !appPage(page) {
 		app.srcPage = page
 	}

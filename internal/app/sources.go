@@ -129,7 +129,7 @@ func (app *App) stash() {
 // nothing.
 func (app *App) show(s source.Source, b *browse) {
 	app.Src = s
-	app.Dev.LogOpen = false
+	app.LogOf = ""
 	app.NavBusy = false
 	if b == nil {
 		b = &browse{}

@@ -1,10 +1,7 @@
 package ui
 
 import (
-	"strings"
-
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
 )
 
 // userLocale is the language the user reads first, for plugins, which
@@ -30,7 +27,6 @@ func (app *App) pickDevFolder() {
 	}
 	if err := app.LoadDev(paths[0]); err != nil {
 		app.Toast = "插件加载失败：" + err.Error()
-		app.Dev.LogOpen = false
 		app.SaveDevSettings()
 		return
 	}
@@ -40,34 +36,3 @@ func (app *App) pickDevFolder() {
 }
 
 // logPageLines is how much of the log the page shows: the newest lines.
-const logPageLines = 500
-
-// logPage shows the log of the developer mode's plugin as it grows.
-func (app *App) logPage(c *ui.Context) {
-	p := app.pal
-	pl := app.Dev.Plugin
-	if pl == nil {
-		app.Dev.LogOpen = false
-		return
-	}
-	_ = app.Dev.LogGen
-	app.header(c, "插件日志", pl.Info().Name+" "+pl.Info().Version, func() {
-		app.secondary(c, iconX, "关闭").OnClick(func() { app.Dev.LogOpen = false })
-	})
-	var lines []string
-	for _, e := range pl.Logs().Tail(logPageLines) {
-		// An entry may hold several lines; the page shows its last ones.
-		lines = append(lines, strings.Split(e.String(), "\n")...)
-	}
-	if len(lines) > logPageLines {
-		lines = lines[len(lines)-logPageLines:]
-	}
-	if len(lines) == 0 {
-		lines = []string{"还没有日志"}
-	}
-	ui.Scroll(c.Key("plugin-log")).Grow(1).Padding(0, pagePad, 24).Children(func() {
-		for i, l := range lines {
-			ui.Text(c.Key(i), l).FontSize(12).TextColor(p.text).Selectable()
-		}
-	})
-}

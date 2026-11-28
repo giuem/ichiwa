@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	core "github.com/giuem/ichiwa/internal/app"
+	"github.com/giuem/ichiwa/internal/source/sourcetest"
 
 	"github.com/egoist/mygo/ui"
 
@@ -194,4 +196,51 @@ func TestEpisodesSayProgress(t *testing.T) {
 func viewApp(t *testing.T, pal palette, srcs ...source.Source) *App {
 	t.Helper()
 	return &App{App: core.Headless(testLibrary(t), func(func()) {}, srcs...), pal: pal, posters: newPosters(t.TempDir(), func() {})}
+}
+
+// The pages of the sources say what they are: the switcher is a menu
+// button that says what it does, the sources page's parts are headings
+// under its title, each source's switch is a switch named for it, and the
+// search suggestions are a list of buttons.
+func TestSourcePagesSpeak(t *testing.T) {
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a", Name: "甲片源", Capabilities: []source.Capability{source.CapSearch, source.CapSearchSuggest}},
+		OnNavigation: func(context.Context) ([]source.NavItem, error) {
+			return []source.NavItem{{ID: "home", Title: "首页"}}, nil
+		},
+	}
+	app := viewApp(t, darkPalette().contrasted(), src)
+	tt := ui.NewTester(app.sidebar, 220, 600)
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleMenuButton, "片源：甲片源"); a.Description != "切换片源" {
+		t.Errorf("the switcher: %+v", a)
+	}
+
+	app.Go(core.PageSources)
+	tt = ui.NewTester(app.content, 1000, 700)
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleHeading, "片源"); a.Level != 1 {
+		t.Errorf("the title's level is %d", a.Level)
+	}
+	for _, h := range []string{"已安装", "添加片源", "开发者模式"} {
+		if a := accessOf(t, tt, ui.RoleHeading, h); a.Level != 2 {
+			t.Errorf("%s's level is %d", h, a.Level)
+		}
+	}
+	if a := accessOf(t, tt, ui.RoleSwitch, "打开甲片源"); !a.Checked {
+		t.Error("the switch of a source on is off")
+	}
+
+	app.Go(core.PageSearch)
+	app.Search.Suggests, app.Search.SuggestFor, app.Search.Query = []string{"兔子", "兔子二"}, "兔", "兔"
+	tt = ui.NewTester(app.content, 1000, 700)
+	tt.Frame()
+	accessOf(t, tt, ui.RoleList, "搜索建议")
+	if err := tt.Click("兔子二"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if app.Search.Shown != "兔子二" {
+		t.Fatalf("searched %q", app.Search.Shown)
+	}
 }

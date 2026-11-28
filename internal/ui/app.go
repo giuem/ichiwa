@@ -226,19 +226,6 @@ func (app *App) sidebar(c *ui.Context) {
 		app.navSection(c, "我的")
 		app.navItem(c, iconClock, "继续观看", core.PageHistory, len(app.Lib.History))
 		app.navItem(c, iconHeart, "追剧", core.PageFollows, len(app.Lib.Follows))
-		if app.Dev.Plugin != nil {
-			b := ui.ButtonBase(c.Key("plugin-log")).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label("插件日志")
-			if app.Dev.LogOpen {
-				b.Current(ui.CurrentPage).Background(p.press)
-			}
-			b.Children(func() {
-				ui.Icon(c, iconScroll).Size(17, 17).TextColor(p.muted)
-				ui.Text(c, "插件日志").FontSize(13.5).FontWeight(500).TextColor(p.text)
-			})
-			if b.Clicked() {
-				app.Dev.LogOpen = true
-			}
-		}
 		ui.Spacer(c)
 		ui.Row(c).Padding(0, 8, 6).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
@@ -274,7 +261,7 @@ func (app *App) navSection(c *ui.Context, title string) {
 
 func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count int) {
 	p := app.pal
-	selected := app.Page == page && len(app.Stack) == 0 && !app.Dev.LogOpen
+	selected := app.Page == page && len(app.Stack) == 0
 	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label(label)
 	if selected {
 		b.Current(ui.CurrentPage)
@@ -305,7 +292,6 @@ func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count i
 		}
 	})
 	if b.Clicked() {
-		app.Dev.LogOpen = false
 		app.Go(page)
 	}
 }
@@ -313,10 +299,6 @@ func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count i
 func (app *App) content(c *ui.Context) {
 	if app.InitErr != "" {
 		app.centered(c, iconX, "启动失败", app.InitErr, nil)
-		return
-	}
-	if app.Dev.LogOpen {
-		app.logPage(c)
 		return
 	}
 	if n := len(app.Stack); n > 0 {
