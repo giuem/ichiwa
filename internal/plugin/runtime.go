@@ -59,11 +59,12 @@ type loaded struct {
 }
 
 // Plugin is a loaded plugin. It is safe for concurrent use; at most
-// MaxConcurrent calls run at once, the rest wait.
+// MaxConcurrent calls run at once, the rest wait, those made ahead of
+// need after the others.
 type Plugin struct {
 	opts      Options
 	cur       atomic.Pointer[loaded]
-	slots     chan struct{}
+	slots     *queue
 	logs      *Logs
 	storage   *Storage
 	cache     *Cache
@@ -88,7 +89,7 @@ func New(pkg *Package, opts Options) (*Plugin, error) {
 	}
 	p := &Plugin{
 		opts:      opts,
-		slots:     make(chan struct{}, MaxConcurrent),
+		slots:     newQueue(MaxConcurrent),
 		logs:      &Logs{},
 		storage:   OpenStorage(storagePath),
 		cache:     NewCache(),
@@ -179,12 +180,10 @@ func (p *Plugin) Call(ctx context.Context, fn string, arg any) (json.RawMessage,
 			return nil, source.NewError(source.ErrPlugin, "", err)
 		}
 	}
-	select {
-	case p.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := p.slots.acquire(ctx); err != nil {
+		return nil, err
 	}
-	defer func() { <-p.slots }()
+	defer p.slots.release()
 
 	callCtx, cancel := context.WithTimeout(ctx, p.timeout(fn))
 	defer cancel()
