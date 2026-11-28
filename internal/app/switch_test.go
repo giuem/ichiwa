@@ -116,3 +116,26 @@ func TestSuggestWaitsForTyping(t *testing.T) {
 		t.Errorf("a search run still asked for suggestions: %d calls", n)
 	}
 }
+
+// Turning off the source shown goes to the next where the user left it.
+func TestSourceOffKeepsNextPlace(t *testing.T) {
+	a, b := navSource("a", "a1"), navSource("b", "b1", "b2")
+	app, run := cancelApp(t, a)
+	app.Sources.Add(b)
+	app.UseSource(b)
+	run(5 * time.Second)
+	app.Go("b2")
+	app.SwitchSource(a)
+	run(5 * time.Second)
+	app.SetSourceOn("a", false)
+	if app.Src != b || app.Page != PageSources {
+		t.Fatalf("shown %v on %q", app.Src, app.Page)
+	}
+	app.SwitchSource(b)
+	if app.Page != "b2" {
+		t.Errorf("b shows %q", app.Page)
+	}
+	if app.kept["a"] != nil {
+		t.Error("the source turned off is kept")
+	}
+}

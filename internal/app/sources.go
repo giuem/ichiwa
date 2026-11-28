@@ -62,7 +62,8 @@ func (app *App) SetSourceOn(id string, on bool) {
 	app.Lib.MarkDirty()
 	switch {
 	case !on && app.Src != nil && app.Src.Info().ID == id:
-		app.UseSource(app.firstOn())
+		app.SwitchSource(app.firstOn())
+		delete(app.kept, id)
 		app.Page, app.Lib.Page = PageSources, PageSources // the page that turned it off stays
 	case on && app.Src == nil:
 		page := app.Page
