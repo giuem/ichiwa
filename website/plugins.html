@@ -31,7 +31,8 @@
     <header class="page-head">
       <p class="eyebrow">片源插件</p>
       <h1 class="page-title"><span>想看什么，</span><span>装什么。</span></h1>
-      <p class="lede">一集本身不带剧，剧从片源插件里来。插件是别人写好放在 GitHub 上的：点“安装”会打开一集，先告诉你它要访问哪些网站，你点头才装上；以后更新要多访问别的网站，会再问你一次。在一集的“管理片源…”里也能从这份列表安装，或者填入插件仓库 <code>owner/repo</code>；不想用了，在那里停用或卸载。</p>
+      <p class="lede">一集不带剧，剧来自片源插件。插件是别人写的，放在 GitHub 上。</p>
+      <p class="lede">点“安装”会打开一集，先列出插件要访问的网站，你确认了才装上。以后更新要多访问别的网站，会再问你。也可以在一集的“管理片源…”里安装，或者填入仓库 <code>owner/repo</code>；不想用了，就在那里停用或卸载。</p>
     </header>
 
     <section class="browse" aria-labelledby="browse-title">
@@ -49,7 +50,7 @@
         <p class="fine" id="status-fine" hidden></p>
         <button class="button small" type="button" id="retry" hidden>重试</button>
       </div>
-      <ul class="cards" id="cards" hidden></ul>
+      <ul class="cards" id="cards" tabindex="-1" hidden></ul>
       <p class="fine risk-note">插件是第三方写的，一集不审核它的代码，只限制它能访问哪些网站；它看不到你的观看记录和电脑上的文件，但能把你搜的词和在看的剧发给这些网站。只装信得过的插件；发现恶意插件请<a href="https://github.com/giuem/ichiwa/issues">告诉我们</a>。</p>
     </section>
 
@@ -65,7 +66,7 @@
     </section>
   </main>
 
-  <footer class="foot">
+  <footer class="foot plugins-foot">
     <div class="foot-cta">
       <p>还没有一集？</p>
       <a class="button small" href="./#download">先下载一集</a>

@@ -24,24 +24,66 @@
   var cards = document.getElementById("cards");
 
   var plugins = [];
+  // Set by "重试": where focus goes once the list or a message is shown.
+  var refocus = false;
 
   /* ---------- Checking the index ---------- */
 
-  // Control characters, and the bidirectional and zero-width ones that make
-  // text read differently from what it is.
-  var HIDDEN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/g;
+  // Line breaks and other control characters become spaces. Invisible
+  // format characters (bidirectional controls, zero-width spaces, tag
+  // characters) and the Hangul fillers that render as blanks are dropped,
+  // so text reads as what it is; ZWNJ and ZWJ stay, as emoji and some
+  // scripts need them.
+  var BREAKS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+  var INVISIBLE = /(?![\u200c\u200d])[\p{Cf}\u115f\u1160\u3164\uffa0]/gu;
 
   function str(v, max) {
     if (typeof v !== "string") return "";
-    v = v.replace(HIDDEN, " ").replace(/\s+/g, " ").trim();
+    v = v.replace(BREAKS, " ").replace(INVISIBLE, "").replace(/\s+/g, " ").trim();
     if (!max) return v;
-    var chars = Array.from(v);
+    var chars = graphemes(v);
     return chars.length > max ? chars.slice(0, max).join("") + "…" : v;
   }
+  // What a reader counts as one character, so a cut never splits an emoji.
+  var segmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter("zh-CN", { granularity: "grapheme" }) : null;
+  function graphemes(v) {
+    return segmenter ? Array.from(segmenter.segment(v), function (s) { return s.segment; }) : Array.from(v);
+  }
+
   // GitHub's own rules for user and repository names.
   var REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
   var ID = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
-  var HOST = /^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/;
+
+  // One entry of permissions.network, by the app's own rules
+  // (internal/netguard ValidPattern), less the public-suffix check this page
+  // has no list for. The index only holds entries the app accepted; this
+  // check only decides how an entry is shown, never whether.
+  function validHost(h) {
+    if (typeof h !== "string" || h === "" || h !== h.trim().toLowerCase()) return false;
+    var host = h.indexOf("*.") === 0 ? h.slice(2) : h;
+    if (/[:/[\]@*]/.test(host)) return false;
+    if (host === "localhost" || /\.localhost$/.test(host)) return false;
+    if (host.length > 253 || host.indexOf(".") < 0) return false;
+    var labels = host.split(".");
+    for (var i = 0; i < labels.length; i++) {
+      if (!/^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/.test(labels[i])) return false;
+    }
+    // No top-level domain is a number: "8.526344" and "0x08.0x08.0x08.0x08"
+    // are IPv4 addresses to a resolver.
+    return !/^(?:[0-9]+|0x[0-9a-f]*)$/.test(labels[labels.length - 1]);
+  }
+  // The hosts as the card lists them: every entry, in plain text, the ones
+  // this page doesn't recognise first so "等 N 个网站" can't hide them.
+  // null when the list itself can't be read.
+  function hostList(v) {
+    if (!Array.isArray(v)) return null;
+    var odd = [], ok = [];
+    v.forEach(function (h) {
+      if (validHost(h)) ok.push({ text: h });
+      else odd.push({ text: typeof h !== "string" ? "（不是文字）" : str(h, 80) || "（空）", odd: true });
+    });
+    return odd.concat(ok);
+  }
 
   // Returns the plugin as the page shows it, or null when it can't be shown.
   function clean(p) {
@@ -51,9 +93,7 @@
     if (!REPO.test(repo) || /\/\.\.?$/.test(repo) || !name) return null;
     var id = str(p.id);
     var date = new Date(str(p.publishedAt));
-    var network = Array.isArray(p.network) ? p.network.filter(function (h) {
-      return typeof h === "string" && h.length <= 253 && HOST.test(h);
-    }) : [];
+    var network = hostList(p.network);
     return {
       id: id,
       name: name,
@@ -67,7 +107,7 @@
       license: str(p.license, 64),
       minAppVersion: str(p.minAppVersion, 20),
       network: network,
-      supported: p.kind === "source" && p.apiVersion === API_VERSION,
+      supported: p.kind === "source" && p.apiVersion === API_VERSION && network !== null,
       knownKind: p.kind === "source"
     };
   }
@@ -116,7 +156,9 @@
     if (p.published) meta.push(dateFormat.format(p.published) + "更新");
     if (meta.length) li.appendChild(el("p", "plugin-meta", meta.join(" · ")));
     li.appendChild(hosts(p.network));
-    if (!p.supported) {
+    if (p.network === null) {
+      li.appendChild(el("p", "plugin-meta note", "列表里的信息不完整，暂时不能安装"));
+    } else if (!p.supported) {
       li.appendChild(el("p", "plugin-meta note", p.knownKind ? "需要更新一集才能安装" : "一集还不支持这类插件"));
     } else if (p.minAppVersion) {
       li.appendChild(el("p", "plugin-meta note", "需要一集 " + p.minAppVersion + " 或更新"));
@@ -145,27 +187,42 @@
   // can't hide a host where only hover would reveal it.
   function hosts(list) {
     var p = el("p", "plugin-hosts");
+    if (list === null) {
+      p.textContent = "要访问的网站读不出来";
+      return p;
+    }
     if (!list.length) {
       p.textContent = "不访问网络";
       return p;
     }
     var text = el("span");
     p.appendChild(text);
-    if (list.length <= HOSTS_SHOWN) {
-      text.textContent = "访问 " + list.join("、");
-      return p;
+    function show(items) {
+      text.replaceChildren("访问 ");
+      items.forEach(function (h, i) {
+        if (i) text.append("、");
+        text.append(h.text);
+        if (h.odd) text.appendChild(el("em", "odd", "（无法识别）"));
+      });
     }
-    text.textContent = "访问 " + list.slice(0, HOSTS_SHOWN).join("、") + " 等 " + list.length + " 个网站";
-    var more = el("button", "more", "全部");
-    more.type = "button";
-    more.setAttribute("aria-label", "显示全部 " + list.length + " 个网站");
-    more.addEventListener("click", function () {
-      text.textContent = "访问 " + list.join("、");
-      more.remove();
-      text.tabIndex = -1;
-      text.focus();
-    });
-    p.append(" ", more);
+    var odd = list.filter(function (h) { return h.odd; }).length;
+    if (list.length <= HOSTS_SHOWN) {
+      show(list);
+    } else {
+      show(list.slice(0, HOSTS_SHOWN));
+      text.append(" 等 " + list.length + " 个网站");
+      var more = el("button", "more", "全部");
+      more.type = "button";
+      more.setAttribute("aria-label", "显示全部 " + list.length + " 个网站");
+      more.addEventListener("click", function () {
+        show(list);
+        more.remove();
+        text.tabIndex = -1;
+        text.focus();
+      });
+      p.append(" ", more);
+    }
+    if (odd) p.appendChild(el("span", "odd-note", "其中 " + odd + " 个地址这里认不出来，安装前在一集里核对"));
     return p;
   }
 
@@ -191,7 +248,7 @@
     return img;
   }
   function letter(name) {
-    var s = el("span", "plugin-icon letter", Array.from(name)[0].toUpperCase());
+    var s = el("span", "plugin-icon letter", graphemes(name)[0].toUpperCase());
     s.setAttribute("aria-hidden", "true");
     return s;
   }
@@ -245,13 +302,17 @@
           return;
         }
         if (!Array.isArray(index.plugins)) throw new Error("bad index");
-        var seen = {};
-        (Array.isArray(index.blocked) ? index.blocked : []).forEach(function (r) {
+        var seen = {}, blockedIds = {};
+        var blocked = index.blocked && typeof index.blocked === "object" ? index.blocked : {};
+        (Array.isArray(blocked.repos) ? blocked.repos : []).forEach(function (r) {
           if (typeof r === "string") seen[r.toLowerCase()] = true;
+        });
+        (Array.isArray(blocked.ids) ? blocked.ids : []).forEach(function (id) {
+          if (typeof id === "string") blockedIds[id] = true;
         });
         plugins = index.plugins.map(clean).filter(function (p) {
           // GitHub names ignore case: Owner/Repo and owner/repo are one.
-          if (!p || seen[p.key]) return false;
+          if (!p || seen[p.key] || blockedIds[p.id]) return false;
           seen[p.key] = true;
           return true;
         });
@@ -267,11 +328,15 @@
         cards.replaceChildren.apply(cards, plugins.map(function (p) { return p.node; }));
         tools.hidden = plugins.length < SEARCH_FROM;
         filter();
+        if (refocus) cards.focus();
+        refocus = false;
       })
       .catch(fail);
   }
   retry.addEventListener("click", function () {
-    // The button hides while loading: keep focus on the message.
+    // The button hides while loading: keep focus on the message, then on
+    // the list once it shows.
+    refocus = true;
     status.focus();
     load();
   });

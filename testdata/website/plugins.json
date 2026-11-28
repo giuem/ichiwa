@@ -1,9 +1,14 @@
 {
   "version": 1,
   "generatedAt": "2026-11-28T16:00:00Z",
-  "blocked": [
-    "Blocked/ichiwa-bad"
-  ],
+  "blocked": {
+    "repos": [
+      "Blocked/ichiwa-bad"
+    ],
+    "ids": [
+      "blocked-id"
+    ]
+  },
   "plugins": [
     {
       "id": "hongguo",
@@ -95,7 +100,7 @@
     {
       "id": "xss",
       "name": "<img src=x onerror=alert(1)>",
-      "description": "<script>alert('desc')</script> 名称、简介、主机都是 HTML，应该原样显示成文字；图标是外部地址，应该改用作者的 GitHub 头像；不合格的主机不显示。",
+      "description": "<script>alert('desc')</script> 名称、简介、主机都是 HTML，应该原样显示成文字；图标是外部地址，应该改用作者的 GitHub 头像；认不出的主机照原文列出并标出“无法识别”。",
       "kind": "<b>source</b>",
       "icon": "https://evil.example/x.png",
       "repo": "evil/ichiwa-xss",
@@ -178,8 +183,8 @@
     },
     {
       "id": "bidi",
-      "name": "abc‮dcba​零宽",
-      "description": "名称里有 U+202E 和零宽空格，应该被去掉，名称正着显示。",
+      "name": "abc‮dcba​零宽󠁁",
+      "description": "名称里有 U+202E、零宽空格和标签字符，应该被删掉，名称正着显示成“abcdcba零宽”。",
       "kind": "source",
       "repo": "someone/ichiwa-bidi",
       "version": "1.0.0",
@@ -212,8 +217,8 @@
     },
     {
       "id": "emoji",
-      "name": "🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬",
-      "description": "20 个 emoji 的名称不应该被截断。",
+      "name": "👨‍👩‍👧🏳️‍🌈🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬",
+      "description": "ZWJ 组成的 emoji 不能裂开；20 个字符的名称不应该被截断。",
       "kind": "source",
       "repo": "someone/ichiwa-emoji",
       "version": "1.0.0",
@@ -227,6 +232,73 @@
         "d.emoji.example",
         "evil.example"
       ]
+    },
+    {
+      "id": "underscore",
+      "name": "下划线主机",
+      "description": "主机带下划线、一个字母的顶级域：一集认得，应该照常列出。",
+      "kind": "source",
+      "repo": "someone/ichiwa-underscore",
+      "version": "1.0.0",
+      "publishedAt": "2026-11-23T00:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": [
+        "api_v2.attacker.com",
+        "*.my_cdn.attacker.com",
+        "data.attacker.x"
+      ]
+    },
+    {
+      "id": "odd-hosts",
+      "name": "认不出的主机",
+      "description": "一个正常主机加三个认不出的：认不出的排在前面、标出“无法识别”，不会藏在“等 N 个网站”后面。",
+      "kind": "source",
+      "repo": "someone/ichiwa-odd-hosts",
+      "version": "1.0.0",
+      "publishedAt": "2026-11-24T00:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": [
+        "good.example.com",
+        "a.example.com",
+        "b.example.com",
+        "EXFIL.attacker.com",
+        "127.0.0.1",
+        42
+      ]
+    },
+    {
+      "id": "bad-network",
+      "name": "主机列表坏了",
+      "description": "network 不是数组：显示“要访问的网站读不出来”，不给安装。",
+      "kind": "source",
+      "repo": "someone/ichiwa-bad-network",
+      "version": "1.0.0",
+      "publishedAt": "2026-11-25T00:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": "api.example.com"
+    },
+    {
+      "id": "blocked-id",
+      "name": "按 id 屏蔽",
+      "description": "id 在 blocked.ids 里，不显示。",
+      "kind": "source",
+      "repo": "someone/ichiwa-blocked-id",
+      "version": "1.0.0",
+      "apiVersion": 1,
+      "network": []
+    },
+    {
+      "id": "filler",
+      "name": "ㅤ",
+      "description": "名称只有 U+3164，删掉后为空，不显示。",
+      "kind": "source",
+      "repo": "someone/ichiwa-filler",
+      "version": "1.0.0",
+      "apiVersion": 1,
+      "network": []
     },
     {
       "id": "bad-repo",
