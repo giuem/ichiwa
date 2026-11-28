@@ -901,13 +901,17 @@ func (app *App) related(c *ui.Context, w *Watching) {
 			ui.Text(c, "演职人员").FontSize(15).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(2)
 			ui.ScrollHorizontal(c.Key("people")).Gap(12).Children(func() {
 				for _, a := range w.Detail.People {
-					b := ui.ButtonBase(c.Key("person-" + a.ID)).Width(64).Gap(6).AlignItems(ui.Center).Label(a.Title).Description(a.Subtitle)
+					b := ui.ButtonBase(c.Key("person-" + a.ID)).Width(64).Label(a.Title).Description(a.Subtitle)
 					b.Children(func() {
-						app.avatar(c, a.Image, a.Title, 52)
-						ui.Text(c, a.Title).FontSize(11.5).TextColor(ternary(b.Hovered(), p.accent, p.text)).SingleLine()
-						if a.Subtitle != "" {
-							ui.Text(c, a.Subtitle).FontSize(10.5).TextColor(p.muted).SingleLine()
-						}
+						// A button lays its children in a row: the
+						// avatar goes over its name and role.
+						ui.Column(c).Width(64).Gap(6).AlignItems(ui.Center).Children(func() {
+							app.avatar(c, a.Image, a.Title, 52)
+							ui.Text(c, a.Title).FontSize(11.5).TextColor(ternary(b.Hovered(), p.accent, p.text)).SingleLine()
+							if a.Subtitle != "" {
+								ui.Text(c, a.Subtitle).FontSize(10.5).TextColor(p.muted).SingleLine()
+							}
+						})
 					})
 					if b.Clicked() {
 						app.openFrom(w.SourceID, a)

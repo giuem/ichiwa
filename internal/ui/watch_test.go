@@ -345,3 +345,20 @@ func TestSeasonCardUsesRealNameAndImage(t *testing.T) {
 		t.Fatalf("followed announced season = %+v", followed)
 	}
 }
+
+// The cast row shows each person's name and role under their avatar.
+func TestCastNamesUnderAvatars(t *testing.T) {
+	app := viewApp(t, darkPalette())
+	w := &Watching{App: app.App, SourceID: "hongguo", Show: Card{Kind: source.CardMedia, ID: "s1"},
+		Detail: &Media{People: []Card{{Kind: source.CardCollection, ID: "person:1", Title: "张三", Subtitle: "饰 李四", Shape: source.ShapeCircle}}}}
+	tt := ui.NewTester(func(c *ui.Context) { app.related(c, w) }, 368, 300)
+	tt.Frame()
+	b := accessOf(t, tt, ui.RoleButton, "张三").Bounds
+	if b.H < 52+2*12 {
+		t.Errorf("the button is %v tall: no room under the avatar", b.H)
+	}
+	r, ok := tt.Find("饰 李四")
+	if !ok || r.W < 30 || r.Y < b.Y+52 || r.X < b.X || r.X+r.W > b.X+b.W+0.5 {
+		t.Errorf("the role at %+v, not under the avatar in %+v", r, b)
+	}
+}
