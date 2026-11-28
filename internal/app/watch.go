@@ -85,7 +85,6 @@ type Watching struct {
 	Dragging bool
 	Panel    bool
 	Unpin    bool // the panel opens again when the window is unpinned
-	DescOpen bool
 	EpRange  int
 
 	// Where the pointer was over the stage in full screen, and since when.
@@ -108,12 +107,8 @@ type Watching struct {
 	Drawer bool // the episodes are open over the picture
 
 	// UI is the view's own state of the page, which the app never reads.
-	UI        any
-	DM        *Danmaku // the comments of the episode playing
-	DmOpen    bool     // the danmaku settings show
-	SpeedOpen bool     // the speed picker shows
-	VolOpen   bool     // the volume panel shows
-	Told      string   // what screen readers were last told is playing
+	UI any
+	DM *Danmaku // the comments of the episode playing
 
 	// seasons are the drama's seasons when it has more than one, the one
 	// showing among them; switchSeason opens another at an episode, -1

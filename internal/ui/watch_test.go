@@ -258,8 +258,8 @@ func TestSpeedPicker(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !w.SpeedOpen || app.Lib.Speed != 1 {
-		t.Fatalf("clicked the button: open %v, speed %v", w.SpeedOpen, app.Lib.Speed)
+	if !uiOf(w).speedOpen || app.Lib.Speed != 1 {
+		t.Fatalf("clicked the button: open %v, speed %v", uiOf(w).speedOpen, app.Lib.Speed)
 	}
 	if a, ok := tt.AccessByRole(ui.RoleOption, "1倍"); !ok || !a.Selected {
 		t.Fatalf("the current speed isn't selected: %+v", a)
@@ -268,8 +268,8 @@ func TestSpeedPicker(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if w.SpeedOpen || app.Lib.Speed != 1.5 {
-		t.Fatalf("chose 1.5倍: open %v, speed %v", w.SpeedOpen, app.Lib.Speed)
+	if uiOf(w).speedOpen || app.Lib.Speed != 1.5 {
+		t.Fatalf("chose 1.5倍: open %v, speed %v", uiOf(w).speedOpen, app.Lib.Speed)
 	}
 }
 

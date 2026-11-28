@@ -324,7 +324,7 @@ func (app *App) danmakuLayer(c *ui.Context, w *Watching) {
 // picture they take and how large their text is.
 func (app *App) danmakuSettings(c *ui.Context, w *Watching, anchor ui.Element) {
 	lib := app.Lib
-	ui.PopoverBase(c, anchor, &w.DmOpen, func(panel ui.Element) {
+	ui.PopoverBase(c, anchor, &uiOf(w).dmOpen, func(panel ui.Element) {
 		popPanel(panel, anchor).Width(300).Padding(14, 18, 18).Gap(16).Radius(14).Label("弹幕设置")
 		panel.Children(func() {
 			ui.Row(c).Children(func() {

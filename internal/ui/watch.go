@@ -42,6 +42,12 @@ type watchUI struct {
 	dm      *danmaku
 	dmFor   *core.Danmaku
 	dmTaken int
+
+	descOpen  bool   // the description shows whole
+	dmOpen    bool   // the danmaku settings show
+	speedOpen bool   // the speed picker shows
+	volOpen   bool   // the volume panel shows
+	told      string // what screen readers were last told is playing
 }
 
 // uiOf is the view's state of the player page w.
@@ -222,8 +228,8 @@ func (app *App) watchView(c *ui.Context) {
 		app.CloseWatch()
 	})
 
-	if news := w.News(); news != "" && news != w.Told {
-		w.Told = news
+	if news := w.News(); news != "" && news != uiOf(w).told {
+		uiOf(w).told = news
 		c.Announce(news)
 	}
 
@@ -292,7 +298,7 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 	px, py := pointerAt(stage)
 	still := w.PointerStill(px, py, playing)
 	// The keyboard's focus on a control keeps the controls in view.
-	shown := chromeShown(playing, hover, full, still) || time.Since(w.KeyAt) < keyLinger || w.Drawer || w.DmOpen || w.SpeedOpen || w.VolOpen || stage.FocusWithin()
+	shown := chromeShown(playing, hover, full, still) || time.Since(w.KeyAt) < keyLinger || w.Drawer || uiOf(w).dmOpen || uiOf(w).speedOpen || uiOf(w).volOpen || stage.FocusWithin()
 	if !shown {
 		stage.Cursor(ui.CursorNone)
 	}
@@ -396,23 +402,23 @@ func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
 				if !tiny {
 					app.volume(c, w)
 				} else {
-					w.VolOpen = false
+					uiOf(w).volOpen = false
 				}
 				if w.Has(source.CapDanmaku) {
 					if symbolButton(c, "text.bubble.fill", 14, ternary(app.Lib.Danmaku, app.pal.accent, white), "弹幕 (D)").KeyShortcuts(0, ui.KeyD).Role(ui.RoleToggleButton).Checked(app.Lib.Danmaku).Clicked() {
 						w.ToggleDanmaku()
 					}
 					if app.Lib.Danmaku && !tiny {
-						sb := symbolButton(c.Key("dm-settings"), "slider.horizontal.3", 14, ternary(w.DmOpen, app.pal.accent, white), "弹幕设置").Expanded(w.DmOpen)
+						sb := symbolButton(c.Key("dm-settings"), "slider.horizontal.3", 14, ternary(uiOf(w).dmOpen, app.pal.accent, white), "弹幕设置").Expanded(uiOf(w).dmOpen)
 						if sb.Clicked() {
-							w.DmOpen = !w.DmOpen
+							uiOf(w).dmOpen = !uiOf(w).dmOpen
 						}
 						app.danmakuSettings(c, w, sb)
 					} else {
-						w.DmOpen = false
+						uiOf(w).dmOpen = false
 					}
 				} else {
-					w.DmOpen = false
+					uiOf(w).dmOpen = false
 				}
 				if core.DrawerFits(width, full) && w.Detail != nil && symbolButton(c, "list.number", 14, ternary(w.Drawer, app.pal.accent, white), "选集 (E)").KeyShortcuts(0, ui.KeyE).Clicked() {
 					w.ToggleEpisodes(width, full)
@@ -562,14 +568,14 @@ func (app *App) stageMessage(c *ui.Context, w *Watching) {
 func (app *App) speedButton(c *ui.Context, w *Watching) {
 	speed := app.Lib.Speed
 	b := ui.ButtonBase(c.Key("speed")).Height(30).MinWidth(30).PaddingX(8).Radius(999).Center().Label("播放速度").
-		Value(fmt.Sprintf("%g倍", speed)).Expanded(w.SpeedOpen)
+		Value(fmt.Sprintf("%g倍", speed)).Expanded(uiOf(w).speedOpen)
 	tooltip(c, b, "播放速度 ([ / ])")
 	pressable(b, ui.Transparent, white.Alpha(0.14), 0.92)
 	b.Children(func() {
-		ui.Text(c, fmt.Sprintf("%gx", speed)).FontSize(12.5).Bold().TextColor(ternary(w.SpeedOpen, app.pal.accent, white))
+		ui.Text(c, fmt.Sprintf("%gx", speed)).FontSize(12.5).Bold().TextColor(ternary(uiOf(w).speedOpen, app.pal.accent, white))
 	})
 	if b.Clicked() {
-		w.SpeedOpen = !w.SpeedOpen
+		uiOf(w).speedOpen = !uiOf(w).speedOpen
 	}
 	app.speedPicker(c, w, b)
 }
@@ -577,7 +583,7 @@ func (app *App) speedButton(c *ui.Context, w *Watching) {
 // speedPicker is the list of speeds that opens from anchor, the fastest on
 // top; choosing one closes it.
 func (app *App) speedPicker(c *ui.Context, w *Watching, anchor ui.Element) {
-	ui.PopoverBase(c, anchor, &w.SpeedOpen, func(panel ui.Element) {
+	ui.PopoverBase(c, anchor, &uiOf(w).speedOpen, func(panel ui.Element) {
 		popPanel(panel, anchor).Width(96).Padding(6).Gap(2).Radius(12).Role(ui.RoleListBox).Label("播放速度")
 		panel.Children(func() {
 			for i := len(core.SpeedSteps) - 1; i >= 0; i-- {
@@ -592,7 +598,7 @@ func (app *App) speedPicker(c *ui.Context, w *Watching, anchor ui.Element) {
 				})
 				if o.Clicked() {
 					w.SetSpeed(s)
-					w.SpeedOpen = false
+					uiOf(w).speedOpen = false
 				}
 			}
 		})
@@ -603,12 +609,12 @@ func (app *App) speedPicker(c *ui.Context, w *Watching, anchor ui.Element) {
 // loud it is, a slider and a button to mute.
 func (app *App) volume(c *ui.Context, w *Watching) {
 	vol := app.Lib.Volume
-	b := symbolButton(c.Key("volume"), volumeSymbol(vol), 14, ternary(w.VolOpen, app.pal.accent, white), "音量 (M 静音)").
-		Value(fmt.Sprintf("%d%%", int(vol*100+0.5))).Expanded(w.VolOpen)
+	b := symbolButton(c.Key("volume"), volumeSymbol(vol), 14, ternary(uiOf(w).volOpen, app.pal.accent, white), "音量 (M 静音)").
+		Value(fmt.Sprintf("%d%%", int(vol*100+0.5))).Expanded(uiOf(w).volOpen)
 	if b.Clicked() {
-		w.VolOpen = !w.VolOpen
+		uiOf(w).volOpen = !uiOf(w).volOpen
 	}
-	ui.PopoverBase(c, b, &w.VolOpen, func(panel ui.Element) {
+	ui.PopoverBase(c, b, &uiOf(w).volOpen, func(panel ui.Element) {
 		popPanel(panel, b).Width(52).Padding(12, 0, 8).Gap(8).Radius(12).AlignItems(ui.Center).Label("音量")
 		panel.Children(func() {
 			ui.Text(c, fmt.Sprintf("%d", int(app.Lib.Volume*100+0.5))).FontSize(12.5).FontWeight(600).TextColor(white)
@@ -794,15 +800,15 @@ func (app *App) about(c *ui.Context, w *Watching) {
 	if desc != "" {
 		// A button reads no text inside it: its Description reads the synopsis.
 		d := ui.ButtonBase(c.Key("desc")).AlignItems(ui.Start).Justify(ui.Start).Shrink(1).Cursor(ui.CursorPointer).
-			Label("简介").Description(desc).Expanded(w.DescOpen)
+			Label("简介").Description(desc).Expanded(uiOf(w).descOpen)
 		d.Children(func() {
 			t := ui.Text(c, desc).FontSize(12.5).LineHeight(1.55).TextColor(p.muted).Grow(1).Shrink(1)
-			if !w.DescOpen {
+			if !uiOf(w).descOpen {
 				t.MaxLines(3)
 			}
 		})
 		if d.Clicked() {
-			w.DescOpen = !w.DescOpen
+			uiOf(w).descOpen = !uiOf(w).descOpen
 		}
 	}
 }
