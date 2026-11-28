@@ -1,0 +1,8 @@
+# Cloudflare Pages response headers. The plugin page shows third-party text
+# and links into the app: no other site may frame it.
+/plugins.html
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+/plugins
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY

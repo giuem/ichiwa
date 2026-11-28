@@ -59,7 +59,7 @@ check() {
 code_changes() {
 	git diff --name-only "$1" HEAD -- . ':(exclude)*.md' ':(exclude)LICENSE' ':(exclude)website' \
 		':(exclude)scripts' ':(exclude).github' ':(exclude)renovate.json' \
-		':(exclude)*_test.go' ':(exclude)**/testdata/**'
+		':(exclude)*_test.go' ':(exclude)testdata' ':(exclude)**/testdata/**'
 }
 
 # openhongguo_at 打印某个提交的 go.mod 里 openhongguo 的版本。

@@ -442,6 +442,102 @@ jobs:
 
 - 一集的仓库每天跑一次 workflow：搜索 topic `ichiwa-plugin`，下载并校验每个插件的最新 Release，生成插件索引 `plugins.json`，和官网一起发布。一集读索引，不直接调 GitHub API（未登录时每小时只能调 60 次）。被举报的恶意插件从索引里移除。
 - 也可以直接输入 `owner/repo` 安装不在索引里的插件。
+- 官网的插件页（`website/plugins.html`）读同一份索引，列出插件，“安装”按钮用下面的 URL scheme 打开一集。
+
+索引 `plugins.json` 放在官网根目录，图标放在它旁边的 `plugin-icons/`：
+
+```json
+{
+  "version": 1,
+  "generatedAt": "2026-12-01T04:00:00Z",
+  "blocked": {
+    "repos": ["someone-bad/ichiwa-fake"],
+    "ids": ["fake-source"]
+  },
+  "plugins": [
+    {
+      "id": "example",
+      "name": "示例视频",
+      "description": "一句话介绍，显示在插件列表里。",
+      "kind": "source",
+      "icon": "plugin-icons/example.png",
+      "repo": "someone/ichiwa-example",
+      "version": "1.2.0",
+      "publishedAt": "2026-11-30T09:12:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "minAppVersion": "2026.1201.1",
+      "capabilities": ["search", "danmaku"],
+      "network": ["api.example.com", "*.cdn-example.com"],
+      "url": "https://github.com/someone/ichiwa-example/releases/download/v1.2.0/plugin.zip",
+      "sha256": "9f2c…（64 位小写十六进制）",
+      "size": 48213
+    }
+  ]
+}
+```
+
+| 字段 | 来源和规则 |
+| --- | --- |
+| `version` | 索引格式的版本，目前是 `1`。只在不兼容时才升；读者先看它，不认识的大版本当作读不了，不再往下解析 |
+| `generatedAt` | 生成时间，RFC 3339 UTC |
+| `blocked` | 被屏蔽的插件：`repos` 是仓库 `owner/repo`，`ids` 是清单 `id`，各自排好序，没有时是空数组。按 `id` 屏蔽时，登记表里这个 `id` 的仓库也放进 `repos`。见下面的“屏蔽” |
+| `plugins` | 按 `id` 排序；没有插件时是空数组 |
+| `id`、`name`、`description`、`kind`、`license`、`apiVersion`、`minAppVersion`、`capabilities` | 照抄 `plugin.zip` 里的清单。`description`、`license`、`minAppVersion`、`capabilities` 清单里没有时省略 |
+| `network` | 清单的 `permissions.network` 经过检查、去重后的列表（和一集安装时得到的一样）；清单里没有时是 `[]`，从不省略 |
+| `icon` | 按下面的图标规则生成的 `plugin-icons/<id>.png`，相对 `plugins.json`；没有合格的图标时省略 |
+| `repo` | 发布它的 GitHub 仓库 `owner/repo`，和登记表里这个 `id` 的仓库一致。作者就是 `owner` |
+| `version`、`publishedAt` | 收录的 Release 的标签去掉 `v`（必须和清单的 `version` 一致）、发布时间 |
+| `url`、`sha256`、`size` | 这个 Release 的附件 `plugin.zip`：地址必须是 `https://github.com/<repo>/releases/download/v<version>/plugin.zip`，SHA-256 和字节数由 workflow 下载后计算 |
+
+收录规则：
+
+- **`id` 登记表**：一集的仓库里保存一份 `id → repo` 登记表（`.github/plugin-index/registry.json`，`{"<id>": "<owner>/<repo>"}`），由生成索引的 workflow 维护，和索引一起提交。上线时预置 `"hongguo": "giuem/ichiwa-hongguo"`（迁移来的观看记录挂在这个 `id` 上）。
+  - 一个 `id` 第一次进索引时登记它的仓库；之后这个 `id` 只收这个仓库，即使它哪天校验失败、搜不到、被删，也不释放给别的仓库。仓库名按 GitHub 的规则不区分大小写。改名、转移由维护者手动改登记表。
+  - 同一次运行里有几个仓库第一次用同一个 `id` 时，登记创建时间（GitHub 的 `created_at`）最早的那个，一样早时按 `owner/repo` 的小写字母序取第一个；其余的本次不收。
+- **保留旧版本**：只有确定变了才改动一个插件。新 Release 校验没通过（标签和清单对不上、包不合格、没有 `plugin.zip`），或者这次没拿到结果（搜索结果不完整、请求超时、5xx、被限流），都保留上一次收录的条目和图标；从来没有通过的不进索引。只有本次运行完整成功，并且确认仓库已经不存在（404）、改成私有或去掉了 topic `ichiwa-plugin`，才把它移出索引，同时删掉它的图标。
+- 读者忽略不认识的字段；`kind` 或 `apiVersion` 不支持的插件照常列出，但不给安装入口。以后要加字段只加不减，不升 `version`。
+- 一集安装时仍然按第 1 步自己检查下载的包：`url` 不是上面的格式、`sha256` 对不上、清单的 `id` 或 `version` 和索引不同，都拒绝安装，提示“插件包和列表里的不一致，稍后再试”。索引只是目录，不是信任的来源。
+- 官网插件页把这些文字都当作第三方内容：只以纯文本显示；换行和控制字符换成空格，双向控制、零宽空格、标签字符这类看不见的格式字符直接删掉（保留 emoji 和一些文字要用的 ZWJ、ZWNJ）；链接只指向 `https://github.com/<repo>`；图标只接受 `plugin-icons/<id>.png` 和作者的 GitHub 头像。`network` 的每一项都照原文列出：页面按一集的规则（`internal/netguard` 的 `ValidPattern`，公共后缀那一条除外）认不出的项排在最前面并标出“无法识别”，不会隐藏，也不会因此显示成“不访问网络”；`network` 不是数组时不给安装入口。
+
+屏蔽：
+
+- 屏蔽名单 `.github/plugin-index/blocklist.json` 由维护者手动维护，可以按仓库或按 `id` 屏蔽，`reason` 只给维护者看，不进索引：
+
+  ```json
+  {
+    "repos": [{ "repo": "someone-bad/ichiwa-fake", "reason": "冒充红果，收集搜索词" }],
+    "ids": [{ "id": "fake-source", "reason": "同上，换了仓库" }]
+  }
+  ```
+
+- 被屏蔽的插件不进 `plugins`，登记也保留，防止换个仓库再来。生成索引时，`ids` 里每个 `id` 在登记表里的仓库也一起放进 `blocked.repos`。
+- 一集按仓库（不区分大小写）和清单 `id` 两样核对 `blocked`：
+  - 不能通过链接或 `owner/repo` 安装，提示“这个插件已被移出插件列表，不能安装”；
+  - 已经装了的不再检查和安装更新，在片源管理和这个片源的页面上提示“已被移出插件列表，建议卸载”。不自动停用、不自动卸载：观看记录还挂在它上面，由用户决定。
+
+部署：Cloudflare Pages 每次部署替换整个站点，生成的索引不进仓库就会被下一次部署盖掉，所以：
+
+- 生成索引的 workflow 每天 04:00 UTC 运行（避开 `nightly.yml` 的 16:00 UTC，免得两边同时往 `main` 推送，夜间发布被拒）。它把 `website/plugins.json`、`website/plugin-icons/` 和登记表提交到 `main`；除了 `generatedAt` 什么都没变时不提交。推送因为 `main` 变了被拒时，rebase 后重试。
+- **只有 `website.yml` 部署官网。** 生成索引的 workflow 自己不部署：每次运行结束都用 `gh workflow run website.yml` 触发一次（`GITHUB_TOKEN` 推送的提交不会触发 `push` 事件，但能触发 `workflow_dispatch`），不管这次有没有提交。这样两个部署不会互相覆盖（`website.yml` 的并发组只留最新的一次），前一天部署失败时第二天也会补上。
+- 这些提交只改 `website/` 和 `.github/`，不会触发发布（`scripts/release.sh` 不算它们）。
+
+从网页安装：一集注册 URL scheme `ichiwa`，官网插件页的“安装”按钮链接到
+
+```text
+ichiwa://install-plugin?repo=<owner>/<repo>
+```
+
+- `install-plugin` 是动作（在 URL 里是 host）。不认识的动作提示“需要更新一集”；不认识的参数忽略。
+- 查询串只解码一次，之后 `repo` 必须完全匹配 `^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$`，仓库名不能是 `.` 或 `..`；`repo` 出现多次、缺少或不合格时都提示“链接不对”，什么也不做。
+- 效果和在“管理片源…”里输入 `owner/repo` 一样：一集打开片源管理，照下面的第 2 步列出信息，等用户确认。链接本身从不直接安装。任何网页都能打开这个链接，所以先拿到索引：
+  - 一集保存最近一次读到的、认得的索引。这次读不到（断网、出错、版本不认识）时用保存的那份，确认框注明“插件列表不是最新的”；
+  - 从来没有读到过索引时，链接和 `owner/repo` 都不安装，提示“暂时读不到插件列表，稍后再试”（版本不认识时提示“需要更新一集”）。没有索引就核对不了 `blocked` 和 `sha256`，宁可不装。
+- 有了索引以后：
+  - 仓库或清单 `id` 在 `blocked` 里时，拒绝安装；
+  - 仓库在 `plugins` 里时，安装索引收录的那个版本，核对它的 `sha256`；
+  - 不在 `plugins` 里时，安装最新 Release，确认框标出“这个插件不在插件列表里”；如果它的清单 `id` 在 `plugins` 里属于另一个仓库，拒绝安装。
+- 插件已经装了时，显示它的详情；同一 `id` 已经绑定别的仓库时，照常拒绝。
 
 安装：
 
@@ -452,6 +548,7 @@ jobs:
 更新：
 
 - 每天检查一次。要访问的主机没有增加时自动更新；增加了就在插件列表里提示，用户确认后才更新。
+- 被屏蔽的插件（索引的 `blocked`）不再更新，见上面的“屏蔽”。
 - 先写到暂存位置，检查通过再替换；失败保留旧版本。
 - 插件可以停用、卸载。
 
