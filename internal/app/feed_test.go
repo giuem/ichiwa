@@ -1,48 +1,40 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
 )
 
-// A source that ends a list early, as Hongguo's feeds do now and then, is
-// asked again from where it was; the feed ends after maxStalls such pages.
-func TestFeedRetriesEarlyEnd(t *testing.T) {
-	f := &Feed{more: true, items: make([]Card, 8)}
-	// A first page that shows a screen and gives no way on.
-	if !f.step(feedPage{more: false}, true) || f.cursor != "" || f.stalls != 1 {
-		t.Fatalf("an early end ended the feed: %+v", f)
+// A list ends where the source gives no cursor; a source that asks for
+// the list again, as Hongguo does where its server says it ended, goes on
+// while pages bring something new.
+func TestFeedEndsWithoutCursor(t *testing.T) {
+	f := &Feed{More: true, Items: make([]Card, 8)}
+	if f.Step(feedPage{More: false}, true) {
+		t.Fatalf("a page without a cursor didn't end the feed: %+v", f)
 	}
-	// Asked again, it goes on: the stall is forgotten.
-	if !f.step(feedPage{more: true, cursor: "c1"}, true) || f.cursor != "c1" || f.stalls != 0 {
-		t.Fatalf("a page with a way on: %+v", f)
-	}
-	// A real end ends it after maxStalls tries, still from the last cursor.
-	for i := 1; i < maxStalls; i++ {
-		if !f.step(feedPage{more: false}, false) {
-			t.Fatalf("ended after %d tries", i)
-		}
-	}
-	if f.step(feedPage{more: false}, false) || f.cursor != "c1" {
-		t.Fatalf("didn't end after %d tries: %+v", maxStalls, f)
+	f = &Feed{More: true, Items: make([]Card, 8), stalls: 1}
+	if !f.Step(feedPage{More: true, cursor: "again:c1"}, true) || f.cursor != "again:c1" || f.stalls != 0 {
+		t.Fatalf("a page with something new: %+v", f)
 	}
 }
 
 // A page of only repeats moves on from its cursor, and enough of them in a
 // row end the feed, so it doesn't loop.
 func TestFeedRepeatsMoveOn(t *testing.T) {
-	f := &Feed{more: true, items: make([]Card, 8), cursor: "c0"}
-	if !f.step(feedPage{more: true, cursor: "c1"}, false) || f.cursor != "c1" {
+	f := &Feed{More: true, Items: make([]Card, 8), cursor: "c0"}
+	if !f.Step(feedPage{More: true, cursor: "c1"}, false) || f.cursor != "c1" {
 		t.Fatalf("a page of repeats: %+v", f)
 	}
-	f.step(feedPage{more: true, cursor: "c2"}, false)
-	if f.step(feedPage{more: true, cursor: "c3"}, false) {
+	f.Step(feedPage{More: true, cursor: "c2"}, false)
+	if f.Step(feedPage{More: true, cursor: "c3"}, false) {
 		t.Fatalf("%d pages of repeats didn't end the feed", maxStalls)
 	}
 }
@@ -50,66 +42,75 @@ func TestFeedRepeatsMoveOn(t *testing.T) {
 // An end with nothing to show is believed at once: an empty search shows
 // its message without waiting on tries.
 func TestFeedEmptyEndsAtOnce(t *testing.T) {
-	f := &Feed{more: true}
-	if f.step(feedPage{more: false}, false) || f.stalls != 0 {
+	f := &Feed{More: true}
+	if f.Step(feedPage{More: false}, false) || f.stalls != 0 {
 		t.Fatalf("an empty end: %+v", f)
 	}
 }
 
-// A feed's first items are kept on disk partitioned by source ID; the next
-// launch shows them, and the first page goes before them.
+// A collection's first items are kept on disk, named by source and
+// collection; the next launch shows them, and the first page goes before
+// them. A page with filters is not kept.
 func TestFeedCache(t *testing.T) {
 	cacheDir := t.TempDir()
 	srcA := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
 	srcB := &sourcetest.Source{InfoData: source.Info{ID: "other"}}
 
-	app := &App{src: srcA, feeds: map[string]*Feed{}, cacheDir: cacheDir}
-	f := app.feed(pageRecommend)
-	if f.stale || len(f.items) != 0 {
+	app := &App{Src: srcA, CacheDir: cacheDir}
+	cs := app.Col("channel:推荐")
+	f := &cs.Results
+	if f.stale || len(f.Items) != 0 {
 		t.Fatalf("a first launch has nothing kept: %+v", f)
 	}
-	wantPath := filepath.Join(cacheDir, "feeds", "hongguo", "recommend.json")
-	if f.cache != wantPath {
-		t.Fatalf("cache path = %q, want %q", f.cache, wantPath)
+	if want := feedCachePath(cacheDir, "hongguo", "channel:推荐"); f.cache != want || filepath.Dir(want) != filepath.Join(cacheDir, "feeds") {
+		t.Fatalf("cache path = %q, want %q", f.cache, want)
 	}
-	f.take(feedPage{items: []Card{{ID: "a"}, {ID: "b"}, {ID: "c"}}})
-	app.saveFeeds(true)
+	cs.applyPage(feedPage{Page: &source.CollectionPage{Header: &source.Header{Title: "推荐", Description: "精选"}}})
+	f.take(feedPage{Items: []Card{{ID: "a"}, {ID: "b"}, {ID: "c"}}})
+	app.SaveFeeds(true)
 	if f.changed {
 		t.Fatal("saved, yet changed")
 	}
 
 	// Another source does not see hongguo's cached items.
-	otherApp := &App{src: srcB, feeds: map[string]*Feed{}, cacheDir: cacheDir}
-	if of := otherApp.feed(pageRecommend); of.stale || len(of.items) != 0 {
-		t.Fatalf("feed cache leaked across sources: %+v", of)
+	if of := (&App{Src: srcB, CacheDir: cacheDir}).Col("channel:推荐"); of.Results.stale || len(of.Results.Items) != 0 {
+		t.Fatalf("feed cache leaked across sources: %+v", of.Results)
 	}
 
-	app = &App{src: srcA, feeds: map[string]*Feed{}, cacheDir: cacheDir}
-	f = app.feed(pageRecommend)
-	if !f.stale || len(f.items) != 3 {
-		t.Fatalf("not kept: %+v", f)
+	app = &App{Src: srcA, CacheDir: cacheDir}
+	cs = app.Col("channel:推荐")
+	f = &cs.Results
+	if !f.stale || len(f.Items) != 3 || cs.Header == nil || cs.Header.Description != "精选" {
+		t.Fatalf("not kept: %+v, header %+v", f, cs.Header)
 	}
-	app.saveFeeds(true) // nothing new: the kept items stay
-	fresh, added := f.take(feedPage{items: []Card{{ID: "d"}, {ID: "b"}}})
+	app.SaveFeeds(true) // nothing new: the kept items stay
+	fresh, added := f.take(feedPage{Items: []Card{{ID: "d"}, {ID: "b"}}})
 	if !fresh || f.stale || len(added) != 4 {
 		t.Fatalf("fresh = %v, added = %v", fresh, added)
 	}
 	var ids string
-	for _, s := range f.items {
+	for _, s := range f.Items {
 		ids += s.ID
 	}
 	if ids != "dbac" {
 		t.Fatalf("items = %s", ids)
 	}
-	if f := (&App{src: srcA, feeds: map[string]*Feed{}, cacheDir: cacheDir}).feed(pageRank); f.cache != "" {
-		t.Fatal("only the channels are kept")
+
+	// A page with filters is not kept.
+	app = &App{Src: srcA, CacheDir: cacheDir}
+	rank := app.Col("rank")
+	rank.applyPage(feedPage{Page: &source.CollectionPage{Filters: []FilterRow{{Key: "board"}}}})
+	rank.Results.take(feedPage{Items: []Card{{ID: "a"}}})
+	app.SaveFeeds(true)
+	if _, err := os.Stat(rank.Results.cache); !os.IsNotExist(err) {
+		t.Fatalf("a page with filters was kept: %v", err)
 	}
 }
 
 func TestFeedCacheMigratesLegacy(t *testing.T) {
 	cacheDir := t.TempDir()
 	legacyDir := filepath.Join(cacheDir, "feeds")
-	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(legacyDir, "hongguo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	legacyPath := filepath.Join(legacyDir, "recommend.json")
@@ -119,54 +120,97 @@ func TestFeedCacheMigratesLegacy(t *testing.T) {
 	if err := os.WriteFile(legacyPath, []byte(legacyJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	bySource := filepath.Join(legacyDir, "hongguo", "live.json")
+	if err := os.WriteFile(bySource, []byte(`[{"kind":"media","id":"l1","title":"真人剧"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Non-hongguo source ignores the legacy file.
 	otherSrc := &sourcetest.Source{InfoData: source.Info{ID: "other"}}
-	otherApp := &App{src: otherSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}
-	if of := otherApp.feed(pageRecommend); of.stale || len(of.items) != 0 {
-		t.Fatalf("non-hongguo read legacy cache: %+v", of)
+	if of := (&App{Src: otherSrc, CacheDir: cacheDir}).Col("channel:推荐"); of.Results.stale || len(of.Results.Items) != 0 {
+		t.Fatalf("non-hongguo read legacy cache: %+v", of.Results)
 	}
 	if _, err := os.Stat(legacyPath); err != nil {
 		t.Fatalf("non-hongguo removed legacy cache: %v", err)
 	}
 
 	hgSrc := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
-
-	// When the new file cannot be written, the old one stays for next time.
-	newDir := filepath.Join(cacheDir, "feeds", "hongguo")
-	if err := os.MkdirAll(newDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(newDir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	if f := (&App{src: hgSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}).feed(pageRecommend); len(f.items) != 1 {
-		t.Fatalf("feed with an unwritable cache = %+v", f)
-	}
-	if _, err := os.Stat(legacyPath); err != nil && runtime.GOOS != "windows" {
-		t.Fatalf("legacy cache removed although the new one was not written: %v", err)
-	}
-	if err := os.Chmod(newDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Hongguo reads, converts fields, deletes the old file, and saves the new path.
-	app := &App{src: hgSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}
-	f := app.feed(pageRecommend)
-	if !f.stale || len(f.items) != 1 {
+	app := &App{Src: hgSrc, CacheDir: cacheDir}
+	f := &app.Col("channel:推荐").Results
+	if !f.stale || len(f.Items) != 1 {
 		t.Fatalf("migrated feed = %+v", f)
 	}
-	c := f.items[0]
+	c := f.Items[0]
 	if c.Kind != source.CardMedia || c.ID != "s1" || c.Title != "旧缓存剧" || c.Subtitle != "简介内容" ||
 		c.Image != "https://ex/1.jpg" || !slices.Equal(c.Badges, []string{"全80集"}) || c.Note != "甜宠" {
 		t.Fatalf("converted card = %+v", c)
 	}
+	if h := app.Col("channel:推荐").Header; h == nil || h.Description == "" {
+		t.Errorf("the migrated page has no subtitle: %+v", h)
+	}
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
 		t.Fatalf("legacy feed cache was not removed: %v", err)
 	}
-	// A subsequent launch (even offline) reads from the new partitioned path.
-	app2 := &App{src: hgSrc, feeds: map[string]*Feed{}, cacheDir: cacheDir}
-	if f2 := app2.feed(pageRecommend); !f2.stale || len(f2.items) != 1 || f2.items[0].Title != "旧缓存剧" {
+	if l := &app.Col("channel:真人剧").Results; len(l.Items) != 1 || l.Items[0].ID != "l1" {
+		t.Fatalf("the file kept by source = %+v", l.Items)
+	}
+	if _, err := os.Stat(bySource); !os.IsNotExist(err) {
+		t.Fatalf("the file kept by source was not removed: %v", err)
+	}
+	// A subsequent launch (even offline) reads from the new path.
+	if f2 := &(&App{Src: hgSrc, CacheDir: cacheDir}).Col("channel:推荐").Results; !f2.stale || len(f2.Items) != 1 || f2.Items[0].Title != "旧缓存剧" {
 		t.Fatalf("second launch feed = %+v", f2)
+	}
+}
+
+// An old file stays until the new one holds its items.
+func TestFeedCacheMigrationKeepsOldOnFailure(t *testing.T) {
+	cacheDir := t.TempDir()
+	bySource := filepath.Join(cacheDir, "feeds", "hongguo", "live.json")
+	if err := os.MkdirAll(filepath.Dir(bySource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bySource, []byte(`[{"kind":"media","id":"l1","title":"真人剧"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
+	// A folder where the new file goes: it can't be written.
+	if err := os.MkdirAll(feedCachePath(cacheDir, "hongguo", "channel:真人剧"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if l := (&App{Src: src, CacheDir: cacheDir}).Col("channel:真人剧").Results; len(l.Items) != 1 {
+		t.Fatalf("items = %+v", l.Items)
+	}
+	if _, err := os.Stat(bySource); err != nil {
+		t.Fatalf("the old file went though the new one wasn't written: %v", err)
+	}
+}
+
+// A page with filters keeps its header for the next launch, but not its
+// items: its title and subtitle show at once.
+func TestFeedCacheKeepsHeaderOfFilterPages(t *testing.T) {
+	cacheDir := t.TempDir()
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a"},
+		OnCollection: func(context.Context, source.CollectionRequest) (*source.CollectionPage, error) {
+			return &source.CollectionPage{
+				Header:  &source.Header{Title: "排行榜", Description: "看看大家在追什么"},
+				Filters: []FilterRow{{Key: "board", Title: "榜单", Value: "hot", Options: []source.FilterOption{{Value: "hot", Title: "热播榜"}}}},
+				Items:   []Card{{Kind: source.CardMedia, ID: "m1", Title: "好剧", Image: "x", Badges: []string{"全10集"}}},
+			}, nil
+		},
+	}
+	app, run := cancelApp(t, src)
+	app.CacheDir = cacheDir
+	app.Ensure(app.Col("rank"))
+	run(5 * time.Second)
+	app.SaveFeeds(true)
+
+	again := (&App{Src: src, CacheDir: cacheDir}).Col("rank")
+	if again.Header == nil || again.Header.Description != "看看大家在追什么" {
+		t.Errorf("header = %+v", again.Header)
+	}
+	if len(again.Results.Items) != 0 || again.Results.stale {
+		t.Errorf("a filter page's items were kept: %+v", again.Results.Items)
 	}
 }

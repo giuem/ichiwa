@@ -1,4 +1,4 @@
-package app
+package ui
 
 import (
 	"os"
@@ -12,10 +12,10 @@ func TestParseChangelog(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d sections: %+v", len(got), got)
 	}
-	if got[0].version != "2026.1121.2" || !slices.Equal(got[0].items, []string{"改名", "两行的 说明"}) {
+	if got[0].version != "2026.1121.2" || !slices.Equal(got[0].Items, []string{"改名", "两行的 说明"}) {
 		t.Errorf("first section: %+v", got[0])
 	}
-	if got[1].version != "0.2.0-beta.3" || !slices.Equal(got[1].items, []string{"修复了排行榜。"}) {
+	if got[1].version != "0.2.0-beta.3" || !slices.Equal(got[1].Items, []string{"修复了排行榜。"}) {
 		t.Errorf("second section: %+v", got[1])
 	}
 }
@@ -26,7 +26,7 @@ func TestParseOwnChangelog(t *testing.T) {
 		t.Skip(err)
 	}
 	for _, n := range parseChangelog(string(b)) {
-		if len(n.items) == 0 {
+		if len(n.Items) == 0 {
 			t.Errorf("%s has no items", n.version)
 		}
 	}

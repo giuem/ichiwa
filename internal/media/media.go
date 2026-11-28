@@ -53,8 +53,12 @@ type fetchJob struct {
 	item Item
 	err  error
 	// waiters counts the callers waiting for the job; cancel ends its
-	// work once none has for orphanGrace. Both are guarded by Manager.mu.
+	// work once none has for orphanGrace. joins counts the callers that
+	// ever waited, so that the timer of a caller that left does nothing
+	// once another came, which starts the grace anew as it leaves. All
+	// are guarded by Manager.mu.
 	waiters int
+	joins   int
 	cancel  context.CancelFunc
 }
 
@@ -264,7 +268,7 @@ func (m *Manager) waitFor(ctx context.Context, key string) (it Item, err error, 
 	m.mu.Lock()
 	job := m.inflight[key]
 	if job != nil {
-		job.waiters++
+		job.join()
 	}
 	m.mu.Unlock()
 	if job == nil {
@@ -295,9 +299,15 @@ func (m *Manager) runSingle(ctx context.Context, key string, work func(context.C
 			close(job.done)
 		}()
 	}
-	job.waiters++
+	job.join()
 	m.mu.Unlock()
 	return m.await(ctx, key, job)
+}
+
+// join counts a caller among the job's waiters; Manager.mu is held.
+func (job *fetchJob) join() {
+	job.waiters++
+	job.joins++
 }
 
 // await waits for job, which counts the caller among its waiters, until
@@ -314,11 +324,12 @@ func (m *Manager) await(ctx context.Context, key string, job *fetchJob) (Item, e
 	m.mu.Lock()
 	job.waiters--
 	if job.waiters == 0 {
+		joins := job.joins
 		time.AfterFunc(orphanGrace, func() {
 			m.mu.Lock()
 			defer m.mu.Unlock()
-			if job.waiters > 0 {
-				return
+			if job.waiters > 0 || job.joins != joins {
+				return // a caller came since: its own leaving decides
 			}
 			// A caller to come starts the work anew.
 			if m.inflight[key] == job {

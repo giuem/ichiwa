@@ -1,0 +1,247 @@
+package ui
+
+import (
+	"github.com/egoist/mygo/ui"
+
+	core "github.com/giuem/ichiwa/internal/app"
+	"github.com/giuem/ichiwa/internal/source"
+)
+
+// sourceIcons are the sources' icons as drawn, by their bytes, so that a
+// source that changes its icon, or another of the same ID, shows its own;
+// nil for an icon that does not decode.
+var sourceIcons = map[string]*ui.Bitmap{}
+
+// sourceIcon draws the icon of a source, or the first letter of its name
+// when it has none.
+func (app *App) sourceIcon(c *ui.Context, info source.Info, size float32) {
+	p := app.pal
+	var bmp *ui.Bitmap
+	if len(info.Icon) > 0 {
+		var ok bool
+		if bmp, ok = sourceIcons[string(info.Icon)]; !ok {
+			bmp, _ = ui.DecodeBitmap(info.Icon)
+			sourceIcons[string(info.Icon)] = bmp
+		}
+	}
+	box := ui.Box(c).Size(size, size).Shrink(0).Radius(size * 0.28).Clip().Center().AccessHidden(true)
+	if bmp == nil {
+		box.Background(p.accent)
+	}
+	box.Children(func() {
+		if bmp != nil {
+			ui.Image(c, bmp).Fill().Fit(ui.Cover)
+			return
+		}
+		ui.Text(c, firstRune(info.Name)).FontSize(size * 0.55).Bold().TextColor(p.onAccent)
+	})
+}
+
+// sourceName is the name of a source as the switcher lists it.
+func (app *App) sourceName(s source.Source) string {
+	name := s.Info().Name
+	if app.DevSource(s) {
+		name += "（开发中）"
+	}
+	return name
+}
+
+// sourceMenu lists the sources turned on, and the way to manage them.
+func (app *App) sourceMenu(m *ui.Menu) {
+	for _, s := range app.SourcesOn() {
+		info := s.Info()
+		if m.Item(app.sourceName(s)).ID("src-" + info.ID).Radio(app.Src == s).Chosen() {
+			app.SwitchSource(s)
+		}
+	}
+	m.Separator()
+	if m.Item("管理片源…").Chosen() {
+		app.Go(core.PageSources)
+	}
+}
+
+// sourceSwitch draws the switcher at the top of the sidebar: the source
+// shown, which opens the list of the others; with none, the way to add one.
+func (app *App) sourceSwitch(c *ui.Context) {
+	p := app.pal
+	if app.Src == nil {
+		label := ternary(len(app.Sources.All()) > 0, "打开片源", "添加片源")
+		b := ui.ButtonBase(c.Key("source")).Height(38).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).
+			Label(label)
+		if app.Page == core.PageSources {
+			b.Current(ui.CurrentPage)
+		}
+		pressable(b, ui.Transparent, p.hover, 0.98)
+		b.Children(func() {
+			ui.Box(c).Size(24, 24).Radius(7).Center().Background(p.accent.Alpha(0.12)).Children(func() {
+				ui.Text(c, "+").FontSize(16).Bold().TextColor(p.accent)
+			})
+			ui.Text(c, label).FontSize(13.5).FontWeight(600).TextColor(p.text).Grow(1).SingleLine()
+		})
+		if b.Clicked() {
+			app.Go(core.PageSources)
+		}
+		return
+	}
+	info := app.Src.Info()
+	name := app.sourceName(app.Src)
+	b := ui.ButtonBase(c.Key("source")).Height(38).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).
+		Label("片源：" + name).Description("切换片源")
+	pressable(b, ui.Transparent, p.hover, 0.98)
+	b.Children(func() {
+		app.sourceIcon(c, info, 24)
+		ui.Text(c, name).FontSize(13.5).FontWeight(600).TextColor(p.text).Grow(1).SingleLine()
+		ui.Icon(c, iconChevronDown).Size(12, 12).TextColor(p.muted)
+	})
+	b.Menu(app.sourceMenu)
+	if app.Dev.Err != "" {
+		ui.Text(c, "开发插件加载失败："+app.Dev.Err).FontSize(11).TextColor(p.muted).Padding(2, 10).MaxLines(3)
+	}
+}
+
+// guidePage shows, while no source is on, what sources are and where to
+// add one, or, with some installed and all turned off, to turn one on.
+func (app *App) guidePage(c *ui.Context) {
+	p := app.pal
+	title, text := "还没有片源", "片源提供可以看的剧。添加一个片源，就能在这里浏览、搜索和播放。"
+	if len(app.Sources.All()) > 0 {
+		title, text = "没有打开的片源", "装好的片源都关掉了。在片源页打开一个，就能在这里浏览、搜索和播放。"
+	}
+	app.tell(c, title)
+	ui.Box(c).Height(max(c.TitleBar().Height, 28) + 10).DragWindow()
+	ui.Column(c).Grow(1).Center().Gap(10).Padding(40).Children(func() {
+		ui.Box(c).Size(64, 64).Radius(999).Background(p.surface).Center().Margin(0, 0, 6).Children(func() {
+			ui.Icon(c, iconFilm).Size(26, 26).TextColor(p.muted)
+		})
+		ui.Text(c, title).FontSize(16).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
+		ui.Text(c, text).FontSize(13).TextColor(p.muted).TextAlign(ui.Center).MaxWidth(420)
+		app.primary(c, nil, "管理片源").Margin(10, 0, 0).OnClick(func() { app.Go(core.PageSources) })
+	})
+}
+
+// sourcesPage manages the sources: which are on, their logs, and the
+// developer mode. Installing and updating come to it later.
+func (app *App) sourcesPage(c *ui.Context) {
+	if app.LogOf != "" {
+		app.logPage(c, app.LogOf)
+		return
+	}
+	p := app.pal
+	app.header(c, "片源", "打开的片源会出现在侧栏顶部，可以随时切换", nil)
+	ui.Scroll(c.Key("sources")).Grow(1).Padding(0, pagePad, 28).Gap(30).Children(func() {
+		ui.Column(c).Gap(10).Children(func() {
+			app.sectionTitle(c, "已安装")
+			all := app.Sources.All()
+			if len(all) == 0 {
+				ui.Text(c, "还没有安装片源").FontSize(13).TextColor(p.muted)
+			}
+			for _, s := range all {
+				app.sourceRow(c, s)
+			}
+		})
+		ui.Column(c).Gap(8).MaxWidth(720).Children(func() {
+			app.sectionTitle(c, "添加片源")
+			ui.Text(c, "以后可以在这里从片源仓库安装新的片源，并更新已经装好的片源。").FontSize(13).LineHeight(1.5).TextColor(p.muted)
+		})
+		app.devSection(c)
+	})
+}
+
+// devSection is the developer mode: a plugin loaded from a folder,
+// reloaded as its files change.
+func (app *App) devSection(c *ui.Context) {
+	p := app.pal
+	ui.Column(c).Gap(10).MaxWidth(720).Children(func() {
+		app.sectionTitle(c, "开发者模式")
+		ui.Text(c, "从本机的文件夹加载正在开发的片源插件，文件改动后自动重新加载。").FontSize(13).LineHeight(1.5).TextColor(p.muted)
+		if app.Dev.Dir != "" {
+			ui.Column(c).Gap(4).Padding(12, 14).Radius(12).Background(p.surface).Children(func() {
+				ui.Text(c, "文件夹").FontSize(11.5).FontWeight(600).TextColor(p.muted)
+				ui.Text(c, app.Dev.Dir).FontSize(12.5).TextColor(p.text).Selectable()
+				if app.Dev.Err != "" {
+					ui.Text(c, "加载失败："+app.Dev.Err).FontSize(12).TextColor(p.accent).Role(ui.RoleAlert).Margin(4, 0, 0)
+				}
+			})
+		}
+		ui.Row(c).Gap(10).Wrap().Children(func() {
+			app.secondary(c, nil, ternary(app.Dev.Dir == "", "选择文件夹…", "换一个文件夹…")).OnClick(app.pickDevFolder)
+			if app.Dev.Dir != "" {
+				app.secondary(c, iconRefresh, "重新加载").OnClick(app.ReloadDev)
+				app.secondary(c, iconX, "关闭开发者模式").OnClick(func() {
+					app.UnloadDev()
+					app.SaveDevSettings()
+				})
+			}
+		})
+	})
+}
+
+// logPageLines is how much of a log the page shows: the newest lines.
+const logPageLines = 500
+
+// logPage shows the log of the source id as it grows.
+func (app *App) logPage(c *ui.Context, id string) {
+	p := app.pal
+	lines, ok := app.LogLines(id, logPageLines)
+	if !ok {
+		app.LogOf = ""
+		return
+	}
+	_ = app.Dev.LogGen // it changes as lines come, redrawing them
+	name := app.SourceName(id)
+	c.OnShortcut(0, ui.KeyEscape, func() { app.LogOf = "" })
+	bar := c.TitleBar()
+	app.tell(c, name+"的日志")
+	ui.Row(c).Padding(max(bar.Height, 28)+4, pagePad-8, 6).Gap(6).AlignItems(ui.Center).DragWindow().Children(func() {
+		iconButton(c, iconChevronLeft, 18, p.muted, "返回").OnClick(func() { app.LogOf = "" })
+		ui.Text(c, name+"的日志").FontSize(20).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
+	})
+	if len(lines) == 0 {
+		lines = []string{"还没有日志"}
+	}
+	ui.Scroll(c.Key("log-"+id)).Grow(1).Padding(4, pagePad, 24).Children(func() {
+		for i, l := range lines {
+			ui.Text(c.Key(i), l).FontSize(12).TextColor(p.text).Selectable()
+		}
+	})
+}
+
+// sectionTitle is the title of a part of a page.
+func (app *App) sectionTitle(c *ui.Context, title string) {
+	ui.Text(c, title).FontSize(15).Bold().TextColor(app.pal.text).Role(ui.RoleHeading).Level(2)
+}
+
+// sourceRow is a source on the sources page: its icon, name and what it
+// is, and whether it is on.
+func (app *App) sourceRow(c *ui.Context, s source.Source) {
+	p := app.pal
+	info := s.Info()
+	id := info.ID
+	kind := "内置"
+	if app.DevSource(s) {
+		kind = "开发者模式"
+	}
+	ui.Row(c.Key("src-"+id)).Gap(14).Padding(14, 16).Radius(14).Background(p.surface).AlignItems(ui.Center).MaxWidth(720).Children(func() {
+		app.sourceIcon(c, info, 40)
+		ui.Column(c).Grow(1).Shrink(1).Gap(4).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, info.Name).FontSize(14.5).FontWeight(600).TextColor(p.text).SingleLine()
+				if app.Src == s {
+					ui.Text(c, "正在浏览").FontSize(11).FontWeight(600).TextColor(p.accent).Padding(1, 6).Radius(5).Background(p.accent.Alpha(0.12))
+				}
+			})
+			ui.Text(c, joinNonEmpty(kind, ternary(info.Version != "", "版本 "+info.Version, ""))).FontSize(12).TextColor(p.muted).SingleLine()
+			if info.Description != "" {
+				ui.Text(c, info.Description).FontSize(12).TextColor(p.muted).MaxLines(2)
+			}
+		})
+		if core.HasLog(s) {
+			app.secondary(c.Key("log"), iconScroll, "日志").Label(info.Name + "的日志").OnClick(func() { app.LogOf = id })
+		}
+		on := app.SourceOn(id)
+		ui.Switch(c.Key("on"), &on).Label("打开" + info.Name).OnClick(func() {
+			app.SetSourceOn(id, on)
+			app.Toast = ternary(on, "已打开"+info.Name, "已关闭"+info.Name)
+		})
+	})
+}

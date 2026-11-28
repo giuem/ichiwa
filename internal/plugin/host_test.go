@@ -376,3 +376,78 @@ func TestCacheBoundsItems(t *testing.T) {
 		t.Fatalf("a write took %v", d)
 	}
 }
+
+// A full cache drops what expired before the oldest item that has not,
+// and keeps account of when the next item expires.
+func TestCacheDropsExpiredFirst(t *testing.T) {
+	c := NewCache()
+	now := time.Unix(0, 0)
+	c.now = func() time.Time { return now }
+	item := strings.Repeat("x", MaxCacheItemBytes-10)
+	// The oldest item lasts; a younger one expires in a second, another
+	// in a minute.
+	if err := c.Set("keep", item, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("soon", item, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("later", item, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if want := now.Add(time.Second); !c.soonest.Equal(want) {
+		t.Fatalf("soonest = %v, want %v", c.soonest, want)
+	}
+	n := 3
+	for ; !c.full(itemSize("k"+strconv.Itoa(n), item)); n++ {
+		if err := c.Set("k"+strconv.Itoa(n), item, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now = now.Add(2 * time.Second)
+	if err := c.Set("new", item, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Get("keep"); !ok {
+		t.Fatal("the oldest item went, while an expired one was there to drop")
+	}
+	if _, ok := c.items["soon"]; ok {
+		t.Fatal("the expired item stayed")
+	}
+	if want := time.Unix(0, 0).Add(time.Minute); !c.soonest.Equal(want) {
+		t.Fatalf("soonest after dropping = %v, want %v", c.soonest, want)
+	}
+	// With nothing expired, the oldest goes.
+	if err := c.Set("newer", item, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Get("keep"); ok {
+		t.Fatal("the oldest item stayed with nothing expired")
+	}
+}
+
+// Each item counts its key, its value and 64 bytes, and gives them back
+// as it goes.
+func TestCacheCountsEachItem(t *testing.T) {
+	c := NewCache()
+	if err := c.Set("ab", "cde", 0); err != nil {
+		t.Fatal(err)
+	}
+	if c.size != 2+3+64 {
+		t.Fatalf("size = %d", c.size)
+	}
+	if err := c.Set("ab", "c", 0); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := c.Add("x", "", 0); !ok || err != nil {
+		t.Fatalf("Add = %v, %v", ok, err)
+	}
+	if c.size != 2+1+64+1+64 {
+		t.Fatalf("size after replacing and adding = %d", c.size)
+	}
+	c.Delete("ab")
+	c.Delete("x")
+	if c.size != 0 || c.order.Len() != 0 {
+		t.Fatalf("size after deleting = %d, %d in order", c.size, c.order.Len())
+	}
+}

@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/egoist/mygo/ui"
-
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
 )
@@ -16,15 +14,13 @@ func cancelApp(t *testing.T, src source.Source) (*App, func(time.Duration) bool)
 	t.Helper()
 	done := make(chan func(), 64)
 	app := &App{
-		src:     src,
-		feeds:   map[string]*Feed{},
-		pal:     lightPalette(),
-		posters: newPosters(t.TempDir(), func() {}),
-		lib:     testLibrary(t),
-		warmed:  true,
-		post:    func(fn func()) { done <- fn },
+		Src:    src,
+		Lib:    testLibrary(t),
+		warmed: true,
+		Search: &searchState{},
+		post:   func(fn func()) { done <- fn },
 	}
-	app.sources.add(src)
+	app.Sources.Add(src)
 	// run runs what comes back within d; false when nothing did.
 	run := func(d time.Duration) bool {
 		select {
@@ -75,32 +71,32 @@ func TestSwitchingSourceKeepsCallsApart(t *testing.T) {
 		},
 	}
 	app, run := cancelApp(t, a)
-	app.sources.add(b)
+	app.Sources.Add(b)
 
 	// A search of a whose next page waits a while, as after a page of
 	// repeats, when the app switches to b.
-	app.runSearch("红果的词")
+	app.RunSearch("红果的词")
 	run(5 * time.Second)
-	if len(app.search.results.items) != 1 {
-		t.Fatalf("search = %+v", app.search.results)
+	if len(app.Search.Results.Items) != 1 {
+		t.Fatalf("search = %+v", app.Search.Results)
 	}
-	app.search.results.stalls = 1
-	app.loadMore(&app.search.results)
+	app.Search.Results.stalls = 1
+	app.LoadMore(&app.Search.Results)
 	// A page of a whose cards lack covers, still loading.
-	app.loadMore(app.feed(pageRecommend))
+	app.LoadMore(navFeed(app, "home"))
 
-	app.useSource(b)
+	app.UseSource(b)
 	close(release)
 	for run(stallWait + 300*time.Millisecond) {
 	}
 	if leaked.Load() != 0 {
 		t.Fatal("a's calls went to b")
 	}
-	if len(app.search.results.items) != 0 || app.search.results.err != "" {
-		t.Fatalf("b's search state took a's results: %+v", app.search.results)
+	if len(app.Search.Results.Items) != 0 || app.Search.Results.Err != "" {
+		t.Fatalf("b's search state took a's results: %+v", app.Search.Results)
 	}
-	if f := app.feeds[pageRecommend]; f != nil && len(f.items) != 0 {
-		t.Fatalf("b's feed took a's items: %+v", f.items)
+	if cs := app.cols["home"]; cs != nil && len(cs.Results.Items) != 0 {
+		t.Fatalf("b's feed took a's items: %+v", cs.Results.Items)
 	}
 }
 
@@ -138,46 +134,46 @@ func TestLeavingPageCancelsCalls(t *testing.T) {
 		},
 	}
 	app, run := cancelApp(t, src)
-	app.page = pageRecommend
-	f := app.feed(pageRecommend)
-	app.loadMore(f)
+	app.Page = "home"
+	f := navFeed(app, "home")
+	app.LoadMore(f)
 	wait()
-	app.go2(pageRank)
+	app.Go("rank")
 	if !run(5 * time.Second) {
 		t.Fatal("the canceled load never came back")
 	}
-	if canceled.Load() != 1 || f.err != "" || f.loading || f.loaded || !f.more {
+	if canceled.Load() != 1 || f.Err != "" || f.Loading || f.Loaded || !f.More {
 		t.Fatalf("canceled feed: canceled %d, %+v", canceled.Load(), f)
 	}
 
 	// The person page, left for the page under it.
-	app.openPerson(Card{Kind: source.CardCollection, ID: "p", Title: "人"})
-	app.loadPerson(app.person)
-	ps := app.person
+	app.OpenCollection(Card{Kind: source.CardCollection, ID: "p", Title: "人"})
+	cs := app.Stack[0]
+	app.Ensure(cs)
 	wait()
-	app.closePerson()
+	app.CloseCollection()
 	run(5 * time.Second)
-	if canceled.Load() != 2 || ps.headerErr != "" {
-		t.Fatalf("person page: canceled %d, err %q", canceled.Load(), ps.headerErr)
+	if canceled.Load() != 2 || cs.Results.Err != "" {
+		t.Fatalf("person page: canceled %d, err %q", canceled.Load(), cs.Results.Err)
 	}
 
 	// The player page, closed while the details load.
-	app.open("a", Card{Kind: source.CardMedia, ID: "m", Title: "剧"}, -1)
-	w := app.watch
+	app.Open("a", Card{Kind: source.CardMedia, ID: "m", Title: "剧"}, -1)
+	w := app.Watch
 	wait()
-	w.close()
-	app.watch = nil
+	w.Close()
+	app.Watch = nil
 	run(5 * time.Second)
-	if canceled.Load() != 3 || w.detailErr != "" {
-		t.Fatalf("player: canceled %d, err %q", canceled.Load(), w.detailErr)
+	if canceled.Load() != 3 || w.DetailErr != "" {
+		t.Fatalf("player: canceled %d, err %q", canceled.Load(), w.DetailErr)
 	}
 
 	// Canceled by the source itself is an error.
 	ownCancel.Store(true)
-	app.go2(pageRecommend)
-	app.loadMore(f)
+	app.Go("home")
+	app.LoadMore(f)
 	run(5 * time.Second)
-	if f.err == "" {
+	if f.Err == "" {
 		t.Fatal("a source's own Canceled shows no error")
 	}
 }
@@ -196,22 +192,22 @@ func TestRateLimitedListWaits(t *testing.T) {
 		},
 	}
 	app, run := cancelApp(t, src)
-	f := app.feed(pageRecommend)
-	app.loadMore(f)
+	f := navFeed(app, "home")
+	app.LoadMore(f)
 	run(5 * time.Second)
-	if got := f.errText(); got != "请求太频繁（30 秒后可以重试）" {
+	if got := f.ErrText(); got != "请求太频繁（30 秒后可以重试）" {
 		t.Fatalf("error = %q", got)
 	}
 	// A retry meanwhile asks nothing and keeps the error.
-	f.err = ""
-	app.loadMore(f)
-	if calls.Load() != 1 || f.loading || f.err == "" {
+	f.Err = ""
+	app.LoadMore(f)
+	if calls.Load() != 1 || f.Loading || f.Err == "" {
 		t.Fatalf("retry during the wait: calls %d, %+v", calls.Load(), f)
 	}
 	// Once the wait is over, it asks again.
-	f.retryAt = time.Now().Add(-time.Second)
-	f.err = ""
-	app.loadMore(f)
+	f.RetryAt = time.Now().Add(-time.Second)
+	f.Err = ""
+	app.LoadMore(f)
 	run(5 * time.Second)
 	if calls.Load() != 2 {
 		t.Fatalf("after the wait: calls %d", calls.Load())
@@ -233,18 +229,18 @@ func TestPersonPageKeepsHeaderOfFailedList(t *testing.T) {
 		},
 	}
 	app, run := cancelApp(t, src)
-	app.openPerson(Card{Kind: source.CardCollection, ID: "p", Title: "甲"})
-	ps := app.person
-	app.loadPerson(ps)
+	app.OpenCollection(Card{Kind: source.CardCollection, ID: "p", Title: "甲"})
+	cs := app.Stack[0]
+	app.Ensure(cs)
 	run(5 * time.Second)
-	if ps.header == nil || ps.header.Title != "演员甲" || ps.headerErr != "" || ps.works.err != "列表暂时取不到" {
-		t.Fatalf("header %+v, headerErr %q, works err %q", ps.header, ps.headerErr, ps.works.err)
+	if cs.Header == nil || cs.Header.Title != "演员甲" || cs.Results.Err != "列表暂时取不到" {
+		t.Fatalf("header %+v, works err %q", cs.Header, cs.Results.Err)
 	}
-	ps.works.err = ""
-	app.loadMore(&ps.works)
+	cs.Results.Err = ""
+	app.LoadMore(&cs.Results)
 	run(5 * time.Second)
-	if len(ps.works.items) != 1 || ps.header == nil {
-		t.Fatalf("retry: %+v", ps.works.items)
+	if len(cs.Results.Items) != 1 || cs.Header == nil || cs.Header.Title != "演员甲" {
+		t.Fatalf("retry: %+v, header %+v", cs.Results.Items, cs.Header)
 	}
 }
 
@@ -287,22 +283,21 @@ func waitEntered(t *testing.T, entered chan struct{}) {
 func TestRankLoadsAgainAfterCancel(t *testing.T) {
 	src, open, calls, entered := blockingSource(t)
 	app, run := cancelApp(t, src)
-	app.page = pageRank
-	tt := ui.NewTester(app.rankPage, 900, 600)
-	tt.Frame()
+	app.Page = "rank"
+	app.Ensure(app.Col("rank"))
 	waitEntered(t, entered)
-	app.go2(pageRecommend)
+	app.Go("home")
 	if !run(5 * time.Second) {
 		t.Fatal("the canceled load never came back")
 	}
-	l := &app.rank.list
-	if l.loaded || l.loading || l.err != "" {
+	l := &app.Col("rank").Results
+	if l.Loaded || l.Loading || l.Err != "" {
 		t.Fatalf("canceled ranking: %+v", l)
 	}
 	open.Store(true)
-	app.go2(pageRank)
-	tt.Frame()
-	if !run(5*time.Second) || len(l.items) != 1 || calls.Load() != 2 {
+	app.Go("rank")
+	app.Ensure(app.Col("rank"))
+	if !run(5*time.Second) || len(l.Items) != 1 || calls.Load() != 2 {
 		t.Fatalf("ranking shown again: calls %d, %+v", calls.Load(), l)
 	}
 
@@ -310,17 +305,16 @@ func TestRankLoadsAgainAfterCancel(t *testing.T) {
 	src2, _, _, entered2 := blockingSource(t)
 	app2, run2 := cancelApp(t, src2)
 	app2.warmed = false
-	app2.page = pageRecommend
+	app2.Page = "home"
+	app2.Nav = []source.NavItem{{ID: "home"}, {ID: "live"}, {ID: "comic"}, {ID: "rank"}}
 	app2.warm()
-	for range 4 { // three channels and the ranking
-		waitEntered(t, entered2)
-	}
-	app2.go2(pageSearch)
+	waitEntered(t, entered2) // one page at a time
+	app2.Go(PageSearch)
 	if run2(300 * time.Millisecond) {
 		t.Fatal("leaving the page canceled what warm loads")
 	}
-	if app2.rank.list.err != "" || !app2.rank.list.loading {
-		t.Fatalf("warm ranking: %+v", app2.rank.list)
+	if l := &app2.Col("home").Results; l.Err != "" || !l.Loading {
+		t.Fatalf("warm home: %+v", l)
 	}
 	app2.leaveSource()
 	for run2(time.Second) {
@@ -332,22 +326,21 @@ func TestRankLoadsAgainAfterCancel(t *testing.T) {
 func TestSearchLoadsAgainAfterCancel(t *testing.T) {
 	src, open, calls, entered := blockingSource(t)
 	app, run := cancelApp(t, src)
-	app.page = pageSearch
-	app.runSearch("兔子")
+	app.Page = PageSearch
+	app.RunSearch("兔子")
 	waitEntered(t, entered)
-	app.go2(pageRecommend)
+	app.Go("home")
 	if !run(5 * time.Second) {
 		t.Fatal("the canceled search never came back")
 	}
-	r := &app.search.results
-	if r.loaded || r.loading || r.err != "" {
+	r := &app.Search.Results
+	if r.Loaded || r.Loading || r.Err != "" {
 		t.Fatalf("canceled search: %+v", r)
 	}
 	open.Store(true)
-	app.go2(pageSearch)
-	tt := ui.NewTester(app.searchPage, 900, 600)
-	tt.Frame()
-	if !run(5*time.Second) || len(r.items) != 1 || calls.Load() != 2 {
+	app.Go(PageSearch)
+	app.ShowSearch()
+	if !run(5*time.Second) || len(r.Items) != 1 || calls.Load() != 2 {
 		t.Fatalf("search shown again: calls %d, %+v", calls.Load(), r)
 	}
 }
@@ -368,16 +361,16 @@ func TestCoversComeAfterPageLeft(t *testing.T) {
 		},
 	}
 	app, run := cancelApp(t, src)
-	app.page = pageRecommend
-	f := app.feed(pageRecommend)
-	app.loadMore(f)
+	app.Page = "home"
+	f := navFeed(app, "home")
+	app.LoadMore(f)
 	run(5 * time.Second)
 	waitEntered(t, refreshing)
-	app.go2(pageRank)
+	app.Go("rank")
 	close(release)
 	run(5 * time.Second)
-	if len(f.items) != 1 || f.items[0].Image != "cover" {
-		t.Fatalf("items = %+v", f.items)
+	if len(f.Items) != 1 || f.Items[0].Image != "cover" {
+		t.Fatalf("items = %+v", f.Items)
 	}
 }
 
@@ -408,9 +401,9 @@ func TestResetCancelsFeedCalls(t *testing.T) {
 		},
 	}
 	app, run := cancelApp(t, src)
-	app.runSearch("先前")
+	app.RunSearch("先前")
 	waitEntered(t, entered)
-	app.runSearch("后来")
+	app.RunSearch("后来")
 	select {
 	case what := <-canceled:
 		if what != "search" {
@@ -420,9 +413,9 @@ func TestResetCancelsFeedCalls(t *testing.T) {
 		t.Fatal("searching anew left the earlier search running")
 	}
 
-	f := app.feed(pageRecommend)
-	app.loadMore(f)
-	for f.loading {
+	f := navFeed(app, "home")
+	app.LoadMore(f)
+	for f.Loading {
 		run(5 * time.Second)
 	}
 	waitEntered(t, entered)
@@ -437,4 +430,12 @@ func TestResetCancelsFeedCalls(t *testing.T) {
 	}
 	for run(300 * time.Millisecond) {
 	}
+}
+
+// navFeed is the feed of the page id of the navigation, ready to load.
+func navFeed(app *App, id string) *Feed {
+	cs := app.Col(id)
+	cs.Results.setFetch(app.Src, collectionFetch(source.CollectionRequest{ID: id}))
+	cs.Results.onPage = cs.applyPage
+	return &cs.Results
 }

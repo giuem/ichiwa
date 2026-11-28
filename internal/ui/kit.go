@@ -1,6 +1,8 @@
-package app
+package ui
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,4 +297,34 @@ func boolf(b bool) float32 {
 		return 1
 	}
 	return 0
+}
+
+// scrollOf is the scroll state of a list, which the list keeps for the view.
+func scrollOf(f *Feed) *ui.ScrollState {
+	if s, ok := f.UI.(*ui.ScrollState); ok {
+		return s
+	}
+	s := &ui.ScrollState{}
+	f.UI = s
+	return s
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// joinNonEmpty joins what there is of parts, as one line to read.
+func joinNonEmpty(parts ...string) string {
+	return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), "，")
+}
+
+func ternary[T any](cond bool, a, b T) T {
+	if cond {
+		return a
+	}
+	return b
+}
+
+// pointerAt is where the pointer is over el.
+func pointerAt(el ui.Element) (x, y float32) {
+	x, y, _ = el.PointerPosition()
+	return x, y
 }

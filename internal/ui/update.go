@@ -1,4 +1,4 @@
-package app
+package ui
 
 import (
 	"context"
@@ -27,18 +27,18 @@ const changelogURL = "https://github.com/giuem/ichiwa/raw/refs/tags/v%s/CHANGELO
 type updateState struct {
 	up    *mygo.Update // nil while the app is up to date or has not looked
 	notes []releaseNotes
-	open  bool // the dialog shows
+	Open  bool // the dialog shows
 
 	installing  bool
 	done, total int64 // bytes downloaded, of total
-	err         string
+	Err         string
 }
 
 // releaseNotes are the changes of a version, from its section of the
 // changelog.
 type releaseNotes struct {
 	version string
-	items   []string
+	Items   []string
 }
 
 // watchUpdates looks for a newer version soon after launch and then every
@@ -83,10 +83,10 @@ func (app *App) checkForUpdates(manual bool) {
 			return
 		}
 		if u.up == nil || u.up.Version != up.Version {
-			u.up, u.notes, u.err = up, notes, ""
+			u.up, u.notes, u.Err = up, notes, ""
 		}
 		if manual {
-			u.open = true
+			u.Open = true
 		}
 	})
 }
@@ -106,7 +106,7 @@ func changesSince(ctx context.Context, current string, up *mygo.Update) []releas
 			return out
 		}
 	}
-	return []releaseNotes{{version: up.Version, items: noteItems(up.Notes)}}
+	return []releaseNotes{{version: up.Version, Items: noteItems(up.Notes)}}
 }
 
 func fetchChangelog(ctx context.Context, version string) (string, error) {
@@ -137,7 +137,7 @@ func parseChangelog(text string) []releaseNotes {
 	version := ""
 	flush := func() {
 		if version != "" {
-			out = append(out, releaseNotes{version: version, items: noteItems(strings.Join(body, "\n"))})
+			out = append(out, releaseNotes{version: version, Items: noteItems(strings.Join(body, "\n"))})
 		}
 		body = body[:0]
 	}
@@ -249,7 +249,7 @@ func cmpInt(a, b int) int {
 func (app *App) installUpdate() {
 	u := &app.upd
 	up := u.up
-	u.installing, u.done, u.total, u.err = true, 0, 0, ""
+	u.installing, u.done, u.total, u.Err = true, 0, 0, ""
 	go func() {
 		var last atomic.Int64
 		progress := func(done, total int64) {
@@ -264,7 +264,7 @@ func (app *App) installUpdate() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		if err := up.Install(ctx, progress); err != nil {
-			app.win.Update(func() { u.installing, u.err = false, "更新失败："+err.Error() })
+			app.win.Update(func() { u.installing, u.Err = false, "更新失败："+err.Error() })
 			return
 		}
 		mygo.App.Relaunch()
@@ -276,11 +276,11 @@ func (app *App) installUpdate() {
 func (app *App) updateDialog(c *ui.Context) {
 	u := &app.upd
 	if u.up == nil {
-		u.open = false
+		u.Open = false
 		return
 	}
 	p := app.pal
-	d := ui.DialogBase(c, &u.open, func(backdrop, panel ui.Element) {
+	d := ui.DialogBase(c, &u.Open, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.4))
 		panel.Width(440).Radius(16).Background(p.bg).Shadow(0, 16, 48, 0, ui.RGBA(0, 0, 0, 0.3)).
 			Label("发现新版本 " + u.up.Version)
@@ -313,10 +313,10 @@ func (app *App) updateDialog(c *ui.Context) {
 								}
 							})
 						}
-						if len(n.items) == 0 {
+						if len(n.Items) == 0 {
 							ui.Text(c, "修复与改进").FontSize(13.5).TextColor(p.muted)
 						}
-						for _, item := range n.items {
+						for _, item := range n.Items {
 							ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
 								ui.Box(c).Size(5, 5).Radius(999).Background(p.accent).Margin(8, 0, 0).Shrink(0)
 								ui.Text(c, item).FontSize(13.5).LineHeight(1.5).TextColor(p.text).Grow(1).Shrink(1)
@@ -349,13 +349,13 @@ func (app *App) updateDialog(c *ui.Context) {
 				ui.Progress(c, frac).Label("下载进度")
 				return
 			}
-			if u.err != "" {
-				ui.Text(c, u.err).FontSize(12.5).TextColor(p.accent).Role(ui.RoleAlert)
+			if u.Err != "" {
+				ui.Text(c, u.Err).FontSize(12.5).TextColor(p.accent).Role(ui.RoleAlert)
 			}
 			ui.Row(c).Gap(10).Justify(ui.End).Children(func() {
-				app.secondary(c, nil, "以后再说").OnClick(func() { u.open = false })
+				app.secondary(c, nil, "以后再说").OnClick(func() { u.Open = false })
 				label := "安装并重启"
-				if u.err != "" {
+				if u.Err != "" {
 					label = "重试"
 				}
 				app.primary(c, nil, label).AutoFocus().OnClick(app.installUpdate)
@@ -364,7 +364,7 @@ func (app *App) updateDialog(c *ui.Context) {
 	})
 	// It stays open while the update installs.
 	if d.Dismissed() && u.installing {
-		u.open = true
+		u.Open = true
 	}
 }
 

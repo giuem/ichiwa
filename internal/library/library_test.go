@@ -54,6 +54,7 @@ func TestProgress(t *testing.T) {
 	l.Progress("other", cardOf("a", "别源甲"), "ep0", 0, 10, 1, 60)
 	l.Volume, l.Speed, l.Page, l.OnTop, l.Autoplay, l.Danmaku = 0.5, 1.5, "rank", true, false, false
 	l.DanmakuOpacity, l.DanmakuSpeed, l.DanmakuArea, l.DanmakuSize = 0.4, 0, 3, 4
+	l.Source, l.Off["hongguo"], l.Off["gone"] = "other", true, false
 	l.MarkDirty()
 	l.Close()
 
@@ -65,6 +66,9 @@ func TestProgress(t *testing.T) {
 	if l.Volume != 0.5 || l.Speed != 1.5 || l.Page != "rank" || !l.OnTop || l.Autoplay || l.Danmaku ||
 		l.DanmakuOpacity != 0.4 || l.DanmakuSpeed != 0 || l.DanmakuArea != 3 || l.DanmakuSize != 4 {
 		t.Fatalf("settings = %v %v %q %v", l.Volume, l.Speed, l.Page, l.OnTop)
+	}
+	if l.Source != "other" || !l.Off["hongguo"] || len(l.Off) != 1 {
+		t.Fatalf("sources: shown %q, off %v", l.Source, l.Off)
 	}
 	l.Forget(refA)
 	l.Close()
@@ -340,5 +344,25 @@ func TestResolveEpisodesPartial(t *testing.T) {
 	}
 	if len(again.legacyEpisodes[ref]) != 0 {
 		t.Fatalf("legacy rows left after full resolve: %+v", again.legacyEpisodes[ref])
+	}
+}
+
+// Records watched at the same moment, as a coarse clock gives, keep one
+// order: the history doesn't reshuffle as it redraws.
+func TestRecentOrderIsStable(t *testing.T) {
+	l := Load(t.TempDir())
+	defer l.Close()
+	at := time.Now()
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		l.Progress("s", source.Card{Kind: source.CardMedia, ID: id, Title: id}, "e1", 0, 1, 1, 10)
+		l.History[source.Ref{Source: "s", ID: id}].Updated = at
+	}
+	first := l.Recent()
+	for range 50 {
+		for i, r := range l.Recent() {
+			if r != first[i] {
+				t.Fatalf("the order changed at %d: %s, then %s", i, first[i].Card.ID, r.Card.ID)
+			}
+		}
 	}
 }

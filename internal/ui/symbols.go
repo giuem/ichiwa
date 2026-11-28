@@ -1,4 +1,4 @@
-package app
+package ui
 
 import (
 	"github.com/egoist/mygo/plugins/sfsymbols"

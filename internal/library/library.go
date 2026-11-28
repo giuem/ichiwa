@@ -108,11 +108,15 @@ func (s legacyShow) toCard(fallbackID string) source.Card {
 // It holds them in memory and writes changes through to library.db. It is used
 // on the main thread only.
 type Library struct {
-	History  map[source.Ref]*Record
-	Follows  map[source.Ref]source.Card
-	Volume   float64
-	Speed    float64
-	Page     string
+	History map[source.Ref]*Record
+	Follows map[source.Ref]source.Card
+	Volume  float64
+	Speed   float64
+	Page    string
+	// Source is the source shown last, "" before any was chosen.
+	Source string
+	// Off is the sources turned off, by ID.
+	Off      map[string]bool
 	OnTop    bool // the player page keeps the window above others
 	Autoplay bool // an episode ending starts the next
 	Danmaku  bool // comments fly over the video
@@ -240,6 +244,7 @@ func Load(dir string) *Library {
 		Autoplay:       true,
 		Danmaku:        true,
 		followed:       map[source.Ref]int64{},
+		Off:            map[string]bool{},
 		watched:        map[source.Ref]bool{},
 	}
 	l.ResetDanmaku()
@@ -513,6 +518,15 @@ func (l *Library) read(ctx context.Context) error {
 			}
 		case "page":
 			l.Page = value
+		case "source":
+			l.Source = value
+		case "sources_off":
+			var ids []string
+			if json.Unmarshal([]byte(value), &ids) == nil {
+				for _, id := range ids {
+					l.Off[id] = true
+				}
+			}
 		case "on_top":
 			l.OnTop = value == "1"
 		case "autoplay":
@@ -579,6 +593,8 @@ func (l *Library) Flush() {
 			settingStatement("volume", formatFloat(l.Volume)),
 			settingStatement("speed", formatFloat(l.Speed)),
 			settingStatement("page", l.Page),
+			settingStatement("source", l.Source),
+			settingStatement("sources_off", offValue(l.Off)),
 			settingStatement("on_top", onTopValue(l.OnTop)),
 			settingStatement("autoplay", onTopValue(l.Autoplay)),
 			settingStatement("danmaku", onTopValue(l.Danmaku)),
@@ -745,7 +761,18 @@ func (l *Library) Recent() []*Record {
 	for _, w := range l.History {
 		out = append(out, w)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	// Latest first; records of the same moment, as a coarse clock gives,
+	// by source and ID, so that the order holds from one call to the next.
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !a.Updated.Equal(b.Updated) {
+			return a.Updated.After(b.Updated)
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		return a.Card.ID < b.Card.ID
+	})
 	return out
 }
 
@@ -844,6 +871,19 @@ func followStatement(ref source.Ref, card source.Card, stamp int64) sqlite.State
 
 func settingStatement(key, value string) sqlite.Statement {
 	return sqlite.Statement{SQL: "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", Args: []any{key, value}}
+}
+
+// offValue is the sources turned off as saved: their IDs, sorted.
+func offValue(off map[string]bool) string {
+	ids := make([]string, 0, len(off))
+	for id, on := range off {
+		if on {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	data, _ := json.Marshal(ids)
+	return string(data)
 }
 
 func onTopValue(on bool) string {
