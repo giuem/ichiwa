@@ -10,6 +10,9 @@
   --menu: #fff;
   --code: #fff;
   --accent: #f2475e;
+  /* The accent darkened for text and white labels on light backgrounds */
+  --accent-ink: #d6334c;
+  --accent-fill: #d6334c;
   --grad: linear-gradient(120deg, #ffb35c, #ff7a45 45%, #f2475e);
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   --rounded: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
@@ -27,6 +30,7 @@
     --button-text: #0b0b0d;
     --menu: #1c1c1f;
     --code: #151517;
+    --accent-ink: #f2475e;
   }
 }
 
@@ -372,19 +376,20 @@ h1 {
 /* Plugins page */
 .nav-links a[aria-current="page"] { color: var(--text); }
 .page-head { max-width: 640px; padding: 72px 0 40px; }
-.eyebrow { margin: 0 0 10px; color: var(--accent); font-size: 14px; font-weight: 600; }
+.eyebrow { margin: 0 0 10px; color: var(--accent-ink); font-size: 14px; font-weight: 600; }
 .page-title { margin-right: 0; font-size: clamp(36px, 6vw, 56px); line-height: 1.15; }
 .page-title span { display: inline-block; }
 .page-head .lede { margin-top: 18px; font-size: 17px; line-height: 1.75; }
 .plugins-page code { font: 0.88em var(--mono); padding: 1px 5px; border-radius: 5px; background: color-mix(in srgb, var(--text) 6%, transparent); }
 .plugins-page p a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent); text-underline-offset: 3px; }
-.plugins-page p a:hover { color: var(--accent); }
+.plugins-page p a:hover { color: var(--accent-ink); }
 .browse { padding-bottom: 72px; }
 .tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .tools[hidden], .status[hidden], .cards[hidden], .status [hidden] { display: none; }
-.count { margin: 0; color: var(--faint); font-size: 13px; }
+.count { margin: 0; color: var(--muted); font-size: 13px; }
 .search { flex: 0 1 240px; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; color: var(--faint); }
-.search:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.search:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.status:focus { outline: none; }
 .search svg { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
 .search input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; color: var(--text); font: 15px var(--sans); outline: none; }
 .search input::placeholder { color: var(--faint); }
@@ -400,27 +405,32 @@ h1 {
 .plugin-icon.letter { display: grid; place-items: center; background: var(--grad); color: #fff; font: 700 19px var(--rounded); }
 .card-titles { min-width: 0; display: flex; flex-direction: column; }
 .plugin-name { margin: 0; font: 700 18px/1.3 var(--rounded); overflow-wrap: anywhere; }
-.plugin-repo { margin-top: 2px; color: var(--faint); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.plugin-repo { margin-top: 2px; color: var(--muted); font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
 .plugin-repo:hover { color: var(--text); }
 .plugin-desc { margin: 14px 0 0; color: var(--muted); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.plugin-desc.none { color: var(--faint); }
-.plugin-meta, .plugin-hosts { margin: 10px 0 0; color: var(--faint); font-size: 12.5px; line-height: 1.55; overflow-wrap: anywhere; }
-.plugin-hosts { margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.plugin-meta.needs { margin-top: 2px; color: var(--accent); }
+.plugin-desc.none { color: var(--muted); font-style: italic; }
+.plugin-meta, .plugin-hosts { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.plugin-hosts { margin-top: 2px; }
+.plugin-hosts span:focus { outline: none; }
+.more { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; cursor: pointer; }
+.more:hover { text-decoration-color: currentColor; }
+.plugin-meta.note { margin-top: 2px; color: var(--accent-ink); }
 .plugin-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; padding-top: 20px; }
 .action { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 42px; border-radius: 12px; background: color-mix(in srgb, var(--text) 6%, transparent); font-size: 14px; font-weight: 600; transition: opacity 0.15s, transform 0.15s; }
 .action:hover { opacity: 0.85; }
 .action:active { transform: scale(0.98); }
-.action.primary { background: var(--accent); color: #fff; }
+.action.primary { background: var(--accent-fill); color: #fff; }
+.plugin-actions.single { grid-template-columns: 1fr; }
 .action svg { width: 15px; height: 15px; fill: currentColor; }
 .action svg.stroke { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.risk-note { max-width: 720px; margin-top: 20px; line-height: 1.7; }
+.risk-note { max-width: 720px; margin-top: 20px; color: var(--muted); line-height: 1.7; }
 .publish { margin-bottom: 96px; padding: 32px; border-radius: 20px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .publish h2 { margin: 0 0 10px; font: 700 24px var(--rounded); }
 .publish > p { max-width: 720px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.75; }
 .code.block { align-items: flex-start; max-width: 720px; margin-top: 18px; padding: 14px 10px 14px 18px; }
-.code.block pre { flex: 1; min-width: 0; margin: 0; overflow-x: auto; scrollbar-width: none; }
-.code.block code { display: block; overflow: visible; white-space: pre; padding: 0; background: none; font-size: 13.5px; }
+/* Wraps rather than scrolls on a phone; copying takes the text as written */
+.code.block pre { flex: 1; min-width: 0; margin: 0; }
+.code.block code { display: block; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0; background: none; font-size: 13.5px; }
 .foot-cta { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
 .foot-cta p { margin: 0; color: var(--text); font: 600 17px var(--rounded); }
 .foot-cta .button { margin: 0; }

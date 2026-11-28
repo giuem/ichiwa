@@ -1,6 +1,9 @@
 {
   "version": 1,
   "generatedAt": "2026-11-28T16:00:00Z",
+  "blocked": [
+    "Blocked/ichiwa-bad"
+  ],
   "plugins": [
     {
       "id": "hongguo",
@@ -34,7 +37,7 @@
       "name": "示例视频",
       "description": "协议的示例插件，覆盖全部函数。",
       "kind": "source",
-      "icon": "plugin-icons/example.jpg",
+      "icon": "plugin-icons/example.png",
       "repo": "someone/ichiwa-example",
       "version": "1.2.0",
       "publishedAt": "2026-10-02T03:00:00Z",
@@ -68,7 +71,8 @@
         "*.images.some-platform.example",
         "*.video.some-platform.example",
         "static.some-platform.example",
-        "danmaku.some-platform.example"
+        "danmaku.some-platform.example",
+        "Bad Host!"
       ],
       "url": "https://github.com/a-really-long-organization-name/ichiwa-plugin-with-an-extremely-long-repository-name/releases/download/v0.1.0-beta.12/plugin.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000003",
@@ -77,7 +81,7 @@
     {
       "id": "theme-test",
       "name": "Night Theme",
-      "description": "以后可能有的其他种类：测试类型筛选。没有图标、没有许可、不访问网络。",
+      "description": "以后可能有的其他种类：一集还不支持，不显示安装按钮。没有图标、没有许可、不访问网络。",
       "kind": "theme",
       "repo": "someone-else/ichiwa-night",
       "version": "2.0.0",
@@ -91,7 +95,7 @@
     {
       "id": "xss",
       "name": "<img src=x onerror=alert(1)>",
-      "description": "<script>alert('desc')</script> 名称、简介、主机都是 HTML，应该原样显示成文字；图标是外部地址，应该被换成首字。",
+      "description": "<script>alert('desc')</script> 名称、简介、主机都是 HTML，应该原样显示成文字；图标是外部地址，应该改用作者的 GitHub 头像；不合格的主机不显示。",
       "kind": "<b>source</b>",
       "icon": "https://evil.example/x.png",
       "repo": "evil/ichiwa-xss",
@@ -138,7 +142,7 @@
       "url": "https://github.com/giuem/ichiwa-kuaishou/releases/download/v1.0.0/plugin.zip",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000006",
       "size": 4096,
-      "icon": "plugin-icons/missing.png"
+      "icon": "plugin-icons/kuaishou.png"
     },
     {
       "id": "mini-drama",
@@ -157,6 +161,72 @@
       "sha256": "0000000000000000000000000000000000000000000000000000000000000007",
       "size": 4096,
       "description": "English short dramas, with subtitles."
+    },
+    {
+      "id": "future",
+      "name": "新协议插件",
+      "description": "apiVersion 是 9：显示“需要更新一集才能安装”，没有安装按钮。",
+      "kind": "source",
+      "repo": "someone/ichiwa-future",
+      "version": "9.0.0",
+      "publishedAt": "2026-11-20T00:00:00Z",
+      "license": "MIT",
+      "apiVersion": 9,
+      "network": [
+        "api.future.example"
+      ]
+    },
+    {
+      "id": "bidi",
+      "name": "abc‮dcba​零宽",
+      "description": "名称里有 U+202E 和零宽空格，应该被去掉，名称正着显示。",
+      "kind": "source",
+      "repo": "someone/ichiwa-bidi",
+      "version": "1.0.0",
+      "publishedAt": "2026-11-21T00:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": [
+        "api.bidi.example"
+      ]
+    },
+    {
+      "id": "dupe",
+      "name": "大小写重复",
+      "description": "仓库和红果插件只差大小写，不显示。",
+      "kind": "source",
+      "repo": "GIUEM/ICHIWA-HONGGUO",
+      "version": "1.0.0",
+      "apiVersion": 1,
+      "network": []
+    },
+    {
+      "id": "blocked",
+      "name": "屏蔽的插件",
+      "description": "在 blocked 里，不显示。",
+      "kind": "source",
+      "repo": "blocked/ichiwa-bad",
+      "version": "1.0.0",
+      "apiVersion": 1,
+      "network": []
+    },
+    {
+      "id": "emoji",
+      "name": "🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬🎬",
+      "description": "20 个 emoji 的名称不应该被截断。",
+      "kind": "source",
+      "repo": "someone/ichiwa-emoji",
+      "version": "1.0.0",
+      "publishedAt": "2026-11-22T00:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": [
+        "a.emoji.example",
+        "b.emoji.example",
+        "c.emoji.example",
+        "d.emoji.example",
+        "evil.example"
+      ]
     },
     {
       "id": "bad-repo",

@@ -450,6 +450,7 @@ jobs:
 {
   "version": 1,
   "generatedAt": "2026-12-01T16:00:00Z",
+  "blocked": ["someone-bad/ichiwa-fake"],
   "plugins": [
     {
       "id": "example",
@@ -475,20 +476,38 @@ jobs:
 
 | 字段 | 来源和规则 |
 | --- | --- |
-| `version` | 索引格式的版本，目前是 `1`。只在不兼容时才升；读者不认识的大版本当作读不了 |
+| `version` | 索引格式的版本，目前是 `1`。只在不兼容时才升；读者先看它，不认识的大版本当作读不了，不再往下解析 |
 | `generatedAt` | 生成时间，RFC 3339 UTC |
+| `blocked` | 屏蔽名单里的仓库 `owner/repo`，排好序；没有时是空数组。一集据此拒绝从链接或 `owner/repo` 安装它们，已经装了的在片源管理里提示“已被移出插件列表” |
 | `plugins` | 按 `id` 排序；没有插件时是空数组 |
-| `id`、`name`、`description`、`kind`、`license`、`apiVersion`、`minAppVersion`、`capabilities` | 照抄 `plugin.zip` 里的清单。`minAppVersion`、`capabilities` 清单里没有时省略 |
+| `id`、`name`、`description`、`kind`、`license`、`apiVersion`、`minAppVersion`、`capabilities` | 照抄 `plugin.zip` 里的清单。`description`、`license`、`minAppVersion`、`capabilities` 清单里没有时省略 |
 | `network` | 清单的 `permissions.network`，原样照抄 |
-| `icon` | 清单有图标时，workflow 从 zip 里取出来，写到 `plugin-icons/<id>.<png\|jpg\|webp>`，这里填相对 `plugins.json` 的路径；没有图标时省略，显示的地方改用仓库作者的 GitHub 头像 `https://avatars.githubusercontent.com/<owner>?s=80`。不填插件自己给的外部地址：图标随官网一起发布，不依赖插件仓库，也不让浏览器访问第三方服务器 |
-| `repo` | 发布它的 GitHub 仓库 `owner/repo`。作者就是 `owner` |
-| `version`、`publishedAt` | 最新 Release 的标签去掉 `v`（必须和清单的 `version` 一致）、发布时间 |
-| `url`、`sha256`、`size` | Release 附件 `plugin.zip` 的下载地址、SHA-256 和字节数，由 workflow 下载后计算 |
+| `icon` | 按下面的图标规则生成的 `plugin-icons/<id>.png`，相对 `plugins.json`；没有合格的图标时省略 |
+| `repo` | 发布它的 GitHub 仓库 `owner/repo`，和登记表里这个 `id` 的仓库一致。作者就是 `owner` |
+| `version`、`publishedAt` | 收录的 Release 的标签去掉 `v`（必须和清单的 `version` 一致）、发布时间 |
+| `url`、`sha256`、`size` | 这个 Release 的附件 `plugin.zip`：地址必须是 `https://github.com/<repo>/releases/download/v<version>/plugin.zip`，SHA-256 和字节数由 workflow 下载后计算 |
 
-- 校验没通过的 Release（标签和清单对不上、包不合格、没有 `plugin.zip`）不进索引；屏蔽名单里的仓库和 `id` 不进索引；两个仓库用了同一个 `id` 时只收最早进索引的那个。
-- 读者忽略不认识的字段；`kind`、`apiVersion` 不支持的插件不显示安装。以后要加字段只加不减，不升 `version`。
-- 一集安装时仍然按第 1 步自己检查下载的包，并核对 `sha256` 和清单里的 `id`、`version`：索引只是目录，不是信任的来源。
-- 官网插件页把这些文字都当作第三方内容：只以纯文本显示，链接只指向 `https://github.com/<repo>`，图标只接受 `plugin-icons/` 下的文件。
+收录规则：
+
+- **`id` 登记表**：一集的仓库里保存一份 `id → repo` 登记表（`.github/plugin-index/registry.json`），由生成索引的 workflow 维护，和索引一起提交。一个 `id` 第一次进索引时登记它的仓库；之后这个 `id` 只收这个仓库，即使它哪天校验失败、搜不到、被删，也不释放给别的仓库。仓库名按 GitHub 的规则不区分大小写。改名、转移由维护者手动改登记表。
+- 新 Release 校验没通过（标签和清单对不上、包不合格、没有 `plugin.zip`）时，保留上一个通过校验的版本；从来没有通过的不进索引。
+- 屏蔽名单（`.github/plugin-index/blocklist.json`）里的仓库和 `id` 不进索引，登记也保留，防止换个仓库再来。
+- 读者忽略不认识的字段；`kind` 或 `apiVersion` 不支持的插件照常列出，但不给安装入口。以后要加字段只加不减，不升 `version`。
+- 一集安装时仍然按第 1 步自己检查下载的包：`url` 不是上面的格式、`sha256` 对不上、清单的 `id` 或 `version` 和索引不同，都拒绝安装，提示“插件包和列表里的不一致，稍后再试”。索引只是目录，不是信任的来源。
+- 官网插件页把这些文字都当作第三方内容：只以纯文本显示，去掉控制字符和双向、零宽字符；链接只指向 `https://github.com/<repo>`；图标只接受 `plugin-icons/<id>.png` 和作者的 GitHub 头像。
+
+图标规则：图标随官网发布，不依赖插件仓库，也不让浏览器访问插件作者的服务器。workflow 处理清单里的 `icon`：
+
+1. 只看文件内容，不看文件名和扩展名：原文件不超过 1 MiB；先只读文件头取格式和尺寸，必须是 PNG、JPEG 或 WebP，正方形，边长 128 到 4096。
+2. 解码后缩放到 256×256，重新编码成 PNG，写到 `plugin-icons/<id>.png`。扩展名永远由输出格式决定，所以官网上不会出现 `.html`、`.svg` 这类会被浏览器当作页面执行的文件；重新编码也去掉了图片里夹带的其他数据。编码后超过 256 KiB 的丢弃。
+3. 不收 SVG：SVG 是能带脚本和外部引用的文档，放在官网域名下有风险，安全地清理它比收益麻烦得多；一集的界面也不画 SVG。
+4. 任何一步不合格都不报错，只是省略 `icon`，插件照常进索引。显示的地方改用作者的 GitHub 头像 `https://avatars.githubusercontent.com/<owner>?s=80`。这样一个插件的图标再怎么不合格，也不会让官网部署失败（Cloudflare Pages 单个文件上限 25 MiB）。
+
+部署：Cloudflare Pages 每次部署替换整个站点，而仓库里只提交了空索引，所以生成的索引必须进仓库：
+
+- 生成索引的 workflow 把 `website/plugins.json`、`website/plugin-icons/` 和登记表提交到 `main`。除了 `generatedAt` 什么都没变时不提交。
+- 用 `GITHUB_TOKEN` 推送的提交不会触发 `website.yml`，所以它提交后自己部署一次官网；之后 `website.yml` 因为别的改动部署时，用的也是已经提交的最新索引。
+- 这些提交只改 `website/` 和 `.github/`，不会触发发布（`scripts/release.sh` 不算它们）。
 
 从网页安装：一集注册 URL scheme `ichiwa`，官网插件页的“安装”按钮链接到
 
@@ -496,8 +515,12 @@ jobs:
 ichiwa://install-plugin?repo=<owner>/<repo>
 ```
 
-- 效果和在“管理片源…”里输入 `owner/repo` 一样：一集打开片源管理，读这个仓库的最新 Release，照下面的第 2 步列出信息，等用户确认。链接本身从不直接安装。
-- `repo` 必须是合法的 `owner/repo`（GitHub 用户名和仓库名的字符），不合格时提示“链接不对”；不认识的参数忽略，不认识的路径提示需要更新一集。
+- `install-plugin` 是动作（在 URL 里是 host）。不认识的动作提示“需要更新一集”；不认识的参数忽略。
+- 查询串只解码一次，之后 `repo` 必须完全匹配 `^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$`，仓库名不能是 `.` 或 `..`；`repo` 出现多次、缺少或不合格时都提示“链接不对”，什么也不做。
+- 效果和在“管理片源…”里输入 `owner/repo` 一样：一集打开片源管理，照下面的第 2 步列出信息，等用户确认。链接本身从不直接安装。任何网页都能打开这个链接，所以：
+  - 仓库在索引里时，安装索引收录的那个版本，核对它的 `sha256`；
+  - 不在索引里时，安装最新 Release，确认框标出“这个插件不在插件列表里”；
+  - 在索引的 `blocked` 里时，拒绝安装，说明它被移出了插件列表。
 - 插件已经装了时，显示它的详情；同一 `id` 已经绑定别的仓库时，照常拒绝。
 
 安装：

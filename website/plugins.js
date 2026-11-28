@@ -2,14 +2,17 @@
 // plugin-index workflow publishes with the site (docs/plugin-design.md,
 // section 13). Everything in the index comes from third-party plugins, so
 // none of it is ever parsed as HTML: text goes in through textContent,
-// links are built from a checked owner/repo, and icons are files under
-// plugin-icons/ on this site or the owner's GitHub avatar.
+// links are built from a checked owner/repo, and icons are the plugin's
+// re-encoded PNG on this site or the owner's GitHub avatar.
 (function () {
   "use strict";
 
   var INDEX_VERSION = 1;
+  var API_VERSION = 1;
   // Fewer plugins than this fit on a screen or two: no search box.
   var SEARCH_FROM = 7;
+  // Hosts shown before "等 N 个网站".
+  var HOSTS_SHOWN = 3;
 
   var tools = document.getElementById("tools");
   var q = document.getElementById("q");
@@ -24,17 +27,21 @@
 
   /* ---------- Checking the index ---------- */
 
+  // Control characters, and the bidirectional and zero-width ones that make
+  // text read differently from what it is.
+  var HIDDEN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/g;
+
   function str(v, max) {
     if (typeof v !== "string") return "";
-    v = v.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
-    return max && v.length > max ? v.slice(0, max) + "…" : v;
-  }
-  function strs(v, max) {
-    return Array.isArray(v) ? v.map(function (s) { return str(s, max); }).filter(Boolean) : [];
+    v = v.replace(HIDDEN, " ").replace(/\s+/g, " ").trim();
+    if (!max) return v;
+    var chars = Array.from(v);
+    return chars.length > max ? chars.slice(0, max).join("") + "…" : v;
   }
   // GitHub's own rules for user and repository names.
   var REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
-  var ICON = /^plugin-icons\/[a-z0-9][a-z0-9._-]{0,80}\.(?:png|jpe?g|webp)$/;
+  var ID = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
+  var HOST = /^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/;
 
   // Returns the plugin as the page shows it, or null when it can't be shown.
   function clean(p) {
@@ -42,19 +49,26 @@
     var repo = str(p.repo);
     var name = str(p.name, 32);
     if (!REPO.test(repo) || /\/\.\.?$/.test(repo) || !name) return null;
+    var id = str(p.id);
     var date = new Date(str(p.publishedAt));
+    var network = Array.isArray(p.network) ? p.network.filter(function (h) {
+      return typeof h === "string" && h.length <= 253 && HOST.test(h);
+    }) : [];
     return {
-      id: str(p.id, 64),
+      id: id,
       name: name,
       description: str(p.description, 200),
-      icon: ICON.test(str(p.icon)) ? str(p.icon) : "",
+      icon: ID.test(id) && p.icon === "plugin-icons/" + id + ".png" ? p.icon : "",
       repo: repo,
+      key: repo.toLowerCase(),
       owner: repo.split("/")[0],
       version: str(p.version, 40),
       published: isNaN(date) ? null : date,
       license: str(p.license, 64),
       minAppVersion: str(p.minAppVersion, 20),
-      network: strs(p.network, 253)
+      network: network,
+      supported: p.kind === "source" && p.apiVersion === API_VERSION,
+      knownKind: p.kind === "source"
     };
   }
 
@@ -101,28 +115,63 @@
     if (p.license) meta.push(p.license);
     if (p.published) meta.push(dateFormat.format(p.published) + "更新");
     if (meta.length) li.appendChild(el("p", "plugin-meta", meta.join(" · ")));
-    var hosts = el("p", "plugin-hosts");
-    hosts.textContent = p.network.length ? "访问 " + p.network.join("、") : "不访问网络";
-    hosts.title = hosts.textContent;
-    li.appendChild(hosts);
-    if (p.minAppVersion) li.appendChild(el("p", "plugin-meta needs", "需要一集 " + p.minAppVersion + " 或更新"));
+    li.appendChild(hosts(p.network));
+    if (!p.supported) {
+      li.appendChild(el("p", "plugin-meta note", p.knownKind ? "需要更新一集才能安装" : "一集还不支持这类插件"));
+    } else if (p.minAppVersion) {
+      li.appendChild(el("p", "plugin-meta note", "需要一集 " + p.minAppVersion + " 或更新"));
+    }
 
     var actions = el("div", "plugin-actions");
-    var install = el("a", "action primary");
-    install.href = "ichiwa://install-plugin?repo=" + p.repo;
-    install.setAttribute("aria-label", "在一集里安装 " + p.name);
-    install.append(icon(DOWNLOAD), "安装");
+    if (p.supported) {
+      var install = el("a", "action primary");
+      install.href = "ichiwa://install-plugin?repo=" + p.repo;
+      install.setAttribute("aria-label", "在一集里安装 " + p.name);
+      install.append(icon(DOWNLOAD), "安装");
+      actions.appendChild(install);
+    } else {
+      actions.classList.add("single");
+    }
     var gh = el("a", "action");
     gh.href = "https://github.com/" + p.repo;
     gh.setAttribute("aria-label", p.name + " 的 GitHub 仓库");
     gh.append(icon(GITHUB), "GitHub");
-    actions.append(install, gh);
+    actions.appendChild(gh);
     li.appendChild(actions);
     return li;
   }
 
-  // The manifest's icon, else the owner's GitHub avatar, else the first
-  // character of the name.
+  // "访问 a、b、c 等 N 个网站", with a button to show them all: a long list
+  // can't hide a host where only hover would reveal it.
+  function hosts(list) {
+    var p = el("p", "plugin-hosts");
+    if (!list.length) {
+      p.textContent = "不访问网络";
+      return p;
+    }
+    var text = el("span");
+    p.appendChild(text);
+    if (list.length <= HOSTS_SHOWN) {
+      text.textContent = "访问 " + list.join("、");
+      return p;
+    }
+    text.textContent = "访问 " + list.slice(0, HOSTS_SHOWN).join("、") + " 等 " + list.length + " 个网站";
+    var more = el("button", "more", "全部");
+    more.type = "button";
+    more.setAttribute("aria-label", "显示全部 " + list.length + " 个网站");
+    more.addEventListener("click", function () {
+      text.textContent = "访问 " + list.join("、");
+      more.remove();
+      text.tabIndex = -1;
+      text.focus();
+    });
+    p.append(" ", more);
+    return p;
+  }
+
+  // The plugin's icon, else the owner's GitHub avatar, else the first
+  // character of the name. Each image is asked for once: cards are built
+  // once and searching only hides them.
   function pluginIcon(p) {
     var srcs = [];
     if (p.icon) srcs.push(p.icon);
@@ -155,20 +204,29 @@
     retry.hidden = !canRetry;
   }
 
-  function render() {
+  function filter() {
     var words = q.value.toLowerCase().split(/\s+/).filter(Boolean);
-    var shown = plugins.filter(function (p) {
-      var hay = (p.name + "\n" + p.description + "\n" + p.repo + "\n" + p.id).toLowerCase();
-      return words.every(function (w) { return hay.indexOf(w) >= 0; });
+    var n = 0;
+    plugins.forEach(function (p) {
+      var hit = words.every(function (w) { return p.hay.indexOf(w) >= 0; });
+      p.node.hidden = !hit;
+      if (hit) n++;
     });
-    cards.replaceChildren.apply(cards, shown.map(card));
-    cards.hidden = !shown.length;
-    count.textContent = words.length ? "找到 " + shown.length + " 个插件" : "共 " + plugins.length + " 个插件";
-    if (shown.length) status.hidden = true;
+    cards.hidden = !n;
+    count.textContent = words.length ? "找到 " + n + " 个插件" : "共 " + plugins.length + " 个插件";
+    if (n) status.hidden = true;
     else showStatus("没有找到符合条件的插件。", "换个词试试。", false);
   }
 
   /* ---------- Loading ---------- */
+
+  function fail() {
+    status.classList.remove("loading");
+    plugins = [];
+    tools.hidden = true;
+    cards.hidden = true;
+    showStatus("插件列表读不出来。", "检查一下网络，稍后再试。", true);
+  }
 
   function load() {
     showStatus("正在读取插件列表…", "", false);
@@ -179,16 +237,22 @@
         return r.json();
       })
       .then(function (index) {
+        if (!index || typeof index !== "object") throw new Error("bad index");
         status.classList.remove("loading");
-        if (!index || typeof index !== "object" || !Array.isArray(index.plugins)) throw new Error("bad index");
+        // The version first: a newer format may not have "plugins" at all.
         if (index.version !== INDEX_VERSION) {
           showStatus("插件列表的格式更新了。", "刷新页面再试试。", false);
           return;
         }
+        if (!Array.isArray(index.plugins)) throw new Error("bad index");
         var seen = {};
+        (Array.isArray(index.blocked) ? index.blocked : []).forEach(function (r) {
+          if (typeof r === "string") seen[r.toLowerCase()] = true;
+        });
         plugins = index.plugins.map(clean).filter(function (p) {
-          if (!p || seen[p.repo]) return false;
-          seen[p.repo] = true;
+          // GitHub names ignore case: Owner/Repo and owner/repo are one.
+          if (!p || seen[p.key]) return false;
+          seen[p.key] = true;
           return true;
         });
         plugins.sort(function (a, b) { return a.name.localeCompare(b.name, "zh-CN"); });
@@ -196,19 +260,25 @@
           showStatus("还没有插件。", "写了插件的话，照下面的步骤发布，就会出现在这里。", false);
           return;
         }
+        plugins.forEach(function (p) {
+          p.node = card(p);
+          p.hay = (p.name + "\n" + p.description + "\n" + p.repo + "\n" + p.id).toLowerCase();
+        });
+        cards.replaceChildren.apply(cards, plugins.map(function (p) { return p.node; }));
         tools.hidden = plugins.length < SEARCH_FROM;
-        render();
+        filter();
       })
-      .catch(function () {
-        status.classList.remove("loading");
-        plugins = [];
-        tools.hidden = true;
-        cards.hidden = true;
-        showStatus("插件列表读不出来。", "检查一下网络，稍后再试。", true);
-      });
+      .catch(fail);
   }
-  retry.addEventListener("click", load);
-  q.addEventListener("input", render);
+  retry.addEventListener("click", function () {
+    // The button hides while loading: keep focus on the message.
+    status.focus();
+    load();
+  });
+  q.addEventListener("input", function (e) {
+    if (!e.isComposing) filter();
+  });
+  q.addEventListener("compositionend", filter);
   load();
 
   /* ---------- Copy ---------- */

@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://avatars.githubusercontent.com; connect-src 'self'; base-uri 'none'; form-action 'none'">
   <title>一集 · 片源插件</title>
-  <meta name="description" content="一集的片源插件：由作者发布在 GitHub 上，点一下装进一集。也可以发布你自己写的插件。">
+  <meta name="description" content="一集的片源插件列表：插件放在 GitHub 上，点“安装”装进一集，确认要访问的网站后才生效。也可以发布你自己写的插件。">
   <meta name="theme-color" content="#fbfaf9" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0b0b0d" media="(prefers-color-scheme: dark)">
   <meta property="og:title" content="一集 · 片源插件">
-  <meta property="og:description" content="更多的剧，来自插件。">
+  <meta property="og:description" content="想看什么，装什么：一集的片源插件。">
   <meta property="og:image" content="icon.png">
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icon.png">
@@ -29,9 +29,9 @@
 
   <main class="plugins-page">
     <header class="page-head">
-      <p class="eyebrow">插件</p>
-      <h1 class="page-title"><span>更多的剧，</span><span>来自插件。</span></h1>
-      <p class="lede">片源插件由作者发布在 GitHub 上。点“安装”会打开一集；也可以在一集的“管理片源…”里从列表安装，或者填入插件的仓库 <code>owner/repo</code>。插件访问任何网站前都会先征得你的同意，不想用了可以随时停用或卸载。</p>
+      <p class="eyebrow">片源插件</p>
+      <h1 class="page-title"><span>想看什么，</span><span>装什么。</span></h1>
+      <p class="lede">一集本身不带剧，剧从片源插件里来。插件是别人写好放在 GitHub 上的：点“安装”会打开一集，先告诉你它要访问哪些网站，你点头才装上；以后更新要多访问别的网站，会再问你一次。在一集的“管理片源…”里也能从这份列表安装，或者填入插件仓库 <code>owner/repo</code>；不想用了，在那里停用或卸载。</p>
     </header>
 
     <section class="browse" aria-labelledby="browse-title">
@@ -44,7 +44,7 @@
           <input id="q" type="search" placeholder="搜索插件" autocomplete="off" spellcheck="false">
         </label>
       </div>
-      <div class="status" id="status" role="status">
+      <div class="status" id="status" role="status" tabindex="-1">
         <p class="status-text" id="status-text">正在读取插件列表…</p>
         <p class="fine" id="status-fine" hidden></p>
         <button class="button small" type="button" id="retry" hidden>重试</button>
