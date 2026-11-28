@@ -126,6 +126,10 @@ func header(id, cursor string) *source.Header {
 	return navHeaders[id]
 }
 
+// Header is the header of the navigation page id, nil for none: for the
+// pages the app kept before Hongguo said what they are.
+func Header(id string) *source.Header { return navHeaders[id] }
+
 func (s *Source) Info() source.Info {
 	return source.Info{
 		ID:      SourceID,

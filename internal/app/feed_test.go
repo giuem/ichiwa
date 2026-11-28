@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
@@ -143,6 +145,9 @@ func TestFeedCacheMigratesLegacy(t *testing.T) {
 		c.Image != "https://ex/1.jpg" || !slices.Equal(c.Badges, []string{"全80集"}) || c.Note != "甜宠" {
 		t.Fatalf("converted card = %+v", c)
 	}
+	if h := app.Col("channel:推荐").Header; h == nil || h.Description == "" {
+		t.Errorf("the migrated page has no subtitle: %+v", h)
+	}
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
 		t.Fatalf("legacy feed cache was not removed: %v", err)
 	}
@@ -155,5 +160,57 @@ func TestFeedCacheMigratesLegacy(t *testing.T) {
 	// A subsequent launch (even offline) reads from the new path.
 	if f2 := &(&App{Src: hgSrc, CacheDir: cacheDir}).Col("channel:推荐").Results; !f2.stale || len(f2.Items) != 1 || f2.Items[0].Title != "旧缓存剧" {
 		t.Fatalf("second launch feed = %+v", f2)
+	}
+}
+
+// An old file stays until the new one holds its items.
+func TestFeedCacheMigrationKeepsOldOnFailure(t *testing.T) {
+	cacheDir := t.TempDir()
+	bySource := filepath.Join(cacheDir, "feeds", "hongguo", "live.json")
+	if err := os.MkdirAll(filepath.Dir(bySource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bySource, []byte(`[{"kind":"media","id":"l1","title":"真人剧"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
+	// A folder where the new file goes: it can't be written.
+	if err := os.MkdirAll(feedCachePath(cacheDir, "hongguo", "channel:真人剧"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if l := (&App{Src: src, CacheDir: cacheDir}).Col("channel:真人剧").Results; len(l.Items) != 1 {
+		t.Fatalf("items = %+v", l.Items)
+	}
+	if _, err := os.Stat(bySource); err != nil {
+		t.Fatalf("the old file went though the new one wasn't written: %v", err)
+	}
+}
+
+// A page with filters keeps its header for the next launch, but not its
+// items: its title and subtitle show at once.
+func TestFeedCacheKeepsHeaderOfFilterPages(t *testing.T) {
+	cacheDir := t.TempDir()
+	src := &sourcetest.Source{
+		InfoData: source.Info{ID: "a"},
+		OnCollection: func(context.Context, source.CollectionRequest) (*source.CollectionPage, error) {
+			return &source.CollectionPage{
+				Header:  &source.Header{Title: "排行榜", Description: "看看大家在追什么"},
+				Filters: []FilterRow{{Key: "board", Title: "榜单", Value: "hot", Options: []source.FilterOption{{Value: "hot", Title: "热播榜"}}}},
+				Items:   []Card{{Kind: source.CardMedia, ID: "m1", Title: "好剧", Image: "x", Badges: []string{"全10集"}}},
+			}, nil
+		},
+	}
+	app, run := cancelApp(t, src)
+	app.CacheDir = cacheDir
+	app.Ensure(app.Col("rank"))
+	run(5 * time.Second)
+	app.SaveFeeds(true)
+
+	again := (&App{Src: src, CacheDir: cacheDir}).Col("rank")
+	if again.Header == nil || again.Header.Description != "看看大家在追什么" {
+		t.Errorf("header = %+v", again.Header)
+	}
+	if len(again.Results.Items) != 0 || again.Results.stale {
+		t.Errorf("a filter page's items were kept: %+v", again.Results.Items)
 	}
 }

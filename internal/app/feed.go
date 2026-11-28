@@ -431,7 +431,6 @@ func (app *App) legacyFeedCache(colID, path string) *feedCache {
 		if json.Unmarshal(data, &items) != nil {
 			items = nil
 		}
-		defer os.Remove(bySource)
 	}
 	if len(items) == 0 {
 		items = loadLegacyFeedCache(oldest)
@@ -439,9 +438,10 @@ func (app *App) legacyFeedCache(colID, path string) *feedCache {
 	if len(items) == 0 {
 		return nil
 	}
-	c := &feedCache{Items: items}
+	c := &feedCache{Header: hongguo.Header(colID), Items: items}
 	// The old files go only once the new one holds their items.
 	if err := writeFeedCache(path, c); err == nil {
+		_ = os.Remove(bySource)
 		_ = os.Remove(oldest)
 	}
 	return c
@@ -491,9 +491,9 @@ func loadLegacyFeedCache(path string) []Card {
 }
 
 // SaveFeeds writes the first items of the collections that changed, of
-// every source the app showed, on a goroutine unless wait. Only pages
-// without filters are kept: what a filter shows depends on a choice the
-// next launch starts without.
+// every source the app showed, on a goroutine unless wait. Of a page with
+// filters only the header is kept: what a filter shows depends on a
+// choice the next launch starts without.
 func (app *App) SaveFeeds(wait bool) {
 	type job struct {
 		path  string
@@ -506,7 +506,18 @@ func (app *App) SaveFeeds(wait bool) {
 	}
 	for _, cs := range cols {
 		f := &cs.Results
-		if f.cache == "" || f.stale || !f.changed || len(f.Items) == 0 || cs.First == nil || len(cs.First.Filters) > 0 {
+		if f.cache == "" || cs.First == nil {
+			continue
+		}
+		if len(cs.First.Filters) > 0 {
+			// Its header only, which shows at once the next launch.
+			if cs.Header != nil && cs.Header != cs.savedHeader {
+				cs.savedHeader = cs.Header
+				jobs = append(jobs, job{f.cache, &feedCache{Header: cs.Header}})
+			}
+			continue
+		}
+		if f.stale || !f.changed || len(f.Items) == 0 {
 			continue
 		}
 		f.changed = false

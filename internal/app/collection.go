@@ -22,9 +22,11 @@ type Collection struct {
 	// whose list did not fail: a retry's first page replaces one that did.
 	haveFirst bool
 	// header is first's, or the one the cache kept, shown until it comes.
-	Header   *source.Header
-	Results  Feed
-	sections map[string]*Feed // sections the host loads, by collection ID
+	Header *source.Header
+	// savedHeader is the header saved last of a page whose items are not.
+	savedHeader *source.Header
+	Results     Feed
+	sections    map[string]*Feed // sections the host loads, by collection ID
 }
 
 func newCol(id, title string) *Collection {
