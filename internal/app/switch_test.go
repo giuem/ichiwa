@@ -139,3 +139,46 @@ func TestSourceOffKeepsNextPlace(t *testing.T) {
 		t.Error("the source turned off is kept")
 	}
 }
+
+// Covers still coming when the user switches away come when the source
+// shows again.
+func TestCoversCompleteAfterSwitch(t *testing.T) {
+	var block atomic.Bool
+	block.Store(true)
+	entered := make(chan string, 8)
+	a := &sourcetest.Source{
+		InfoData: source.Info{ID: "a", Capabilities: []source.Capability{source.CapRefresh}},
+		OnNavigation: func(context.Context) ([]source.NavItem, error) {
+			return []source.NavItem{{ID: "a1", Title: "a1"}}, nil
+		},
+		OnCollection: func(context.Context, source.CollectionRequest) (*source.CollectionPage, error) {
+			return &source.CollectionPage{Items: []source.Card{{Kind: source.CardMedia, ID: "m", Title: "m"}}}, nil
+		},
+		OnRefresh: func(ctx context.Context, ids []string) ([]source.Card, error) {
+			entered <- "refresh"
+			if block.Load() {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return []source.Card{{Kind: source.CardMedia, ID: "m", Image: "cover", Badges: []string{"全10集"}}}, nil
+		},
+	}
+	b := navSource("b", "b1")
+	app, run := cancelApp(t, a)
+	app.Sources.Add(b)
+	app.UseSource(a)
+	run(5 * time.Second)
+	app.Ensure(app.Col("a1"))
+	run(5 * time.Second)
+	waitCall(t, entered, "refresh")
+	app.SwitchSource(b)
+	for run(300 * time.Millisecond) {
+	}
+	block.Store(false)
+	app.SwitchSource(a)
+	for run(300 * time.Millisecond) {
+	}
+	if it := app.Col("a1").Results.Items; len(it) != 1 || it[0].Image != "cover" {
+		t.Errorf("items = %+v", it)
+	}
+}

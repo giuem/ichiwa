@@ -1,6 +1,9 @@
 package app
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/giuem/ichiwa/internal/source"
 )
 
@@ -157,6 +160,22 @@ func (app *App) show(s source.Source, b *browse) {
 	}
 	if app.Page != "" {
 		app.Lib.Page = app.Page // else LoadNav saves the first
+	}
+	app.eachFeed(app.refill)
+}
+
+// eachFeed runs fn on every feed of the source shown.
+func (app *App) eachFeed(fn func(*Feed)) {
+	cols := slices.Collect(maps.Values(app.cols))
+	for _, cs := range append(cols, app.Stack...) {
+		fn(&cs.Results)
+		for _, f := range cs.sections {
+			fn(f)
+		}
+	}
+	fn(&app.Search.Results)
+	for _, f := range app.Search.HotFeeds {
+		fn(f)
 	}
 }
 

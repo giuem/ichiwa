@@ -71,6 +71,9 @@ type Feed struct {
 	cache   string
 	stale   bool
 	changed bool
+	// unfilled are the cards whose covers were still coming when the
+	// source was left, to ask for again when it shows.
+	unfilled []string
 
 	// life ends when the feed resets, canceling the calls for what it
 	// showed; end ends it.
@@ -318,7 +321,14 @@ func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
 		return filled, nil
 	}, func(filled []Card, _ error) {
 		defer done()
-		if f.gen != gen || len(filled) == 0 || ctx.Err() != nil {
+		if f.gen != gen {
+			return
+		}
+		if ctx.Err() != nil {
+			f.unfilled = append(f.unfilled, ids...)
+			return
+		}
+		if len(filled) == 0 {
 			return
 		}
 		byID := make(map[string]Card, len(filled))
@@ -341,6 +351,26 @@ func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
 			}
 		}
 	})
+}
+
+// refill asks again for the covers that were still coming for f when
+// its source was left.
+func (app *App) refill(f *Feed) {
+	if len(f.unfilled) == 0 {
+		return
+	}
+	want := map[string]bool{}
+	for _, id := range f.unfilled {
+		want[id] = true
+	}
+	f.unfilled = nil
+	var cards []Card
+	for _, s := range f.Items {
+		if want[s.ID] {
+			cards = append(cards, s)
+		}
+	}
+	app.fill(source.Background(app.srcContext()), f, cards)
 }
 
 // Visible is what of f the grid shows: whole rows of n while more pages
