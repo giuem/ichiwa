@@ -139,6 +139,19 @@ func TestRecordsAcrossSources(t *testing.T) {
 	if app.Page != core.PageSources || app.Unavailable != nil {
 		t.Fatalf("page %q, unavailable %+v", app.Page, app.Unavailable)
 	}
+
+	// A source not installed says so, and promises nothing it can't do.
+	app.Go(core.PageHistory)
+	tt.Frame()
+	if err := tt.Click("丙剧"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	tt.Frame()
+	said := strings.Join(tt.Texts(), "\n")
+	if !strings.Contains(said, "没有安装") || strings.Contains(said, "装上以后") {
+		t.Errorf("the dialog says %q", said)
+	}
 }
 
 // A plugin's log opens from its row on the sources page and goes back;

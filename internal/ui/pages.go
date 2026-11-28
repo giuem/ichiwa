@@ -569,7 +569,7 @@ func (app *App) unavailableDialog(c *ui.Context) {
 	p := app.pal
 	detail := fmt.Sprintf("“%s”来自片源“%s”，这个片源已关闭。打开它就能接着看，观看记录都还在。", u.Title, u.Name)
 	if !u.Installed {
-		detail = fmt.Sprintf("“%s”来自片源“%s”，这个片源还没有安装。装上以后，观看记录会自动对上。", u.Title, u.Name)
+		detail = fmt.Sprintf("“%s”来自片源“%s”，这个片源现在没有安装，暂时打不开。观看记录会一直保留。", u.Title, u.Name)
 	}
 	ui.DialogBase(c, &app.unavailOpen, func(backdrop, panel ui.Element) {
 		backdrop.Background(ui.RGBA(0, 0, 0, 0.4))
