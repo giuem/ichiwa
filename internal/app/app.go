@@ -108,7 +108,7 @@ type App struct {
 	// Page is the page of the sidebar shown: a navigation item of the
 	// source shown, PageSearch, or one of the app's own pages.
 	Page   string
-	Search searchState
+	Search *searchState
 	// srcPage is the page of the source shown last, which it goes back
 	// to from the app's own pages.
 	srcPage string
@@ -150,7 +150,7 @@ type App struct {
 // New loads what the app keeps and the sources, and shows the source
 // shown last.
 func New(cfg Config) *App {
-	app := &App{host: cfg.Host, version: cfg.Version, locale: cfg.Locale, DataDir: cfg.DataDir, CacheDir: cfg.CacheDir}
+	app := &App{host: cfg.Host, version: cfg.Version, locale: cfg.Locale, DataDir: cfg.DataDir, CacheDir: cfg.CacheDir, Search: &searchState{}}
 	app.Lib = library.Load(cfg.DataDir)
 	app.Page = normalizeSavedPage(app.Lib.Page)
 	src, err := hongguo.New(cfg.DataDir)
@@ -322,7 +322,7 @@ func normalizeSavedPage(saved string) string {
 // keeps its records, post runs what the loads bring, and the first of
 // srcs shows.
 func Headless(lib *library.Library, post func(func()), srcs ...source.Source) *App {
-	app := &App{Lib: lib, post: post, warmed: true}
+	app := &App{Lib: lib, post: post, warmed: true, Search: &searchState{}}
 	for _, s := range srcs {
 		app.Sources.Add(s)
 	}

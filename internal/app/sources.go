@@ -20,7 +20,7 @@ type browse struct {
 	page   string
 	cols   map[string]*Collection
 	stack  []*Collection
-	search searchState
+	search *searchState
 	warmed bool
 }
 
@@ -137,6 +137,9 @@ func (app *App) show(s source.Source, b *browse) {
 	app.Nav, app.NavErr, app.cols, app.Stack, app.Search, app.warmed = b.nav, b.navErr, b.cols, b.stack, b.search, b.warmed
 	if app.cols == nil {
 		app.cols = map[string]*Collection{}
+	}
+	if app.Search == nil {
+		app.Search = &searchState{}
 	}
 	app.Page, app.srcPage = b.page, b.page
 	if s == nil {

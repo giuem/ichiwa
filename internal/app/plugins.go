@@ -315,7 +315,7 @@ func (app *App) UnloadDev() {
 func (app *App) refreshSource() {
 	app.leaveSource()
 	app.cols = map[string]*Collection{}
-	app.Search = searchState{}
+	app.Search = &searchState{}
 	app.Stack = nil
 	app.warmed = false
 	src, page := app.Src, app.Page

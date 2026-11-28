@@ -262,7 +262,7 @@ func (app *App) feedFooter(c *ui.Context, loading bool, err string, more bool, r
 // ---- Search ----
 
 func (app *App) searchPage(c *ui.Context) {
-	s := &app.Search
+	s := app.Search
 	p := app.pal
 	app.ShowSearch()
 	app.header(c, "搜索", "", nil)
@@ -332,7 +332,7 @@ func (app *App) searchPage(c *ui.Context) {
 // hotBoards shows the search home: its ranked sections as boards side by
 // side, the others as rows of cards.
 func (app *App) hotBoards(c *ui.Context) {
-	s := &app.Search
+	s := app.Search
 	p := app.pal
 	if !app.HasCap(source.CapSearchHome) {
 		app.centered(c, iconSearch, "搜索", "输入关键词后按回车", nil)

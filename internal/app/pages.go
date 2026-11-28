@@ -51,7 +51,7 @@ type searchState struct {
 
 // runSearch shows the results of q, or the search home when q is empty.
 func (app *App) RunSearch(q string) {
-	s := &app.Search
+	s := app.Search
 	q = strings.TrimSpace(q)
 	f := &s.Results
 	f.reset()
@@ -75,7 +75,7 @@ const suggestWait = 250 * time.Millisecond
 // typed takes in the query as it is typed: an empty one goes back to the
 // search home, another asks the source for words to suggest.
 func (app *App) Typed(q string) {
-	s := &app.Search
+	s := app.Search
 	q = strings.TrimSpace(q)
 	if q == "" {
 		app.RunSearch("")
@@ -107,7 +107,7 @@ func (app *App) LoadHot() {
 	if !app.HasCap(source.CapSearchHome) {
 		return
 	}
-	s := &app.Search
+	s := app.Search
 	if s.Hot != nil || s.hotBusy || s.HotErr != "" {
 		return
 	}
@@ -117,10 +117,10 @@ func (app *App) LoadHot() {
 	async(app, func() (*source.CollectionPage, error) {
 		return src.SearchHome(ctx)
 	}, func(p *source.CollectionPage, err error) {
+		s.hotBusy = false // s is kept with its source when it is left
 		if ctx.Err() != nil {
-			return // the source was left: its search state is gone
+			return // canceled as the source was left: loads again when shown
 		}
-		s.hotBusy = false
 		if err != nil {
 			s.HotErr = errText(err)
 			return

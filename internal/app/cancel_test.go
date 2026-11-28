@@ -17,6 +17,7 @@ func cancelApp(t *testing.T, src source.Source) (*App, func(time.Duration) bool)
 		Src:    src,
 		Lib:    testLibrary(t),
 		warmed: true,
+		Search: &searchState{},
 		post:   func(fn func()) { done <- fn },
 	}
 	app.Sources.Add(src)

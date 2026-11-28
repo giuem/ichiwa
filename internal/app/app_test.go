@@ -292,9 +292,10 @@ func TestSourceCancellationShowsError(t *testing.T) {
 		},
 	}
 	app := &App{
-		Src:  src,
-		Lib:  testLibrary(t),
-		post: func(fn func()) { done <- fn },
+		Src:    src,
+		Lib:    testLibrary(t),
+		post:   func(fn func()) { done <- fn },
+		Search: &searchState{},
 	}
 	drain := func() {
 		t.Helper()

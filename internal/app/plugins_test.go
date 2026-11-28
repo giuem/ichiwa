@@ -133,6 +133,7 @@ func devApp(t *testing.T) (*App, source.Source, chan func()) {
 		Lib:     testLibrary(t),
 		DataDir: t.TempDir(),
 		post:    func(fn func()) { done <- fn },
+		Search:  &searchState{},
 	}
 	app.Sources.Add(builtin)
 	t.Cleanup(app.UnloadDev)
