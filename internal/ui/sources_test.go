@@ -207,3 +207,26 @@ func TestSourceIconFollowsSource(t *testing.T) {
 		t.Error("the source without an icon shows the icon of the one before")
 	}
 }
+
+// Records of two sources with the same ID are two cards, each opening its
+// own (§3: a record is its source's and its ID).
+func TestRecordsOfSameIDApart(t *testing.T) {
+	a, b := namedSource("a", "甲片源"), namedSource("b", "乙片源")
+	app := viewApp(t, lightPalette(), a, b)
+	app.Lib.Progress("a", Card{Kind: source.CardMedia, ID: "1", Title: "甲剧"}, "e1", 0, 10, 30, 100)
+	app.Lib.Progress("b", Card{Kind: source.CardMedia, ID: "1", Title: "乙剧"}, "e1", 0, 10, 30, 100)
+	app.Lib.ToggleFollow("a", Card{Kind: source.CardMedia, ID: "1", Title: "甲剧"})
+	app.Lib.ToggleFollow("b", Card{Kind: source.CardMedia, ID: "1", Title: "乙剧"})
+	for page, draw := range map[string]func(*ui.Context){"history": app.historyPage, "follows": app.followsPage} {
+		tt := ui.NewTester(draw, 1100, 700)
+		tt.Frame()
+		if err := tt.Click("乙剧"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		if app.Watch == nil || app.Watch.SourceID != "b" {
+			t.Fatalf("%s: opened %+v", page, app.Watch)
+		}
+		app.CloseWatch()
+	}
+}

@@ -126,6 +126,9 @@ type cardExtras struct {
 	corner func()
 	// onClick overrides the default click action (e.g. for cross-source records).
 	onClick func()
+	// source is the source of a record's card, which with its ID tells it
+	// from the others (§3); "" on a page of one source.
+	source string
 }
 
 func cardBadge(s Card) string {
@@ -153,7 +156,7 @@ func (app *App) openFrom(sourceID string, s Card) {
 // click opens it.
 func (app *App) card(c *ui.Context, s Card, width float32, x cardExtras) {
 	p := app.pal
-	ui.Box(c.Key(s.ID)).Width(width).Children(func() {
+	ui.Box(c.Key(x.source + "\x00" + s.ID)).Width(width).Children(func() {
 		b := ui.ButtonBase(c).Width(width).AlignItems(ui.Start).Cursor(ui.CursorPointer).Label(s.Title)
 		hover := b.Hovered() || b.FocusVisible()
 		lift := b.AnimateTo("lift", boolf(hover), ui.Smooth)
@@ -492,6 +495,7 @@ func (app *App) historyPage(c *ui.Context) {
 					}
 				},
 				onClick: func() { app.Open(w.Source, w.Card, -1) },
+				source:  w.Source,
 			}
 		})
 	})
@@ -517,6 +521,7 @@ func (app *App) followsPage(c *ui.Context) {
 					badge:   cardBadge(s),
 					under:   func() string { return app.recordLine(c, fl.Source, "还没看") },
 					onClick: func() { app.Open(fl.Source, fl.Card, -1) },
+					source:  fl.Source,
 				}
 			}
 			return cardExtras{
@@ -526,6 +531,7 @@ func (app *App) followsPage(c *ui.Context) {
 					return app.recordLine(c, fl.Source, ago(w))
 				},
 				onClick: func() { app.Open(fl.Source, fl.Card, -1) },
+				source:  fl.Source,
 			}
 		})
 	})
