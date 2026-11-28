@@ -310,3 +310,43 @@ func TestDevReloadedAwayShowsAnew(t *testing.T) {
 		t.Fatalf("after the reload, nav = %+v", app.Nav)
 	}
 }
+
+// The developer mode works from the sources page and stays on it; a
+// plugin turned off doesn't show when its folder loads at last.
+func TestDevModeKeepsSourcesPage(t *testing.T) {
+	app, builtin, _ := devApp(t)
+	dir := writeDevDir(t, devJS("一"))
+	if err := app.LoadDev(dir); err != nil {
+		t.Fatal(err)
+	}
+	app.Go(PageSources)
+	app.UnloadDev()
+	if app.Src != builtin || app.Page != PageSources {
+		t.Fatalf("closing the developer mode: shown %v on %q", app.Src, app.Page)
+	}
+
+	if err := app.LoadDev(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte("export function navigation( {"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.LoadDev(dir); err == nil {
+		t.Fatal("broken folder loaded")
+	}
+	if app.Page != PageSources {
+		t.Fatalf("a folder that failed to load left the sources page for %q", app.Page)
+	}
+
+	other := navSource("other", "o1")
+	app.Sources.Add(other)
+	app.UseSource(other)
+	app.SetSourceOn("hongguo", false)
+	if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte(devJS("二")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.RetryDev()
+	if app.Dev.Plugin == nil || app.Src != source.Source(other) {
+		t.Fatalf("a plugin turned off shows: shown %v", app.Src)
+	}
+}

@@ -222,7 +222,7 @@ func (app *App) LoadDev(dir string) error {
 	go func() { <-ctx.Done(); stopLogs() }()
 	// It stands in for the built-in source of its id, if that is shown.
 	if app.Src != nil && app.Src != source.Source(p) && app.Src.Info().ID == p.Info().ID {
-		app.UseSource(p)
+		app.useOnPage(p)
 	}
 	app.SaveDevSettings()
 	return nil
@@ -235,8 +235,20 @@ func (app *App) RetryDev() {
 		app.Toast = "插件加载失败：" + err.Error()
 		return
 	}
-	app.UseSource(app.Dev.Plugin)
+	if p := app.Dev.Plugin; app.SourceOn(p.Info().ID) && app.Src != source.Source(p) {
+		app.useOnPage(p)
+	}
 	app.Toast = "已加载插件 " + app.Dev.Plugin.Info().Name
+}
+
+// useOnPage shows s afresh, staying on the app's page shown, as the
+// sources page the developer mode works from.
+func (app *App) useOnPage(s source.Source) {
+	page := app.Page
+	app.UseSource(s)
+	if appPage(page) {
+		app.Page, app.Lib.Page = page, page
+	}
 }
 
 // reloadDev is the menu's reload: the plugin loaded reloads in place, and
@@ -308,7 +320,7 @@ func (app *App) UnloadDev() {
 		if back == nil || !app.SourceOn(back.Info().ID) {
 			back = app.firstOn()
 		}
-		app.UseSource(back)
+		app.useOnPage(back)
 	}
 	delete(app.kept, p.Info().ID)
 }
