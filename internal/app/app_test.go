@@ -2,59 +2,35 @@ package app
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
-
-	"github.com/egoist/mygo/ui"
 
 	"github.com/giuem/ichiwa/internal/library"
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
 )
 
-// Times show as minutes and seconds, and hours only past an hour.
-func TestFmtTime(t *testing.T) {
-	for in, want := range map[float64]string{-3: "00:00", 0: "00:00", 59.6: "01:00", 145.4: "02:25", 3725: "1:02:05"} {
-		if got := fmtTime(in); got != want {
-			t.Errorf("fmtTime(%v) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-// The grid fits as many cards as it can, never fewer than two, and fills
-// the width exactly.
-func TestColumns(t *testing.T) {
-	for _, w := range []float32{200, 700, 1036, 1800} {
-		n, cw := columns(w)
-		if n < 2 || cw < cardMinW && n > 2 {
-			t.Errorf("columns(%v) = %d of %v", w, n, cw)
-		}
-		if got := float32(n)*cw + float32(n-1)*cardGap; got < w-0.5 || got > w+0.5 {
-			t.Errorf("columns(%v) fills %v", w, got)
-		}
-	}
-}
-
 // While more pages come, the grid shows whole rows only; the last page
 // shows what is left, and so does a feed shorter than a row.
 func TestVisibleWholeRows(t *testing.T) {
-	f := &Feed{more: true}
+	f := &Feed{More: true}
 	for i := range 13 {
-		f.add([]Card{{Kind: source.CardMedia, ID: itoa(i)}})
+		f.add([]Card{{Kind: source.CardMedia, ID: strconv.Itoa(i)}})
 	}
-	if got := len(visible(f, 5)); got != 10 {
+	if got := len(Visible(f, 5)); got != 10 {
 		t.Errorf("more: shows %d, want 10", got)
 	}
-	f.err = "boom"
-	if got := len(visible(f, 5)); got != 13 {
+	f.Err = "boom"
+	if got := len(Visible(f, 5)); got != 13 {
 		t.Errorf("failed: shows %d, want 13", got)
 	}
-	f.err, f.more = "", false
-	if got := len(visible(f, 5)); got != 13 {
+	f.Err, f.More = "", false
+	if got := len(Visible(f, 5)); got != 13 {
 		t.Errorf("ended: shows %d, want 13", got)
 	}
-	short := &Feed{more: true, items: make([]Card, 3)}
-	if got := len(visible(short, 5)); got != 3 {
+	short := &Feed{More: true, Items: make([]Card, 3)}
+	if got := len(Visible(short, 5)); got != 3 {
 		t.Errorf("short: shows %d, want 3", got)
 	}
 }
@@ -64,91 +40,30 @@ func TestVisibleWholeRows(t *testing.T) {
 func TestFeedReset(t *testing.T) {
 	f := newFeed(&sourcetest.Source{}, func(context.Context, source.Source, string) (feedPage, error) { return feedPage{}, nil })
 	f.add([]Card{{Kind: source.CardMedia, ID: "a"}})
-	f.cursor, f.more, f.loading = "c", false, true
+	f.cursor, f.More, f.Loading = "c", false, true
 	f.reset()
-	if f.fetch == nil || !f.more || f.loading || len(f.items) != 0 || f.cursor != "" || f.gen != 1 {
+	if f.fetch == nil || !f.More || f.Loading || len(f.Items) != 0 || f.cursor != "" || f.gen != 1 {
 		t.Fatalf("reset = %+v", f)
 	}
 	f.add([]Card{{Kind: source.CardMedia, ID: "a"}})
-	if len(f.items) != 1 {
+	if len(f.Items) != 1 {
 		t.Fatal("seen survived the reset")
-	}
-}
-
-// The player's buttons take their clicks: the picture, laid over the whole
-// stage, once covered them and took every click as play/pause.
-func TestStageButtonsTakeClicks(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, panel: true, index: 1,
-		detail: &Media{Episodes: make([]source.Episode, 3)}}
-	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
-	tt.Frame()
-	if err := tt.Click("选集面板"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if w.panel {
-		t.Fatal("the panel button didn't take the click")
-	}
-	if w.paused {
-		t.Fatal("the click went to the picture")
-	}
-}
-
-// Pinning the window folds the panel, and unpinning opens it again unless
-// the user opened or closed it meanwhile.
-func TestPinFoldsPanel(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, panel: true, index: 1,
-		detail: &Media{Episodes: make([]source.Episode, 3)}}
-	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
-	tt.Frame()
-	pin := func() {
-		t.Helper()
-		if err := tt.Click("窗口置顶"); err != nil {
-			t.Fatal(err)
-		}
-		tt.Frame()
-	}
-	pin()
-	if !app.lib.OnTop || w.panel {
-		t.Fatalf("pinned: on top %v, panel %v", app.lib.OnTop, w.panel)
-	}
-	if w.paused {
-		t.Fatal("the click went to the picture")
-	}
-	pin()
-	if app.lib.OnTop || !w.panel {
-		t.Fatalf("unpinned: on top %v, panel %v", app.lib.OnTop, w.panel)
-	}
-	pin()
-	if err := tt.Click("选集面板"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if err := tt.Click("选集面板"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	pin()
-	if w.panel {
-		t.Fatal("unpinning opened a panel the user closed")
 	}
 }
 
 // seasonsWatching is the last episode of the first of two seasons, noting
 // the season it switches to.
 func seasonsWatching(t *testing.T, secondOnline bool) (*Watching, *[]Season, *[]int) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, sourceID: "hongguo", panel: true, index: 2, show: Card{Kind: source.CardMedia, ID: "s1"},
-		detail: &Media{Episodes: make([]source.Episode, 3)},
-		seasons: []Season{
+	app := &App{Lib: testLibrary(t)}
+	w := &Watching{App: app, SourceID: "hongguo", Panel: true, Index: 2, Show: Card{Kind: source.CardMedia, ID: "s1"},
+		Detail: &Media{Episodes: make([]source.Episode, 3)},
+		Seasons: []Season{
 			{ID: "s1", Title: "第1季", Current: true, Available: source.Bool(true)},
 			{ID: "s2", Title: "第2季", Available: source.Bool(secondOnline), Note: "预计11月10日上线"},
 		}}
 	var to []Season
 	var eps []int
-	w.switchSeason = func(s Season, ep int) { to, eps = append(to, s), append(eps, ep) }
+	w.SwitchSeason = func(s Season, ep int) { to, eps = append(to, s), append(eps, ep) }
 	return w, &to, &eps
 }
 
@@ -160,11 +75,11 @@ func TestEndedGoesToNextSeason(t *testing.T) {
 	if len(*to) != 1 || (*to)[0].ID != "s2" || (*eps)[0] != 0 {
 		t.Fatalf("switched to %v at %v", *to, *eps)
 	}
-	if w.ended {
+	if w.Ended {
 		t.Error("ended although the next season is out")
 	}
 	w, to, _ = seasonsWatching(t, true)
-	w.step(1)
+	w.Step(1)
 	if len(*to) != 1 {
 		t.Error("the next button didn't go to the next season")
 	}
@@ -175,90 +90,51 @@ func TestEndedGoesToNextSeason(t *testing.T) {
 func TestEndedWaitsForAnnouncedSeason(t *testing.T) {
 	w, to, _ := seasonsWatching(t, false)
 	w.onEnded()
-	if len(*to) != 0 || !w.ended {
-		t.Fatalf("switched to %v, ended %v", *to, w.ended)
-	}
-	if got := seasonLine(w.seasons[1]); got != "第2季 · 预计11月10日上线" {
-		t.Errorf("seasonLine = %q", got)
-	}
-}
-
-// The season row switches to a season where the user left it.
-func TestSeasonRowSwitches(t *testing.T) {
-	w, to, eps := seasonsWatching(t, true)
-	w.seasons[1].Note = ""
-	tt := ui.NewTester(func(c *ui.Context) { w.app.seasonRow(c, w) }, 368, 200)
-	tt.Frame()
-	if err := tt.Click("第2季"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if len(*to) != 1 || (*to)[0].ID != "s2" || (*eps)[0] != -1 {
-		t.Fatalf("switched to %v at %v", *to, *eps)
+	if len(*to) != 0 || !w.Ended {
+		t.Fatalf("switched to %v, ended %v", *to, w.Ended)
 	}
 }
 
 func TestWantsDisplay(t *testing.T) {
 	app := &App{}
-	playing := new(ui.VideoPlayer)
+	playing := &fakePlayer{}
 	for _, c := range []struct {
 		name string
 		w    Watching
 		want bool
 	}{
-		{"loading the next episode", Watching{loading: true}, true},
-		{"playing", Watching{player: playing}, true},
-		{"paused", Watching{player: playing, paused: true}, false},
-		{"ended", Watching{player: playing, ended: true}, false},
-		{"failed", Watching{err: "播放失败"}, false},
+		{"loading the next episode", Watching{Loading: true}, true},
+		{"playing", Watching{Player: playing}, true},
+		{"paused", Watching{Player: playing, Paused: true}, false},
+		{"ended", Watching{Player: playing, Ended: true}, false},
+		{"failed", Watching{Err: "播放失败"}, false},
 		{"nothing to play", Watching{}, false},
 	} {
 		w := c.w
-		w.app, app.watch = app, &w
-		if got := w.wantsDisplay(); got != c.want {
+		w.App, app.Watch = app, &w
+		if got := w.WantsDisplay(); got != c.want {
 			t.Errorf("%s: wantsDisplay = %v, want %v", c.name, got, c.want)
 		}
 	}
-	w := Watching{app: app, loading: true}
-	app.watch = nil
-	if w.wantsDisplay() {
+	w := Watching{App: app, Loading: true}
+	app.Watch = nil
+	if w.WantsDisplay() {
 		t.Error("a page left still wants the display")
-	}
-}
-
-// In full screen the controls go once the pointer rests, even over the
-// video; in a window they also need the pointer over it.
-func TestChromeShown(t *testing.T) {
-	for _, tt := range []struct {
-		playing, hover, full bool
-		still                time.Duration
-		want                 bool
-	}{
-		{playing: false, hover: false, full: true, still: time.Hour, want: true},
-		{playing: true, hover: true, full: true, still: chromeLinger - 1, want: true},
-		{playing: true, hover: true, full: true, still: chromeLinger, want: false},
-		{playing: true, hover: true, full: false, still: chromeLinger - 1, want: true},
-		{playing: true, hover: true, full: false, still: chromeLinger, want: false},
-		{playing: true, hover: false, full: false, want: false},
-	} {
-		if got := chromeShown(tt.playing, tt.hover, tt.full, tt.still); got != tt.want {
-			t.Errorf("chromeShown(%+v) = %v", tt, got)
-		}
 	}
 }
 
 // Muting remembers the volume instead of coming back at full.
 func TestMuteRestoresVolume(t *testing.T) {
-	app := &App{lib: testLibrary(t)}
-	app.lib.Volume = 0.4
-	w := &Watching{app: app}
-	w.toggleMute()
-	if app.lib.Volume != 0 {
-		t.Fatalf("muted at %v", app.lib.Volume)
+	app := &App{Lib: testLibrary(t)}
+	app.Lib.Volume = 0.4
+	w := &Watching{App: app}
+	w.ToggleMute()
+	if app.Lib.Volume != 0 {
+		t.Fatalf("muted at %v", app.Lib.Volume)
 	}
-	w.toggleMute()
-	if app.lib.Volume != 0.4 {
-		t.Fatalf("unmuted at %v", app.lib.Volume)
+	w.ToggleMute()
+	if app.Lib.Volume != 0.4 {
+		t.Fatalf("unmuted at %v", app.Lib.Volume)
 	}
 }
 
@@ -268,29 +144,29 @@ func TestPictureClicks(t *testing.T) {
 	now := time.Now()
 	at := func(ms int) time.Time { return now.Add(time.Duration(ms) * time.Millisecond) }
 	w := &Watching{}
-	if toggle, _ := w.pictureClicks(true, false, false, at(0)); toggle {
+	if toggle, _ := w.PictureClicks(true, false, false, at(0)); toggle {
 		t.Fatal("toggled before the wait")
 	}
-	if toggle, _ := w.pictureClicks(false, false, false, at(300)); !toggle {
+	if toggle, _ := w.PictureClicks(false, false, false, at(300)); !toggle {
 		t.Fatal("the single click never counted")
 	}
 
 	w = &Watching{}
-	w.pictureClicks(true, false, false, at(0))
-	if toggle, full := w.pictureClicks(false, true, true, at(100)); toggle || !full {
+	w.PictureClicks(true, false, false, at(0))
+	if toggle, full := w.PictureClicks(false, true, true, at(100)); toggle || !full {
 		t.Fatalf("double click: toggle %v, full %v", toggle, full)
 	}
-	if toggle, _ := w.pictureClicks(true, false, false, at(150)); toggle {
+	if toggle, _ := w.PictureClicks(true, false, false, at(150)); toggle {
 		t.Fatal("the release of the double click toggled")
 	}
-	if toggle, _ := w.pictureClicks(false, false, false, at(900)); toggle {
+	if toggle, _ := w.PictureClicks(false, false, false, at(900)); toggle {
 		t.Fatal("a click was left waiting")
 	}
 
 	// Press and release of the second click in one frame.
 	w = &Watching{}
-	w.pictureClicks(true, false, false, at(0))
-	if toggle, full := w.pictureClicks(true, true, false, at(100)); toggle || !full {
+	w.PictureClicks(true, false, false, at(0))
+	if toggle, full := w.PictureClicks(true, true, false, at(100)); toggle || !full {
 		t.Fatalf("one frame: toggle %v, full %v", toggle, full)
 	}
 	if w.skipClick {
@@ -299,9 +175,9 @@ func TestPictureClicks(t *testing.T) {
 
 	// Slower than the wait: the pause that happened is put back.
 	w = &Watching{}
-	w.pictureClicks(true, false, false, at(0))
-	w.pictureClicks(false, false, false, at(250))
-	if toggle, full := w.pictureClicks(false, true, true, at(450)); !toggle || !full {
+	w.PictureClicks(true, false, false, at(0))
+	w.PictureClicks(false, false, false, at(250))
+	if toggle, full := w.PictureClicks(false, true, true, at(450)); !toggle || !full {
 		t.Fatalf("slow double click: toggle %v, full %v", toggle, full)
 	}
 }
@@ -309,12 +185,12 @@ func TestPictureClicks(t *testing.T) {
 // With autoplay off the page waits at the end of an episode.
 func TestEndedHaltsWithoutAutoplay(t *testing.T) {
 	w, to, _ := seasonsWatching(t, true)
-	w.app.lib.Autoplay = false
+	w.App.Lib.Autoplay = false
 	w.onEnded()
-	if !w.halt || w.ended || len(*to) != 0 {
-		t.Fatalf("halt %v, ended %v, switched %v", w.halt, w.ended, *to)
+	if !w.Halt || w.Ended || len(*to) != 0 {
+		t.Fatalf("halt %v, ended %v, switched %v", w.Halt, w.Ended, *to)
 	}
-	if w.wantsDisplay() {
+	if w.WantsDisplay() {
 		t.Error("keeps the display on while waiting")
 	}
 }
@@ -322,86 +198,37 @@ func TestEndedHaltsWithoutAutoplay(t *testing.T) {
 // Stopping at the end of the episode happens once.
 func TestSleepEpisodeStopsOnce(t *testing.T) {
 	w, _, _ := seasonsWatching(t, true)
-	w.app.setSleep(sleepEpisode)
+	w.App.SetSleep(SleepEpisode)
 	w.onEnded()
-	if !w.halt || w.app.sleepMins != 0 {
-		t.Fatalf("halt %v, sleep %d", w.halt, w.app.sleepMins)
+	if !w.Halt || w.App.SleepMins != 0 {
+		t.Fatalf("halt %v, sleep %d", w.Halt, w.App.SleepMins)
 	}
 }
 
 func TestSleepTickWaitsForLoading(t *testing.T) {
-	app := &App{lib: testLibrary(t)}
-	w := &Watching{app: app, loading: true}
-	app.setSleep(15)
-	if w.sleepTick(time.Now().Add(time.Hour)) || app.sleepMins != 15 {
+	app := &App{Lib: testLibrary(t)}
+	w := &Watching{App: app, Loading: true}
+	app.SetSleep(15)
+	if w.sleepTick(time.Now().Add(time.Hour)) || app.SleepMins != 15 {
 		t.Fatal("ran out during loading")
 	}
-	w.loading = false
+	w.Loading = false
 	if w.sleepTick(time.Now()) {
 		t.Fatal("ran out early")
 	}
-	if !w.sleepTick(time.Now().Add(time.Hour)) || app.sleepMins != 0 {
+	if !w.sleepTick(time.Now().Add(time.Hour)) || app.SleepMins != 0 {
 		t.Fatal("did not run out")
 	}
 }
 
 func TestMiniSize(t *testing.T) {
 	for _, tt := range []struct{ vw, vh, w, h int }{
-		{1080, 1920, 360, 640}, {0, 0, 360, 640}, {1920, 1080, 640, 360}, {720, 2400, miniMinWidth, 640}, {2400, 720, 640, miniMinHeight},
+		{1080, 1920, 360, 640}, {0, 0, 360, 640}, {1920, 1080, 640, 360}, {720, 2400, MiniMinWidth, 640}, {2400, 720, 640, MiniMinHeight},
 	} {
-		if w, h := miniSize(tt.vw, tt.vh); w != tt.w || h != tt.h {
+		if w, h := MiniSize(tt.vw, tt.vh); w != tt.w || h != tt.h {
 			t.Errorf("miniSize(%d, %d) = %d, %d", tt.vw, tt.vh, w, h)
 		}
 	}
-}
-
-// The episodes open over the picture in full screen, and a click beside
-// them closes them without reaching the picture.
-func TestDrawerClosesOnClickBeside(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Media{Episodes: []source.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}, drawer: true}
-	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, true) }, 1200, 700)
-	tt.Frame()
-	tt.ClickAt(100, 300)
-	tt.Frame()
-	if w.drawer {
-		t.Fatal("still open")
-	}
-	if !w.clickAt.IsZero() || w.paused {
-		t.Fatal("the click reached the picture")
-	}
-}
-
-// The picture takes the clicks that land on it, and what shows over it
-// still takes its own: nothing in the flow may cover them.
-func TestPictureTakesClicks(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Media{Episodes: []source.Episode{{ID: "a"}, {ID: "b"}, {ID: "c"}}}}
-	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
-	tt.Frame()
-	tt.ClickAt(200, 300)
-	tt.Frame()
-	if w.clickAt.IsZero() {
-		t.Fatal("the picture got no click")
-	}
-	w.clickAt, w.halt = time.Time{}, true
-	tt.Frame()
-	if err := tt.Click("重播"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if w.halt {
-		t.Fatal("the button over the picture got no click")
-	}
-}
-
-// The controls of the narrowest stage still build, for the small window.
-func TestStageBuildsNarrow(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
-	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, miniMinWidth, miniMinHeight)
-	tt.Frame()
-	tt.Frame()
 }
 
 func TestSteppedSpeed(t *testing.T) {
@@ -410,7 +237,7 @@ func TestSteppedSpeed(t *testing.T) {
 		d    int
 		want float64
 	}{{1, 1, 1.25}, {1, -1, 0.75}, {0.75, -1, 0.75}, {2, 1, 2}, {3, 1, 1}} {
-		if got := steppedSpeed(tt.cur, tt.d); got != tt.want {
+		if got := SteppedSpeed(tt.cur, tt.d); got != tt.want {
 			t.Errorf("steppedSpeed(%v, %d) = %v, want %v", tt.cur, tt.d, got, tt.want)
 		}
 	}
@@ -420,65 +247,25 @@ func TestSteppedSpeed(t *testing.T) {
 // up ends the hold, and a boost asks for no seek.
 func TestHoldRightEnds(t *testing.T) {
 	now := time.Now()
-	w := &Watching{app: &App{lib: testLibrary(t)}, rightAt: now, boost: true, boosted: true}
-	w.holdRight(true, now.Add(time.Second))
-	if !w.boost {
+	w := &Watching{App: &App{Lib: testLibrary(t)}, RightAt: now, Boost: true, boosted: true}
+	w.HoldRight(true, now.Add(time.Second))
+	if !w.Boost {
 		t.Fatal("the hold ended while the key was down")
 	}
-	w.holdRight(false, now.Add(2*time.Second))
-	if !w.rightAt.IsZero() || w.boost || w.boosted {
+	w.HoldRight(false, now.Add(2*time.Second))
+	if !w.RightAt.IsZero() || w.Boost || w.boosted {
 		t.Fatalf("still held: %+v", w)
 	}
-	w.holdRight(false, now.Add(3*time.Second)) // up with no press: nothing
-}
-
-// The seek bar builds and takes the pointer with no player yet.
-func TestProgressWithoutPlayer(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	w := &Watching{app: app}
-	tt := ui.NewTester(func(c *ui.Context) { app.progress(c, w) }, 400, 80)
-	tt.Frame()
-	tt.Move(100, 10)
-	tt.Frame()
-	tt.Frame()
+	w.HoldRight(false, now.Add(3*time.Second)) // up with no press: nothing
 }
 
 // Narrowing never asks for less than the minimum width, so that widening
 // gives back what was really taken.
 func TestNarrowing(t *testing.T) {
-	for in, want := range map[int]int{minWindowWidth: 0, minWindowWidth + 100: 100, 1280: panelWidth} {
-		if got := narrowing(in); got != want {
+	for in, want := range map[int]int{MinWindowWidth: 0, MinWindowWidth + 100: 100, 1280: PanelWidth} {
+		if got := Narrowing(in); got != want {
 			t.Errorf("narrowing(%d) = %d, want %d", in, got, want)
 		}
-	}
-}
-
-// A button clicked in a KeepFocus root leaves Space to the shortcut, once
-// and only once; Tab still gives the button the key.
-func TestKeepFocusLeavesSpaceToShortcut(t *testing.T) {
-	var clicks, spaces int
-	tt := ui.NewTester(func(c *ui.Context) {
-		c.Root().KeepFocus()
-		c.OnShortcut(0, ui.KeySpace, func() { spaces++ })
-		if ui.ButtonBase(c).Size(80, 40).Label("go").Clicked() {
-			clicks++
-		}
-	}, 200, 200)
-	if err := tt.Click("go"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	tt.Key(0, ui.KeySpace)
-	tt.Frame()
-	if clicks != 1 || spaces != 1 {
-		t.Fatalf("after a click and Space: %d clicks, %d shortcuts", clicks, spaces)
-	}
-	tt.Key(0, ui.KeyTab)
-	tt.Frame()
-	tt.Key(0, ui.KeySpace)
-	tt.Frame()
-	if clicks != 2 || spaces != 1 {
-		t.Fatalf("after Tab and Space: %d clicks, %d shortcuts", clicks, spaces)
 	}
 }
 
@@ -488,110 +275,6 @@ func testLibrary(t *testing.T) *library.Library {
 	lib := library.Load(t.TempDir())
 	t.Cleanup(lib.Close)
 	return lib
-}
-
-// The speed button opens a list of the speeds; choosing one sets it and
-// closes the list.
-func TestSpeedPicker(t *testing.T) {
-	app := &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
-	app.lib.Speed = 1
-	w := &Watching{app: app, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
-	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
-	tt.Frame()
-	if err := tt.Click("播放速度"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if !w.speedOpen || app.lib.Speed != 1 {
-		t.Fatalf("clicked the button: open %v, speed %v", w.speedOpen, app.lib.Speed)
-	}
-	if a, ok := tt.AccessByRole(ui.RoleOption, "1倍"); !ok || !a.Selected {
-		t.Fatalf("the current speed isn't selected: %+v", a)
-	}
-	if err := tt.Click("1.5倍"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if w.speedOpen || app.lib.Speed != 1.5 {
-		t.Fatalf("chose 1.5倍: open %v, speed %v", w.speedOpen, app.lib.Speed)
-	}
-}
-
-// Sidebar search and player danmaku controls follow source capabilities.
-func TestCapabilityHiding(t *testing.T) {
-	noCaps := &sourcetest.Source{InfoData: source.Info{ID: "plain", Name: "Plain"}}
-	app := &App{
-		src:     noCaps,
-		nav:     []source.NavItem{{ID: "home", Title: "首页", Icon: source.IconHome}},
-		pal:     darkPalette(),
-		posters: newPosters(t.TempDir(), func() {}),
-		lib:     testLibrary(t),
-	}
-	tt := ui.NewTester(app.sidebar, 220, 600)
-	tt.Frame()
-	if _, ok := tt.AccessByRole(ui.RoleButton, "搜索"); ok {
-		t.Error("search nav item shown without CapSearch")
-	}
-
-	w := &Watching{app: app, src: noCaps, index: 0, detail: &Media{Episodes: []source.Episode{{ID: "e1"}}}}
-	ttStage := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 900, 600)
-	ttStage.Frame()
-	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); ok {
-		t.Error("danmaku toggle shown without CapDanmaku")
-	}
-
-	withCaps := &sourcetest.Source{InfoData: source.Info{
-		ID:           "full",
-		Name:         "Full",
-		Capabilities: []source.Capability{source.CapSearch, source.CapDanmaku},
-	}}
-	app.src, w.src = withCaps, withCaps
-	tt.Frame()
-	if _, ok := tt.AccessByRole(ui.RoleButton, "搜索"); !ok {
-		t.Error("search nav item hidden with CapSearch")
-	}
-	ttStage.Frame()
-	if _, ok := ttStage.AccessByRole(ui.RoleToggleButton, "弹幕"); !ok {
-		t.Error("danmaku toggle hidden with CapDanmaku")
-	}
-}
-
-func TestSeasonCardUsesRealNameAndImage(t *testing.T) {
-	named := Season{
-		ID:        "s2",
-		Title:     "第2季",
-		Name:      "某剧 第二季",
-		Image:     "https://cdn.example.com/s2.jpg",
-		Available: source.Bool(false),
-	}
-	c := seasonCard(named)
-	if c.ID != "s2" || c.Title != "某剧 第二季" || c.Image != "https://cdn.example.com/s2.jpg" || c.Kind != source.CardMedia {
-		t.Fatalf("seasonCard(named) = %+v", c)
-	}
-
-	// Omitting Name falls back to Season.Title, never concatenating the current drama title.
-	unnamed := Season{ID: "s3", Title: "第3季", Available: source.Bool(false)}
-	c2 := seasonCard(unnamed)
-	if c2.Title != "第3季" || c2.Image != "" {
-		t.Fatalf("seasonCard(unnamed) = %+v", c2)
-	}
-
-	// Following an announced season from the ended overlay stores its real name and poster.
-	w, _, _ := seasonsWatching(t, false)
-	w.show = Card{Kind: source.CardMedia, ID: "s1", Title: "某剧 第一季", Image: "https://cdn.example.com/s1.jpg"}
-	w.seasons[1].Name = "某剧 第二季"
-	w.seasons[1].Image = "https://cdn.example.com/s2.jpg"
-	w.ended = true
-	tt := ui.NewTester(func(c *ui.Context) { w.app.stageMessage(c, w) }, 800, 500)
-	tt.Frame()
-	if err := tt.Click("追第2季"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	followed := w.app.lib.Followed()
-	if len(followed) != 1 || followed[0].Card.Title != "某剧 第二季" || followed[0].Card.Image != "https://cdn.example.com/s2.jpg" {
-		t.Fatalf("followed announced season = %+v", followed)
-	}
 }
 
 // The app never cancels its calls to the source (it drops stale results by
@@ -609,8 +292,8 @@ func TestSourceCancellationShowsError(t *testing.T) {
 		},
 	}
 	app := &App{
-		src:  src,
-		lib:  testLibrary(t),
+		Src:  src,
+		Lib:  testLibrary(t),
 		post: func(fn func()) { done <- fn },
 	}
 	drain := func() {
@@ -624,22 +307,39 @@ func TestSourceCancellationShowsError(t *testing.T) {
 	}
 
 	app.warmed = true
-	f := &app.col("home").results
-	app.ensure(app.col("home"))
+	f := &app.Col("home").Results
+	app.Ensure(app.Col("home"))
 	drain()
-	if f.err == "" || f.loading || !f.loaded {
-		t.Fatalf("canceled feed: err=%q loading=%v loaded=%v", f.err, f.loading, f.loaded)
+	if f.Err == "" || f.Loading || !f.Loaded {
+		t.Fatalf("canceled feed: err=%q loading=%v loaded=%v", f.Err, f.Loading, f.Loaded)
 	}
 
-	app.loadHot()
+	app.LoadHot()
 	drain()
-	if app.search.hotErr == "" || app.search.hotBusy {
-		t.Fatalf("canceled hot: err=%q busy=%v", app.search.hotErr, app.search.hotBusy)
+	if app.Search.HotErr == "" || app.Search.hotBusy {
+		t.Fatalf("canceled hot: err=%q busy=%v", app.Search.HotErr, app.Search.hotBusy)
 	}
 
-	w := &Watching{app: app, detail: &Media{Episodes: []source.Episode{{ID: "e1"}, {ID: "e2"}}}}
+	w := &Watching{App: app, Detail: &Media{Episodes: []source.Episode{{ID: "e1"}, {ID: "e2"}}}}
 	w.failed(0, false, context.Canceled)
-	if w.err == "" || w.skipped != 0 {
-		t.Fatalf("canceled playback failed(): err=%q skipped=%d", w.err, w.skipped)
+	if w.Err == "" || w.Skipped != 0 {
+		t.Fatalf("canceled playback failed(): err=%q skipped=%d", w.Err, w.Skipped)
 	}
 }
+
+// fakePlayer is a player that plays nothing.
+type fakePlayer struct{ playing bool }
+
+func (p *fakePlayer) Play()                   { p.playing = true }
+func (p *fakePlayer) Pause()                  { p.playing = false }
+func (p *fakePlayer) Playing() bool           { return p.playing }
+func (p *fakePlayer) Ended() bool             { return false }
+func (p *fakePlayer) Ready() bool             { return true }
+func (p *fakePlayer) Err() error              { return nil }
+func (p *fakePlayer) Duration() time.Duration { return time.Minute }
+func (p *fakePlayer) Position() time.Duration { return 0 }
+func (p *fakePlayer) Seek(time.Duration)      {}
+func (p *fakePlayer) SetRate(float64)         {}
+func (p *fakePlayer) SetVolume(float64)       {}
+func (p *fakePlayer) Size() (int, int)        { return 0, 0 }
+func (p *fakePlayer) Close()                  {}

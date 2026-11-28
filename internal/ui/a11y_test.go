@@ -1,8 +1,10 @@
-package app
+package ui
 
 import (
 	"strings"
 	"testing"
+
+	core "github.com/giuem/ichiwa/internal/app"
 
 	"github.com/egoist/mygo/ui"
 
@@ -11,7 +13,7 @@ import (
 
 func a11yApp(t *testing.T) *App {
 	t.Helper()
-	return &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
+	return viewApp(t, darkPalette())
 }
 
 func accessOf(t *testing.T, tt *ui.Tester, r ui.Role, name string) ui.AccessInfo {
@@ -28,7 +30,7 @@ func accessOf(t *testing.T, tt *ui.Tester, r ui.Role, name string) ui.AccessInfo
 func TestCardsAreButtons(t *testing.T) {
 	app := a11yApp(t)
 	s := Card{Kind: source.CardMedia, ID: "a", Title: "长安", Badges: []string{"全80集"}}
-	app.lib.Progress("hongguo", s, "e2", 2, 80, 30, 100)
+	app.Lib.Progress("hongguo", s, "e2", 2, 80, 30, 100)
 	tt := ui.NewTester(app.historyPage, 900, 600)
 	tt.Frame()
 	card := accessOf(t, tt, ui.RoleButton, "长安")
@@ -51,10 +53,10 @@ func TestCardsAreButtons(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if len(app.lib.Recent()) != 0 {
+	if len(app.Lib.Recent()) != 0 {
 		t.Error("the corner control didn't take the click")
 	}
-	if app.watch != nil {
+	if app.Watch != nil {
 		t.Error("the corner control opened the card")
 	}
 }
@@ -62,8 +64,8 @@ func TestCardsAreButtons(t *testing.T) {
 // The player's controls say what they will do and what they are at.
 func TestPlayerControlsSpeak(t *testing.T) {
 	app := a11yApp(t)
-	app.lib.OnTop, app.lib.Volume, app.lib.Speed = true, 0.5, 1.5
-	w := &Watching{app: app, panel: true, index: 1, detail: &Media{Episodes: make([]source.Episode, 3)}}
+	app.Lib.OnTop, app.Lib.Volume, app.Lib.Speed = true, 0.5, 1.5
+	w := &Watching{App: app.App, Panel: true, Index: 1, Detail: &Media{Episodes: make([]source.Episode, 3)}}
 	tt := ui.NewTester(func(c *ui.Context) { app.stage(c, w, false, false) }, 1200, 600) // room for the volume slider beside the panel
 	tt.Frame()
 	if a := accessOf(t, tt, ui.RoleButton, "播放"); a.Description != "" || a.KeyShortcuts == "" {
@@ -96,8 +98,8 @@ func TestPlayerControlsSpeak(t *testing.T) {
 // Filters are radio groups, with the row's all-option saying what it does.
 func TestFilterOptionsAreRadios(t *testing.T) {
 	app := a11yApp(t)
-	cs := newCol("filter", "筛选")
-	cs.rows = []FilterRow{{
+	cs := viewApp(t, darkPalette()).Col("filter")
+	cs.Rows = []FilterRow{{
 		Key:   "k",
 		Title: "题材",
 		Options: []source.FilterOption{
@@ -106,7 +108,7 @@ func TestFilterOptionsAreRadios(t *testing.T) {
 		},
 		Value: "v",
 	}}
-	cs.chosen = map[string]string{"k": "v"}
+	cs.Chosen = map[string]string{"k": "v"}
 	tt := ui.NewTester(func(c *ui.Context) { app.filterRows(c, cs) }, 900, 600)
 	tt.Frame()
 	accessOf(t, tt, ui.RoleRadioGroup, "题材")
@@ -121,7 +123,7 @@ func TestFilterOptionsAreRadios(t *testing.T) {
 // The sidebar says which page shows, and page titles are headings.
 func TestNavigationSaysCurrentPage(t *testing.T) {
 	app := a11yApp(t)
-	app.page = "rank"
+	app.Page = "rank"
 	tt := ui.NewTester(func(c *ui.Context) {
 		app.navItem(c, iconHome, "推荐", "channel:推荐", 0)
 		app.navItem(c, iconTrophy, "排行榜", "rank", 3)
@@ -154,8 +156,8 @@ func TestContrastedPalette(t *testing.T) {
 // the end, and each card says which.
 func TestHistoryFilter(t *testing.T) {
 	app := a11yApp(t)
-	app.lib.Progress("hongguo", Card{Kind: source.CardMedia, ID: "a", Title: "长安"}, "e1", 1, 3, 30, 100)
-	app.lib.Progress("hongguo", Card{Kind: source.CardMedia, ID: "b", Title: "洛阳"}, "e2", 2, 3, 100, 100)
+	app.Lib.Progress("hongguo", Card{Kind: source.CardMedia, ID: "a", Title: "长安"}, "e1", 1, 3, 30, 100)
+	app.Lib.Progress("hongguo", Card{Kind: source.CardMedia, ID: "b", Title: "洛阳"}, "e2", 2, 3, 100, 100)
 	tt := ui.NewTester(app.historyPage, 900, 600)
 	tt.Frame()
 	if err := tt.Click("看完"); err != nil {
@@ -174,10 +176,10 @@ func TestHistoryFilter(t *testing.T) {
 func TestEpisodesSayProgress(t *testing.T) {
 	app := a11yApp(t)
 	s := Card{Kind: source.CardMedia, ID: "a", Title: "长安"}
-	app.lib.Progress("hongguo", s, "e0", 0, 3, 60, 60)
-	app.lib.Progress("hongguo", s, "e1", 1, 3, 15, 60)
+	app.Lib.Progress("hongguo", s, "e0", 0, 3, 60, 60)
+	app.Lib.Progress("hongguo", s, "e1", 1, 3, 15, 60)
 	eps := []source.Episode{{ID: "e0"}, {ID: "e1"}, {ID: "e2"}}
-	w := &Watching{app: app, sourceID: "hongguo", show: s, index: 2, detail: &Media{ID: "a", Title: "长安", Episodes: eps}}
+	w := &Watching{App: app.App, SourceID: "hongguo", Show: s, Index: 2, Detail: &Media{ID: "a", Title: "长安", Episodes: eps}}
 	tt := ui.NewTester(func(c *ui.Context) { app.episodes(c, w) }, 400, 400)
 	tt.Frame()
 	if a := accessOf(t, tt, ui.RoleButton, "第1集"); a.Description != "已看完" {
@@ -186,4 +188,10 @@ func TestEpisodesSayProgress(t *testing.T) {
 	if a := accessOf(t, tt, ui.RoleButton, "第2集"); a.Description != "看到25%" {
 		t.Errorf("episode 2 says %q", a.Description)
 	}
+}
+
+// viewApp is an app without a window or sources, drawn in pal.
+func viewApp(t *testing.T, pal palette, srcs ...source.Source) *App {
+	t.Helper()
+	return &App{App: core.Headless(testLibrary(t), func(func()) {}, srcs...), pal: pal, posters: newPosters(t.TempDir(), func() {})}
 }

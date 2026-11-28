@@ -1,4 +1,4 @@
-package app
+package ui
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 // Posters loads cover images in the background and keeps them as bitmaps.
 // Get and its map are used on the main thread only.
 type Posters struct {
-	dir     string
+	Dir     string
 	http    *http.Client
 	slots   chan struct{}
 	entries map[string]*poster
@@ -40,7 +40,7 @@ func newPosters(cacheDir string, redraw func()) *Posters {
 	dir := filepath.Join(cacheDir, "posters")
 	_ = os.MkdirAll(dir, 0o755)
 	return &Posters{
-		dir:     dir,
+		Dir:     dir,
 		http:    &http.Client{Timeout: 30 * time.Second},
 		slots:   make(chan struct{}, 8),
 		entries: map[string]*poster{},
@@ -96,7 +96,7 @@ const maxPosterBytes = 16 << 20
 
 func (p *Posters) load(key, url string) (*image.RGBA, error) {
 	sum := sha1.Sum([]byte(key))
-	file := filepath.Join(p.dir, hex.EncodeToString(sum[:]))
+	file := filepath.Join(p.Dir, hex.EncodeToString(sum[:]))
 	data, err := os.ReadFile(file)
 	if err != nil {
 		client, headers := p.http, map[string]string(nil)

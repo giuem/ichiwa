@@ -1,9 +1,11 @@
-package app
+package ui
 
 import (
 	"fmt"
 	"testing"
 	"time"
+
+	core "github.com/giuem/ichiwa/internal/app"
 
 	"github.com/egoist/mygo/ui"
 
@@ -49,8 +51,8 @@ func TestDanmakuSeekAndOrder(t *testing.T) {
 	d := &danmaku{}
 	d.add([]source.Danmaku{{Text: "late", Time: 30}})
 	d.add([]source.Danmaku{{Text: "early", Time: 2}})
-	if d.items[0].Text != "early" {
-		t.Fatalf("items = %v", d.items)
+	if d.Items[0].Text != "early" {
+		t.Fatalf("items = %v", d.Items)
 	}
 	d.advance(at(3), 800, 600, testStyle, fixedWidth)
 	if d.next != 1 || d.lanes[0] != 0 {
@@ -93,7 +95,7 @@ func TestDanmakuRepeats(t *testing.T) {
 	d.add([]source.Danmaku{{ID: "1", Text: "+1", Time: 1}, {ID: "2", Text: "+1", Time: 5}, {ID: "3", Text: "hi", Time: 5}})
 	d.add([]source.Danmaku{{ID: "1", Text: "+1", Time: 1}, {ID: "4", Text: "+1", Time: 20}, {ID: "5", Text: "+1", Time: 3}})
 	var got []string
-	for i, it := range d.items {
+	for i, it := range d.Items {
 		got = append(got, fmt.Sprintf("%s×%d", it.ID, d.counts[i]))
 	}
 	if want := "[1×3 3×1 4×1]"; fmt.Sprint(got) != want {
@@ -109,12 +111,12 @@ func TestDanmakuRepeats(t *testing.T) {
 
 // The default settings are the middle steps, and give the test style.
 func TestDanmakuDefaults(t *testing.T) {
-	app := &App{lib: library.Load(t.TempDir())}
-	defer app.lib.Close()
-	if !app.lib.DanmakuDefault() || app.danmakuStyle() != testStyle {
+	app := &App{App: core.Headless(library.Load(t.TempDir()), nil)}
+	defer app.Lib.Close()
+	if !app.Lib.DanmakuDefault() || app.danmakuStyle() != testStyle {
 		t.Fatalf("style = %+v", app.danmakuStyle())
 	}
-	app.lib.DanmakuSpeed, app.lib.DanmakuArea, app.lib.DanmakuSize, app.lib.DanmakuOpacity = 99, -1, 4, 0
+	app.Lib.DanmakuSpeed, app.Lib.DanmakuArea, app.Lib.DanmakuSize, app.Lib.DanmakuOpacity = 99, -1, 4, 0
 	if st := app.danmakuStyle(); st.flight != 4500*time.Millisecond || st.area != 0 || st.size != 24 || st.opacity != 0.1 {
 		t.Fatalf("style out of range = %+v", st)
 	}

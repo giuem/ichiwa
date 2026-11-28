@@ -99,7 +99,7 @@
   var seek = $("seek"), seekFill = $("seek-fill"), seekKnob = $("seek-knob"), seekTip = $("seek-tip");
   var playBtn = $("play"), toastEl = $("toast"), boostEl = $("boost");
 
-  // The same steps and defaults as the app (internal/app/danmaku.go).
+  // The same steps and defaults as the app (internal/ui/danmaku.go).
   var SPEEDS = [0.75, 1, 1.25, 1.5, 2];
   var DM_SPEEDS = [{ label: "很慢", flight: 13 }, { label: "较慢", flight: 10 }, { label: "适中", flight: 8 }, { label: "较快", flight: 6 }, { label: "很快", flight: 4.5 }];
   var DM_AREAS = [{ label: "2行", lanes: 2 }, { label: "1/4屏", share: 0.25 }, { label: "半屏", share: 0.5 }, { label: "3/4屏", share: 0.75 }, { label: "满屏", share: 1 }];

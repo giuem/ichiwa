@@ -1,18 +1,13 @@
-// Package app is the window of the app: its pages, the player, the menu
-// bar and the media keys, in MyGo's native UI.
+// Package app is the state of the app and how it goes: the source shown,
+// its pages and their loads, the player, the records. It draws nothing;
+// internal/ui draws it and takes the user's actions to it, and Host is
+// what it needs of the window.
 package app
 
 import (
 	"context"
-	_ "embed"
-	"fmt"
 	"log"
-	"os"
-	"runtime"
 	"time"
-
-	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
 
 	"github.com/giuem/ichiwa/internal/library"
 	"github.com/giuem/ichiwa/internal/media"
@@ -20,25 +15,77 @@ import (
 	"github.com/giuem/ichiwa/internal/sources/hongguo"
 )
 
-const sidebarWidth = 220
-
-//go:embed assets/logo.png
-var logoPNG []byte
-
-var logo, _ = ui.DecodeBitmap(logoPNG)
-
 // The pages of the sidebar that are not a source's navigation items.
 const (
-	pageSearch  = "search"
-	pageHistory = "history"
-	pageFollows = "follows"
+	PageSearch  = "search"
+	PageHistory = "history"
+	PageFollows = "follows"
 )
+
+// Host is what the app needs of the window it shows in.
+type Host interface {
+	// Post runs fn on the UI thread, later, and redraws the window. It
+	// may be called from any goroutine.
+	Post(fn func())
+	// Sync runs fn on the UI thread and waits for it; it is called
+	// from other goroutines only.
+	Sync(fn func())
+	// Redraw redraws the window; from any goroutine.
+	Redraw()
+	// OpenVideo opens a player for a URL, or a file when url is "".
+	OpenVideo(url, path string) (Player, error)
+	// KeepAwake keeps the display on until release is called.
+	KeepAwake(reason string) (release func())
+	// NowPlaying tells the system what plays, nil for nothing.
+	NowPlaying(n *NowPlaying)
+	// Playback tells the system where playback is.
+	Playback(playing bool, at time.Duration)
+	// SetAlwaysOnTop keeps the window above others, or not.
+	SetAlwaysOnTop(on bool)
+}
+
+// Player plays an episode.
+type Player interface {
+	Play()
+	Pause()
+	Playing() bool
+	Ended() bool
+	Ready() bool
+	Err() error
+	Duration() time.Duration
+	Position() time.Duration
+	Seek(at time.Duration)
+	SetRate(rate float64)
+	SetVolume(v float64)
+	// Size is the size of the video, 0 until known.
+	Size() (w, h int)
+	Close()
+}
+
+// NowPlaying is what the system shows of the episode playing.
+type NowPlaying struct {
+	Title, Artist string
+	Image         string // the URL of the cover
+	Duration      time.Duration
+	Position      time.Duration
+	Rate          float64
+}
+
+// Config is where the app keeps its data and what it tells plugins.
+type Config struct {
+	DataDir  string // what the app must not lose
+	CacheDir string // what it may lose: covers, episodes, lists
+	Version  string // of the app, "" in development
+	Locale   string // the user's language
+	Host     Host
+}
 
 // App is the state the window shows.
 type App struct {
-	win     *mygo.Window
-	src     source.Source // the source shown
-	sources registry      // every source loaded
+	host    Host
+	version string
+	Src     source.Source // the source shown
+	Sources registry      // every source loaded
 	// srcCtx is canceled when the app leaves the source shown, pageCtx
 	// when it leaves the page shown (§9): a call they canceled is dropped
 	// without an error. Both are made when first asked for.
@@ -46,71 +93,80 @@ type App struct {
 	srcStop, pageStop context.CancelFunc
 	// locale is the user's language, for plugins; "" in tests.
 	locale  string
-	dev     devState
-	media   *media.Manager
-	nav     []source.NavItem
-	navErr  string
-	navBusy bool
-	// cols are the collection pages of a plugin, by collection ID.
-	cols map[string]*colState
-	// dataDir keeps what the app must not lose.
-	dataDir string
-	posters *Posters
-	lib     *library.Library
-	// cacheDir keeps what the app may lose: covers, episodes, feeds.
-	cacheDir string
-	initErr  string
-	pal      palette
+	Dev     devState
+	Media   *media.Manager
+	Nav     []source.NavItem
+	NavErr  string
+	NavBusy bool
+	// cols are the collection pages of the navigation, by collection ID.
+	cols     map[string]*Collection
+	DataDir  string
+	CacheDir string
+	Lib      *library.Library
+	InitErr  string
 
-	page   string
-	search searchState
-	shelf  ui.ScrollState
-	// historyFilter is the history page's filter, in historyFilters.
-	historyFilter int
+	Page   string
+	Search searchState
 
-	// stack is the collections opened from cards, over the sidebar's
+	// Stack is the collections opened from cards, over the sidebar's
 	// page, the last on top.
-	stack []*colState
+	Stack []*Collection
 
-	// narrowed tells the window gave up the width of the folded panel.
-	narrowed bool
-	// quitting tells the window to really close, not just hide.
-	quitting bool
-	// hideOnLeave hides the window once it has left full screen.
-	hideOnLeave bool
-	// narrowedBy is the width it gave up.
-	narrowedBy int
-	// watch is the player page, over the rest while it is open.
-	watch *Watching
-	toast string
+	// Watch is the player page, over the rest while it is open.
+	Watch *Watching
+	// Toast is a message to show once.
+	Toast string
 	// unmute is the volume the mute button goes back to.
 	unmute float64
-
-	// miniOn asks for the small window; mini tells the window is it, and
-	// miniBack is the size it goes back to.
-	miniOn, mini         bool
-	miniBackW, miniBackH int
-	miniW, miniH         int
-	miniFull             bool // the small window is in full screen
-	miniFixUntil         time.Time
+	// MiniOn asks for the small window.
+	MiniOn bool
 
 	// The sleep timer, which outlasts a season going on to the next:
-	// sleepMins is the choice, sleepEpisode for the end of this episode,
-	// and sleepAt when the time runs out.
-	sleepMins int
-	sleepAt   time.Time
-
-	// told is the page title screen readers were last told of.
-	told string
+	// SleepMins is the choice, SleepEpisode for the end of this episode,
+	// and SleepAt when the time runs out.
+	SleepMins int
+	SleepAt   time.Time
 
 	warmed bool // the first pages of the other pages were asked for
 
-	// upd is a newer version found, which the sidebar marks, and its
-	// dialog.
-	upd updateState
-
-	// post schedules callbacks onto the UI thread; defaults to app.win.Update.
+	// post schedules callbacks onto the UI thread in tests; host.Post
+	// otherwise.
 	post func(func())
+}
+
+// New loads what the app keeps and the sources, and shows the source
+// shown last.
+func New(cfg Config) *App {
+	app := &App{host: cfg.Host, version: cfg.Version, locale: cfg.Locale, DataDir: cfg.DataDir, CacheDir: cfg.CacheDir}
+	app.Lib = library.Load(cfg.DataDir)
+	app.Page = normalizeSavedPage(app.Lib.Page)
+	src, err := hongguo.New(cfg.DataDir)
+	if err != nil {
+		app.InitErr = err.Error()
+		return app
+	}
+	app.Src = src
+	app.Sources.Add(src)
+	if nav, nerr := src.Navigation(context.Background()); nerr == nil {
+		app.Nav = nav
+		app.Page = app.startPage(nav)
+	}
+	mgr, err := media.New(cfg.CacheDir)
+	if err != nil {
+		app.InitErr = err.Error()
+		return app
+	}
+	app.Media = mgr
+	mgr.SetPolicy(app.Sources.mediaPolicy)
+	// The developer mode's plugin folder, loaded at the last launch.
+	if dev := app.loadDevSettings(); dev.Dir != "" {
+		if err := app.LoadDev(dev.Dir); err != nil {
+			log.Printf("plugins: %s: %v", dev.Dir, err)
+		} else if dev.Env || dev.Current == app.Dev.Plugin.Info().ID {
+			app.UseSource(app.Dev.Plugin)
+		}
+	}
+	return app
 }
 
 func (app *App) dispatch(fn func()) {
@@ -118,20 +174,47 @@ func (app *App) dispatch(fn func()) {
 		app.post(fn)
 		return
 	}
-	if app.win != nil {
-		app.win.Update(fn)
+	if app.host != nil {
+		app.host.Post(fn)
 	}
 }
 
-func (app *App) sourceID() string {
-	if app.src != nil {
-		return app.src.Info().ID
+// sync runs fn on the UI thread and waits for it.
+func (app *App) sync(fn func()) {
+	switch {
+	case app.post != nil:
+		done := make(chan struct{})
+		app.post(func() { fn(); close(done) })
+		<-done
+	case app.host != nil:
+		app.host.Sync(fn)
+	default:
+		fn()
+	}
+}
+
+// redraw redraws the window.
+func (app *App) redraw() {
+	if app.host != nil {
+		app.host.Redraw()
+	}
+}
+
+// Flush saves what changed: progress, settings and the lists kept.
+func (app *App) Flush(wait bool) {
+	app.Lib.Flush()
+	app.SaveFeeds(wait)
+}
+
+func (app *App) SourceID() string {
+	if app.Src != nil {
+		return app.Src.Info().ID
 	}
 	return library.LegacySource
 }
 
-func (app *App) hasCap(c source.Capability) bool {
-	return app.src != nil && app.src.Info().Has(c)
+func (app *App) HasCap(c source.Capability) bool {
+	return app.Src != nil && app.Src.Info().Has(c)
 }
 
 // async runs work on a goroutine and then done with its result on the main
@@ -177,220 +260,27 @@ func (app *App) leaveSource() {
 }
 
 // go2 shows a page of the sidebar.
-func (app *App) go2(page string) {
-	if page != app.page || len(app.stack) > 0 {
+func (app *App) Go(page string) {
+	if page != app.Page || len(app.Stack) > 0 {
 		app.leavePage()
 	}
-	app.page = page
-	for len(app.stack) > 0 {
-		app.closeCollection()
+	app.Page = page
+	for len(app.Stack) > 0 {
+		app.CloseCollection()
 	}
-	app.lib.Page = page
-	app.lib.MarkDirty()
-	if app.watch != nil {
-		app.closeWatch()
+	app.Lib.Page = page
+	app.Lib.MarkDirty()
+	if app.Watch != nil {
+		app.CloseWatch()
 	}
 }
 
 // The smallest the window may be: the width takes the player's controls,
 // the height the whole sidebar.
 const (
-	minWindowWidth  = 480
-	minWindowHeight = 480
+	MinWindowWidth  = 480
+	MinWindowHeight = 480
 )
-
-func (app *App) view(c *ui.Context) {
-	app.syncMini()
-	app.syncNarrow()
-	if c.Theme().Dark || app.watch != nil {
-		app.pal = darkPalette()
-	} else {
-		app.pal = lightPalette()
-	}
-	if c.Preferences().HighContrast {
-		app.pal = app.pal.contrasted()
-	}
-	applyPalette(c, app.pal)
-	if app.toast != "" {
-		c.Toast(app.toast)
-		app.toast = ""
-	}
-
-	app.updateDialog(c)
-	if app.watch != nil {
-		app.watchView(c)
-		return
-	}
-	if c.Vibrancy() {
-		c.Root().Background(ui.Transparent)
-	}
-	if app.hasCap(source.CapSearch) {
-		c.OnShortcut(ui.Cmd, ui.KeyF, func() { app.go2(pageSearch); app.search.focus = true })
-	}
-	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		side := ui.Column(c).Width(sidebarWidth).Shrink(0).Role(ui.RoleNavigation).Label("主导航")
-		if !c.Vibrancy() {
-			side.Background(app.pal.sidebar)
-		}
-		side.Children(func() { app.sidebar(c) })
-		ui.Column(c.Key("main")).Grow(1).Background(app.pal.bg).Role(ui.RoleRegion).Label("内容").Children(func() {
-			app.content(c)
-		})
-	})
-	app.lib.Flush()
-}
-
-func navIcon(ic source.Icon) *ui.SVG {
-	switch ic {
-	case source.IconHome:
-		return iconHome
-	case source.IconFilm:
-		return iconFilm
-	case source.IconSparkles:
-		return iconSparkles
-	case source.IconTrophy:
-		return iconTrophy
-	case source.IconFilter:
-		return iconSliders
-	case source.IconFire:
-		return iconFlame
-	default:
-		return iconHome
-	}
-}
-
-func (app *App) sidebar(c *ui.Context) {
-	p := app.pal
-	top := max(c.TitleBar().Height, 28) + 10
-	ui.Column(c).Fill().Padding(top, 12, 14).Gap(2).DragWindow().Children(func() {
-		app.sourceSwitch(c)
-		app.navSection(c, "发现")
-		for _, item := range app.nav {
-			app.navItem(c, navIcon(item.Icon), item.Title, item.ID, 0)
-		}
-		if app.hasCap(source.CapSearch) {
-			app.navItem(c, iconSearch, "搜索", pageSearch, 0)
-		}
-		app.navSection(c, "我的")
-		app.navItem(c, iconClock, "继续观看", pageHistory, len(app.lib.History))
-		app.navItem(c, iconHeart, "追剧", pageFollows, len(app.lib.Follows))
-		if app.dev.plugin != nil {
-			b := ui.ButtonBase(c.Key("plugin-log")).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label("插件日志")
-			if app.dev.logOpen {
-				b.Current(ui.CurrentPage).Background(p.press)
-			}
-			b.Children(func() {
-				ui.Icon(c, iconScroll).Size(17, 17).TextColor(p.muted)
-				ui.Text(c, "插件日志").FontSize(13.5).FontWeight(500).TextColor(p.text)
-			})
-			if b.Clicked() {
-				app.dev.logOpen = true
-			}
-		}
-		ui.Spacer(c)
-		ui.Row(c).Padding(0, 8, 6).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Image(c, logo).Size(36, 36).Margin(-3, -3, -3, -3)
-			ui.Text(c, "一集").FontSize(15).Bold().TextColor(p.text)
-		})
-		if v := mygo.App.Version(); v != "" {
-			ui.Row(c).Padding(0, 10).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "v"+v).FontSize(10.5).TextColor(p.faint)
-				if up := app.upd.up; up != nil {
-					b := ui.ButtonBase(c.Key("new-version")).Height(18).PaddingX(7).Radius(999).Center().FocusRing(false).
-						Label("新版本 " + up.Version).Description("点击查看并安装")
-					pressable(b, p.accent.Alpha(0.12), p.accent.Alpha(0.2), 0.95)
-					b.Children(func() { ui.Text(c, "新版本").FontSize(10.5).FontWeight(600).TextColor(p.accent).SingleLine() })
-					if b.Clicked() {
-						app.upd.open = true
-					}
-				}
-			})
-		}
-		if runtime.GOOS != "darwin" { // a hidden title bar hides the menu bar
-			b := ui.ButtonBase(c.Key("updates")).Padding(4, 10).Justify(ui.Start).FocusRing(false).Label("检查更新")
-			b.Children(func() { ui.Text(c, "检查更新").FontSize(10.5).TextColor(ternary(b.Hovered(), p.muted, p.faint)) })
-			if b.Clicked() {
-				go app.checkForUpdates(true)
-			}
-		}
-	})
-}
-
-func (app *App) navSection(c *ui.Context, title string) {
-	ui.Text(c, title).FontSize(11).FontWeight(600).TextColor(app.pal.faint).Padding(14, 10, 6).Role(ui.RoleHeading).Level(2)
-}
-
-func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count int) {
-	p := app.pal
-	selected := app.page == page && len(app.stack) == 0 && !app.dev.logOpen
-	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label(label)
-	if selected {
-		b.Current(ui.CurrentPage)
-	}
-	if count > 0 {
-		b.Description(fmt.Sprintf("%d部", count))
-	}
-	bg := ui.Transparent
-	switch {
-	case selected:
-		bg = p.press
-	case b.Hovered():
-		bg = p.hover
-	}
-	b.Background(b.AnimateColor("bg", bg, quick))
-	color := p.muted
-	if selected {
-		color = p.accent
-	}
-	b.Children(func() {
-		ui.Icon(c, icon).Size(17, 17).TextColor(b.AnimateColor("icon", color, quick))
-		t := ui.Text(c, label).FontSize(13.5).FontWeight(500).TextColor(p.text).Grow(1)
-		if selected {
-			t.FontWeight(600)
-		}
-		if count > 0 {
-			ui.Text(c, itoa(count)).FontSize(11).TextColor(p.faint)
-		}
-	})
-	if b.Clicked() {
-		app.dev.logOpen = false
-		app.go2(page)
-	}
-}
-
-func (app *App) content(c *ui.Context) {
-	if app.initErr != "" {
-		app.centered(c, iconX, "启动失败", app.initErr, nil)
-		return
-	}
-	if app.dev.logOpen {
-		app.logPage(c)
-		return
-	}
-	if n := len(app.stack); n > 0 {
-		app.collectionPage(c, app.stack[n-1], true)
-		return
-	}
-	switch app.page {
-	case pageSearch:
-		app.searchPage(c)
-		return
-	case pageHistory:
-		app.historyPage(c)
-		return
-	case pageFollows:
-		app.followsPage(c)
-		return
-	}
-	switch {
-	case app.page != "":
-		app.collectionPage(c, app.col(app.page), false)
-	case app.navErr != "":
-		app.centered(c, iconX, "片源加载失败", app.navErr, func() { app.navErr = ""; app.loadNav() })
-	default:
-		app.skeletonGrid(c, 3)
-	}
-}
 
 // normalizeSavedPage is the page saved by an earlier version as this
 // version names it: the first ones named Hongguo's channels by title.
@@ -402,116 +292,16 @@ func normalizeSavedPage(saved string) string {
 	return saved
 }
 
-// hideWindow takes the window off the screen and leaves the app running.
-// A full screen window leaves full screen first, or its space stays behind
-// empty.
-func (app *App) hideWindow() {
-	if app.win.IsFullScreen() {
-		app.hideOnLeave = true
-		app.win.SetFullScreen(false)
-		return
+// Headless is an app without a window, for the tests of the views: lib
+// keeps its records, post runs what the loads bring, and the first of
+// srcs shows.
+func Headless(lib *library.Library, post func(func()), srcs ...source.Source) *App {
+	app := &App{Lib: lib, post: post, warmed: true}
+	for _, s := range srcs {
+		app.Sources.Add(s)
 	}
-	app.widen()
-	app.win.Hide()
-}
-
-// Run starts the app and returns when it quits.
-func Run() {
-	app := &App{}
-	mygo.App.WhenReady(func() {
-		dataDir, _ := mygo.App.Path(mygo.PathUserData)
-		cacheDir, _ := mygo.App.Path(mygo.PathCache)
-		app.cacheDir = cacheDir
-		app.lib = library.Load(dataDir)
-		app.page = normalizeSavedPage(app.lib.Page)
-
-		app.dataDir = dataDir
-		app.locale = userLocale()
-		src, err := hongguo.New(dataDir)
-		if err != nil {
-			app.initErr = err.Error()
-		} else {
-			app.src = src
-			app.sources.add(src)
-			if nav, nerr := src.Navigation(context.Background()); nerr == nil {
-				app.nav = nav
-				app.page = app.startPage(nav)
-			}
-		}
-		if app.initErr == "" {
-			mgr, merr := media.New(cacheDir)
-			if merr != nil {
-				app.initErr = merr.Error()
-			} else {
-				app.media = mgr
-				mgr.SetPolicy(app.sources.mediaPolicy)
-			}
-		}
-
-		app.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:                "一集",
-			Width:                1280,
-			Height:               820,
-			MinWidth:             minWindowWidth,
-			MinHeight:            minWindowHeight,
-			TitleBarStyle:        mygo.TitleBarHidden,
-			TrafficLightPosition: &mygo.Point{X: 18, Y: 18},
-			Vibrancy:             mygo.VibrancySidebar,
-			BackgroundColor:      "light-dark(#ffffff, #141416)",
-			StateKey:             "main",
-			Content:              ui.View(app.view),
-		})
-		app.posters = newPosters(cacheDir, app.win.Invalidate)
-		app.posters.route = app.sources.imageRoute
-		// The developer mode's plugin folder, loaded at the last launch.
-		if dev := app.loadDevSettings(); dev.Dir != "" && app.initErr == "" {
-			if err := app.loadDev(dev.Dir); err != nil {
-				log.Printf("plugins: %s: %v", dev.Dir, err)
-			} else if os.Getenv("ICHIWA_PLUGIN_DIR") != "" || dev.Current == app.dev.plugin.Info().ID {
-				app.useSource(app.dev.plugin)
-			}
-		}
-		app.setMenu()
-		app.mediaKeys()
-		app.win.OnClose(func(e *mygo.CloseEvent) {
-			// Only macOS has a Dock icon to bring the window back.
-			if !app.quitting && runtime.GOOS == "darwin" {
-				e.PreventDefault()
-				app.closeWatch()
-				app.lib.Flush()
-				app.hideWindow()
-				return
-			}
-			if app.watch != nil {
-				app.watch.close()
-			}
-			app.widen()
-			app.lib.Flush()
-		})
-		app.win.OnLeaveFullScreen(func() {
-			if app.hideOnLeave {
-				app.hideOnLeave = false
-				app.hideWindow()
-			}
-		})
-		// The Dock icon brings back the window closing hid.
-		mygo.App.OnActivate(func(visible bool) {
-			if !visible && !app.win.IsMinimized() {
-				app.win.Show()
-			}
-		})
-		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { app.quitting = true })
-		mygo.App.OnWillQuit(func(*mygo.QuitEvent) { app.widen(); app.lib.Close(); app.saveFeeds(true) })
-		// Saves progress now and then, in case the app is killed.
-		go func() {
-			for range time.Tick(10 * time.Second) {
-				mygo.RunOnMain(func() { app.lib.Flush(); app.saveFeeds(false) })
-			}
-		}()
-		go app.watchUpdates()
-		app.tour()
-	})
-	if err := mygo.App.Run(); err != nil {
-		log.Fatal(err)
+	if len(srcs) > 0 {
+		app.Src = srcs[0]
 	}
+	return app
 }

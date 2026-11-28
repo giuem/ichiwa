@@ -1,9 +1,11 @@
-package app
+package ui
 
 import (
 	"bytes"
 	"image/jpeg"
 	"time"
+
+	core "github.com/giuem/ichiwa/internal/app"
 
 	"github.com/egoist/mygo"
 
@@ -21,8 +23,8 @@ func (app *App) setMenu() {
 	}
 	onWatch := func(fn func(w *Watching)) func() {
 		return func() {
-			if app.watch != nil {
-				fn(app.watch)
+			if app.Watch != nil {
+				fn(app.Watch)
 			}
 		}
 	}
@@ -35,10 +37,10 @@ func (app *App) setMenu() {
 		{Role: mygo.RolePaste, Label: "粘贴"},
 		{Role: mygo.RoleSelectAll, Label: "全选"},
 	}
-	if app.hasCap(source.CapSearch) {
+	if app.HasCap(source.CapSearch) {
 		editSubmenu = append(editSubmenu,
 			mygo.Separator(),
-			&mygo.MenuItem{Label: "搜索", Accelerator: "CmdOrCtrl+F", Click: run(func() { app.go2(pageSearch); app.search.focus = true })},
+			&mygo.MenuItem{Label: "搜索", Accelerator: "CmdOrCtrl+F", Click: run(func() { app.Go(core.PageSearch); app.Search.Focus = true })},
 		)
 	}
 	name := "一集"
@@ -57,15 +59,15 @@ func (app *App) setMenu() {
 		}},
 		{Label: "编辑", Submenu: editSubmenu},
 		{Label: "播放", Submenu: []*mygo.MenuItem{
-			{Label: "播放/暂停", Click: run(onWatch(func(w *Watching) { w.togglePlay() }))},
-			{Label: "上一集", Accelerator: "CmdOrCtrl+Up", Click: run(onWatch(func(w *Watching) { w.step(-1) }))},
-			{Label: "下一集", Accelerator: "CmdOrCtrl+Down", Click: run(onWatch(func(w *Watching) { w.step(1) }))},
+			{Label: "播放/暂停", Click: run(onWatch(func(w *Watching) { w.TogglePlay() }))},
+			{Label: "上一集", Accelerator: "CmdOrCtrl+Up", Click: run(onWatch(func(w *Watching) { w.Step(-1) }))},
+			{Label: "下一集", Accelerator: "CmdOrCtrl+Down", Click: run(onWatch(func(w *Watching) { w.Step(1) }))},
 			mygo.Separator(),
-			{Label: "快进 10 秒", Accelerator: "CmdOrCtrl+Right", Click: run(onWatch(func(w *Watching) { w.seekBy(10) }))},
-			{Label: "快退 10 秒", Accelerator: "CmdOrCtrl+Left", Click: run(onWatch(func(w *Watching) { w.seekBy(-10) }))},
+			{Label: "快进 10 秒", Accelerator: "CmdOrCtrl+Right", Click: run(onWatch(func(w *Watching) { w.SeekBy(10) }))},
+			{Label: "快退 10 秒", Accelerator: "CmdOrCtrl+Left", Click: run(onWatch(func(w *Watching) { w.SeekBy(-10) }))},
 			mygo.Separator(),
-			{Label: "追剧/取消追剧", Accelerator: "CmdOrCtrl+D", Click: run(onWatch(func(w *Watching) { app.toggleFollow(w.sourceID, w.show) }))},
-			{Label: "返回", Accelerator: "CmdOrCtrl+[", Click: run(app.closeWatch)},
+			{Label: "追剧/取消追剧", Accelerator: "CmdOrCtrl+D", Click: run(onWatch(func(w *Watching) { app.ToggleFollow(w.SourceID, w.Show) }))},
+			{Label: "返回", Accelerator: "CmdOrCtrl+[", Click: run(app.CloseWatch)},
 		}},
 		{Label: "窗口", Submenu: []*mygo.MenuItem{
 			{Role: mygo.RoleMinimize, Label: "最小化"},
@@ -82,26 +84,26 @@ func (app *App) setMenu() {
 func (app *App) mediaKeys() {
 	mygo.NowPlaying.OnCommand(func(cmd mygo.MediaCommand, pos time.Duration) {
 		mygo.RunOnMain(func() {
-			w := app.watch
-			if w == nil || w.player == nil {
+			w := app.Watch
+			if w == nil || w.Player == nil {
 				return
 			}
 			switch cmd {
 			case mygo.MediaPlay:
-				if !w.player.Playing() {
-					w.togglePlay()
+				if !w.Player.Playing() {
+					w.TogglePlay()
 				}
 			case mygo.MediaPause, mygo.MediaStop:
-				if w.player.Playing() {
-					w.togglePlay()
+				if w.Player.Playing() {
+					w.TogglePlay()
 				}
 			case mygo.MediaNext:
-				w.step(1)
+				w.Step(1)
 			case mygo.MediaPrevious:
-				w.step(-1)
+				w.Step(-1)
 			case mygo.MediaSeek:
-				w.player.Seek(pos)
-				w.syncNowPlaying()
+				w.Player.Seek(pos)
+				w.SyncNowPlaying()
 			}
 			app.win.Invalidate()
 		})
@@ -109,21 +111,24 @@ func (app *App) mediaKeys() {
 }
 
 // nowPlaying shows the episode in Control Center.
-func (w *Watching) nowPlaying() {
-	if w.player == nil || w.detail == nil {
+
+// NowPlaying shows the episode in Control Center, nil for nothing.
+func (app *App) NowPlaying(n *core.NowPlaying) {
+	if n == nil {
+		mygo.NowPlaying.Clear()
 		return
 	}
 	info := mygo.NowPlayingInfo{
-		Title:    w.show.Title,
-		Artist:   "第" + itoa(w.index+1) + "集",
+		Title:    n.Title,
+		Artist:   n.Artist,
 		Album:    "一集",
-		Duration: w.player.Duration(),
-		Position: w.player.Position(),
-		Rate:     w.app.lib.Speed,
+		Duration: n.Duration,
+		Position: n.Position,
+		Rate:     n.Rate,
 		State:    mygo.PlaybackPlaying,
 		Commands: mygo.MediaPlay | mygo.MediaPause | mygo.MediaSeek | mygo.MediaNext | mygo.MediaPrevious,
 	}
-	if img := w.app.posters.Image(w.show.Image); img != nil {
+	if img := app.posters.Image(n.Image); img != nil {
 		var buf bytes.Buffer
 		if jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}) == nil {
 			info.Artwork = buf.Bytes()
@@ -132,14 +137,11 @@ func (w *Watching) nowPlaying() {
 	mygo.NowPlaying.Set(info)
 }
 
-// syncNowPlaying tells Control Center where playback is.
-func (w *Watching) syncNowPlaying() {
-	if w.player == nil {
-		return
-	}
+// Playback tells Control Center where playback is.
+func (app *App) Playback(playing bool, at time.Duration) {
 	state := mygo.PlaybackPaused
-	if w.player.Playing() {
+	if playing {
 		state = mygo.PlaybackPlaying
 	}
-	mygo.NowPlaying.SetPlayback(state, w.player.Position())
+	mygo.NowPlaying.SetPlayback(state, at)
 }

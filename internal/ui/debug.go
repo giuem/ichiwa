@@ -1,10 +1,12 @@
-package app
+package ui
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	core "github.com/giuem/ichiwa/internal/app"
 
 	"github.com/egoist/mygo"
 
@@ -30,71 +32,71 @@ func (app *App) tour() {
 			_ = os.WriteFile(filepath.Join(dir, name+".png"), png, 0o644)
 			fmt.Fprintln(os.Stderr, "shot", name)
 		}
-		goTo := func(page string) { app.win.Update(func() { app.go2(page) }) }
-		hg := app.sourceID() == hongguo.SourceID
+		goTo := func(page string) { app.win.Update(func() { app.Go(page) }) }
+		hg := app.SourceID() == hongguo.SourceID
 		query, filterKey, filterValue, actors := "兔子", "genre", "奇幻", ""
 		if hg {
 			query, filterValue, actors = "总裁", "comic_series", "ranklist_celebrity"
 		}
-		var nav []source.NavItem
-		mygo.RunOnMain(func() { nav = app.nav })
 		shot("01-home", 8*time.Second)
-		for i, it := range nav[1:] {
+		var nav []source.NavItem
+		mygo.RunOnMain(func() { nav = app.Nav })
+		for i, it := range nav[min(1, len(nav)):] {
 			goTo(it.ID)
 			shot(fmt.Sprintf("%02d-nav-%d", i+2, i+2), 6*time.Second)
 		}
-		goTo(pageSearch)
+		goTo(core.PageSearch)
 		shot("10-search", 5*time.Second)
-		app.win.Update(func() { app.search.query = query[:3]; app.typed(query[:3]) })
+		app.win.Update(func() { app.Search.Query = query[:3]; app.Typed(query[:3]) })
 		shot("11-suggest", 3*time.Second)
-		app.win.Update(func() { app.search.query = query; app.runSearch(query) })
+		app.win.Update(func() { app.Search.Query = query; app.RunSearch(query) })
 		shot("12-results", 6*time.Second)
 		app.win.Update(func() {
-			if cs := app.col(nav[0].ID); len(cs.results.items) > 0 {
-				app.lib.Danmaku = true
-				app.open(app.sourceID(), cs.results.items[0], -1)
+			if cs := app.Col(nav[0].ID); len(cs.Results.Items) > 0 {
+				app.Lib.Danmaku = true
+				app.Open(app.SourceID(), cs.Results.Items[0], -1)
 			}
 		})
 		shot("13-player", 15*time.Second)
 		app.win.Update(func() {
-			if app.watch != nil {
-				app.watch.togglePlay()
+			if app.Watch != nil {
+				app.Watch.TogglePlay()
 			}
 		})
 		shot("14-player-paused", 2*time.Second)
-		app.win.Update(func() { app.closeWatch(); app.go2(pageHistory) })
+		app.win.Update(func() { app.CloseWatch(); app.Go(core.PageHistory) })
 		shot("15-history", 2*time.Second)
-		goTo(pageFollows)
+		goTo(core.PageFollows)
 		shot("16-follows", 2*time.Second)
 		goTo("filter")
 		shot("17-filter", 6*time.Second)
-		app.win.Update(func() { app.col("filter").choose(filterKey, filterValue) })
+		app.win.Update(func() { app.Col("filter").Choose(filterKey, filterValue) })
 		shot("18-filter-chosen", 6*time.Second)
 		if !hg {
-			app.win.Update(func() { app.col("filter").choose(filterKey, "broken") })
+			app.win.Update(func() { app.Col("filter").Choose(filterKey, "broken") })
 			shot("19-filter-broken", 3*time.Second)
 		}
 		goTo("rank")
 		if actors != "" {
-			app.win.Update(func() { app.col("rank").choose("content", actors) })
+			app.win.Update(func() { app.Col("rank").Choose("content", actors) })
 		}
 		shot("20-rank", 6*time.Second)
 		app.win.Update(func() {
-			for _, it := range app.col("rank").results.items {
+			for _, it := range app.Col("rank").Results.Items {
 				if it.Kind == source.CardCollection {
-					app.openCollection(it)
+					app.OpenCollection(it)
 					return
 				}
 			}
-			app.openCollection(Card{Kind: source.CardCollection, ID: "person:p1", Title: "大兔子"})
+			app.OpenCollection(Card{Kind: source.CardCollection, ID: "person:p1", Title: "大兔子"})
 		})
 		shot("21-person", 6*time.Second)
 		if !hg {
 			app.win.Update(func() {
-				app.open(app.sourceID(), Card{Kind: source.CardMedia, ID: "bipbop", Title: "测试信号"}, 0)
+				app.Open(app.SourceID(), Card{Kind: source.CardMedia, ID: "bipbop", Title: "测试信号"}, 0)
 			})
 			shot("22-player-hls", 12*time.Second)
-			app.win.Update(func() { app.closeWatch(); app.dev.logOpen = true })
+			app.win.Update(func() { app.CloseWatch(); app.Dev.LogOpen = true })
 			shot("23-log", 2*time.Second)
 		}
 		mygo.RunOnMain(func() { mygo.App.Quit() })

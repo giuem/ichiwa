@@ -2,206 +2,12 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo/ui"
-
 	"github.com/giuem/ichiwa/internal/source"
 )
-
-const (
-	pagePad  = 32
-	cardMinW = 156
-	cardGap  = 20
-	// titleLine is the line height of a card's title. Titles always take
-	// two lines of room so cards in a row line up whatever their length.
-	titleLine = 18
-)
-
-func itoa(n int) string { return strconv.Itoa(n) }
-
-// header draws a page's title row, which also drags the window.
-func (app *App) header(c *ui.Context, title, subtitle string, trailing func()) {
-	p := app.pal
-	bar := c.TitleBar()
-	app.tell(c, title)
-	ui.Row(c).Padding(max(bar.Height, 28)+10, pagePad, 18, pagePad).Gap(12).AlignItems(ui.End).DragWindow().Children(func() {
-		ui.Column(c).Grow(1).Gap(4).Children(func() {
-			ui.Text(c, title).FontSize(28).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(1)
-			if subtitle != "" {
-				ui.Text(c, subtitle).FontSize(13).TextColor(p.muted)
-			}
-		})
-		if trailing != nil {
-			trailing()
-		}
-	})
-}
-
-// tell has screen readers read a page's title as the page changes, which
-// moves no keyboard focus that would bring it.
-func (app *App) tell(c *ui.Context, title string) {
-	if title != app.told {
-		app.told = title
-		c.Announce(title)
-	}
-}
-
-// centered shows a message in the middle of a page, with a button that
-// tries again when retry is set: a failure, read out as it appears.
-func (app *App) centered(c *ui.Context, icon *ui.SVG, title, detail string, retry func()) {
-	p := app.pal
-	ui.Column(c).Grow(1).Center().Gap(10).Padding(40).Children(func() {
-		ui.Box(c).Size(64, 64).Radius(999).Background(p.surface).Center().Margin(0, 0, 6).Children(func() {
-			ui.Icon(c, icon).Size(26, 26).TextColor(p.muted)
-		})
-		message := ui.Column(c).Gap(10).AlignItems(ui.Center)
-		if retry != nil {
-			message.Role(ui.RoleAlert)
-		}
-		message.Children(func() {
-			ui.Text(c, title).FontSize(16).Bold().TextColor(p.text)
-			if detail != "" {
-				ui.Text(c, detail).FontSize(13).TextColor(p.muted).TextAlign(ui.Center).MaxWidth(420)
-			}
-		})
-		if retry != nil {
-			app.primary(c, iconRefresh, "重试").Margin(10, 0, 0).OnClick(retry)
-		}
-	})
-}
-
-// columns fits cards of at least cardMinW in width w.
-func columns(w float32) (int, float32) {
-	n := max(2, int((w+cardGap)/(cardMinW+cardGap)))
-	return n, (w - cardGap*float32(n-1)) / float32(n)
-}
-
-func (app *App) contentWidth(c *ui.Context) float32 {
-	w, _ := c.Size()
-	return w - sidebarWidth - 2*pagePad - 12 // and the scroll bar
-}
-
-// poster draws a cover, fading it in over a placeholder as it loads. It is
-// always beside the title, so assistive technology skips it.
-func (app *App) poster(c *ui.Context, url, title string, radius float32) ui.Element {
-	p := app.pal
-	box := ui.Box(c).AspectRatio(3.0 / 4).Radius(radius).Clip()
-	bmp := app.posters.Get(url)
-	in := artIn(box, bmp)
-	if in < 1 {
-		box.Background(p.surface)
-	}
-	box.Children(func() {
-		if in < 1 {
-			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Opacity(1 - in).AccessHidden(true).Children(func() {
-				ui.Text(c, firstRune(title)).FontSize(26).Bold().TextColor(p.faint)
-			})
-		}
-		if bmp != nil {
-			img := ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover)
-			if in < 1 {
-				img.Opacity(in)
-			}
-		}
-	})
-	return box
-}
-
-func firstRune(s string) string {
-	for _, r := range s {
-		return string(r)
-	}
-	return ""
-}
-
-// cardExtras is what a page adds to a drama's card.
-type cardExtras struct {
-	badge string // over the cover
-	// under draws below the title, in place of the note, and returns what
-	// screen readers read of it.
-	under func() string
-	// corner draws controls of their own at the card's bottom right, which
-	// a card, being one button, could not hold inside it.
-	corner func()
-	// onClick overrides the default click action (e.g. for cross-source records).
-	onClick func()
-}
-
-func cardBadge(s Card) string {
-	if len(s.Badges) > 0 {
-		return s.Badges[0]
-	}
-	return ""
-}
-
-func episodesExtras(_ int, s Card) cardExtras { return cardExtras{badge: cardBadge(s)} }
-
-func (app *App) openCard(sourceID string, s Card) {
-	if s.Kind == source.CardCollection {
-		app.openCollection(s)
-		return
-	}
-	app.open(sourceID, s, -1)
-}
-
-// card is a media card in a grid: its cover and title, and the page's extras. A
-// click opens it.
-func (app *App) card(c *ui.Context, s Card, width float32, x cardExtras) {
-	p := app.pal
-	ui.Box(c.Key(s.ID)).Width(width).Children(func() {
-		b := ui.ButtonBase(c).Width(width).AlignItems(ui.Start).Cursor(ui.CursorPointer).Label(s.Title)
-		hover := b.Hovered() || b.FocusVisible()
-		lift := b.AnimateTo("lift", boolf(hover), ui.Smooth)
-		b.AnimatePose(ui.Pose{Scale: 1 - 0.02*boolf(b.Pressed())}, ui.Snappy)
-		note := s.Note
-		b.Children(func() {
-			ui.Column(c).Width(width).Gap(9).Children(func() {
-				poster := app.poster(c, s.Image, s.Title, 10)
-				poster.Shadow(0, 2+8*lift, 6+18*lift, 0, p.shade.Alpha(0.10+0.16*lift)).Translate(0, -3*lift)
-				poster.Children(func() {
-					if x.badge != "" {
-						ui.Text(c, x.badge).FontSize(11).FontWeight(600).TextColor(white).
-							Padding(3, 7).Radius(6).Background(ui.RGBA(0, 0, 0, 0.5)).
-							Absolute().Left(8).Bottom(8)
-					}
-					// A play button that rises in under the pointer.
-					if lift > 0.01 {
-						ui.Box(c).Size(40, 40).Radius(999).Background(p.accent).Center().
-							Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.3)).
-							Absolute().Right(10).Bottom(10).Opacity(lift).Scale(0.7+0.3*lift, 0.7+0.3*lift).
-							Children(func() { ui.Icon(c, iconPlayFill).Size(16, 16).TextColor(white).Margin(0, 0, 0, 2) })
-					}
-				})
-				ui.Column(c).Gap(3).Children(func() {
-					ui.Text(c, s.Title).FontSize(13.5).FontWeight(600).
-						FixedLineHeight(titleLine).MaxLines(2).MinHeight(2 * titleLine).
-						TextColor(b.AnimateColor("title", ternary(hover, p.accent, p.text), quick))
-					if x.under != nil {
-						note = x.under()
-					} else if s.Note != "" {
-						ui.Text(c, s.Note).FontSize(11.5).TextColor(p.muted).SingleLine()
-					}
-				})
-			})
-		})
-		b.Description(joinNonEmpty(x.badge, note))
-		if b.Clicked() {
-			if x.onClick != nil {
-				x.onClick()
-			} else {
-				app.openCard(app.sourceID(), s)
-			}
-		}
-		if x.corner != nil {
-			ui.Box(c).Absolute().Right(0).Bottom(0).Children(x.corner)
-		}
-	})
-}
 
 // joinNonEmpty joins what there is of parts, as one line to read.
 func joinNonEmpty(parts ...string) string {
@@ -215,64 +21,8 @@ func ternary[T any](cond bool, a, b T) T {
 	return b
 }
 
-// grid lays cards out in rows that fill the width.
-func (app *App) grid(c *ui.Context, cards []Card, extras func(i int, s Card) cardExtras) {
-	n, w := columns(app.contentWidth(c))
-	ui.Column(c).Gap(28).Children(func() {
-		for start := 0; start < len(cards); start += n {
-			ui.Row(c.Key(start)).Gap(cardGap).AlignItems(ui.Start).Children(func() {
-				for i := start; i < min(start+n, len(cards)); i++ {
-					app.card(c, cards[i], w, extras(i, cards[i]))
-				}
-			})
-		}
-	})
-}
-
-// skeletonGrid stands in for a grid while it loads.
-func (app *App) skeletonGrid(c *ui.Context, rows int) {
-	s := app.shimmer(c)
-	n, w := columns(app.contentWidth(c))
-	ui.Column(c).Grow(1).Padding(4, pagePad, 0).Gap(28).ClipY().Role(ui.RoleStatus).Label("加载中").Children(func() {
-		for r := range rows {
-			ui.Row(c.Key(r)).Gap(cardGap).Children(func() {
-				for i := range n {
-					ui.Column(c.Key(i)).Width(w).Gap(9).Children(func() {
-						s.bone(c, 10).AspectRatio(3.0 / 4)
-						// Two title lines, as tall as a card's title.
-						ui.Column(c).Height(2*titleLine).Gap(5).Padding(2, 0).Children(func() {
-							s.bone(c, 4).Height(13).WidthPercent(92)
-							s.bone(c, 4).Height(13).WidthPercent(float32(40 + (r*n+i)*17%35))
-						})
-						s.bone(c, 4).Height(10).WidthPercent(36).Margin(5, 0, 0)
-					})
-				}
-			})
-		}
-	})
-}
-
-// feedFooter shows the state of a feed below its grid.
-func (app *App) feedFooter(c *ui.Context, loading bool, err string, more bool, retry func()) {
-	p := app.pal
-	ui.Row(c).Height(84).Center().Gap(10).Children(func() {
-		switch {
-		case loading:
-			ui.Spinner(c)
-			ui.Text(c, "加载中").FontSize(12.5).TextColor(p.muted)
-		case err != "":
-			ui.Text(c, err).FontSize(12.5).TextColor(p.muted).Role(ui.RoleAlert)
-			app.secondary(c, iconRefresh, "重试").OnClick(retry)
-		case !more:
-			ui.Box(c).Width(28).Height(1).Background(p.hairline)
-			ui.Text(c, "已经到底了").FontSize(12).TextColor(p.faint)
-			ui.Box(c).Width(28).Height(1).Background(p.hairline)
-		}
-	})
-}
-
-func (app *App) navTitle(id string) string {
-	for _, it := range app.nav {
+func (app *App) NavTitle(id string) string {
+	for _, it := range app.Nav {
 		if it.ID == id {
 			return it.Title
 		}
@@ -280,45 +30,42 @@ func (app *App) navTitle(id string) string {
 	return strings.TrimPrefix(id, "channel:")
 }
 
-// ---- Search ----
-
 type searchState struct {
-	query   string
-	shown   string // the query the results are for
-	results Feed
-	hot     []Section
-	hotErr  string
+	Query   string
+	Shown   string // the query the results are for
+	Results Feed
+	Hot     []Section
+	HotErr  string
 	hotBusy bool
 	// hotFeeds are the sections of the search home that name their
 	// collection, by its ID.
-	hotFeeds map[string]*Feed
+	HotFeeds map[string]*Feed
 	// suggests are the words the source suggests for suggestFor, the
 	// query typed; suggestGen counts the queries asked about.
-	suggests   []string
-	suggestFor string
+	Suggests   []string
+	SuggestFor string
 	suggestGen int
-	focus      bool
-	field      ui.Handle
-	told       string // the query screen readers were told the results of
+	Focus      bool
+	Told       string // the query screen readers were told the results of
 }
 
 // runSearch shows the results of q, or the search home when q is empty.
-func (app *App) runSearch(q string) {
-	s := &app.search
+func (app *App) RunSearch(q string) {
+	s := &app.Search
 	q = strings.TrimSpace(q)
-	f := &s.results
+	f := &s.Results
 	f.reset()
-	s.shown, s.told = q, ""
-	s.suggests, s.suggestFor = nil, ""
+	s.Shown, s.Told = q, ""
+	s.Suggests, s.SuggestFor = nil, ""
 	s.suggestGen++
 	if q == "" {
 		f.fetch = nil
 		return
 	}
-	f.setFetch(app.src, func(ctx context.Context, src source.Source, cursor string) (feedPage, error) {
+	f.setFetch(app.Src, func(ctx context.Context, src source.Source, cursor string) (feedPage, error) {
 		return pageResult(src.Search(ctx, source.SearchRequest{Query: q, Cursor: cursor}))
 	})
-	app.loadMore(f)
+	app.LoadMore(f)
 }
 
 // suggestWait is how long typing rests before the source is asked for
@@ -327,19 +74,19 @@ const suggestWait = 250 * time.Millisecond
 
 // typed takes in the query as it is typed: an empty one goes back to the
 // search home, another asks the source for words to suggest.
-func (app *App) typed(q string) {
-	s := &app.search
+func (app *App) Typed(q string) {
+	s := &app.Search
 	q = strings.TrimSpace(q)
 	if q == "" {
-		app.runSearch("")
+		app.RunSearch("")
 		return
 	}
-	if !app.hasCap(source.CapSearchSuggest) || q == s.shown {
-		s.suggests, s.suggestFor = nil, ""
+	if !app.HasCap(source.CapSearchSuggest) || q == s.Shown {
+		s.Suggests, s.SuggestFor = nil, ""
 		return
 	}
 	s.suggestGen++
-	gen, src, ctx := s.suggestGen, app.src, app.pageContext()
+	gen, src, ctx := s.suggestGen, app.Src, app.pageContext()
 	async(app, func() ([]string, error) {
 		select {
 		case <-time.After(suggestWait):
@@ -351,21 +98,21 @@ func (app *App) typed(q string) {
 		if s.suggestGen != gen || ctx.Err() != nil || err != nil {
 			return
 		}
-		s.suggests, s.suggestFor = words, q
+		s.Suggests, s.SuggestFor = words, q
 	})
 }
 
 // loadHot loads the search home sections, once.
-func (app *App) loadHot() {
-	if !app.hasCap(source.CapSearchHome) {
+func (app *App) LoadHot() {
+	if !app.HasCap(source.CapSearchHome) {
 		return
 	}
-	s := &app.search
-	if s.hot != nil || s.hotBusy || s.hotErr != "" {
+	s := &app.Search
+	if s.Hot != nil || s.hotBusy || s.HotErr != "" {
 		return
 	}
 	s.hotBusy = true
-	src := app.src
+	src := app.Src
 	ctx := app.srcContext()
 	async(app, func() (*source.CollectionPage, error) {
 		return src.SearchHome(ctx)
@@ -375,181 +122,19 @@ func (app *App) loadHot() {
 		}
 		s.hotBusy = false
 		if err != nil {
-			s.hotErr = errText(err)
+			s.HotErr = errText(err)
 			return
 		}
 		if p != nil && p.Sections != nil {
-			s.hot = p.Sections
+			s.Hot = p.Sections
 		} else {
-			s.hot = []Section{}
+			s.Hot = []Section{}
 		}
 	})
 }
 
-func (app *App) searchPage(c *ui.Context) {
-	s := &app.search
-	p := app.pal
-	app.loadHot()
-	app.header(c, "搜索", "", nil)
-	ui.Column(c).Padding(0, pagePad, 22).Role(ui.RoleSearch).Children(func() {
-		f := ui.SearchField(c.Key("search"), &s.query).Label("搜索").Placeholder("搜索剧名、演员、题材，回车搜索").Bind(&s.field).
-			MaxWidth(560).Height(40).Radius(10).FontSize(14)
-		if s.focus {
-			s.field.Focus(c)
-			s.focus = false
-		}
-		if f.Submitted() {
-			app.runSearch(s.query)
-		}
-		if f.Changed() {
-			app.typed(s.query)
-		}
-		if len(s.suggests) > 0 && s.suggestFor == strings.TrimSpace(s.query) {
-			ui.Column(c.Key("suggests")).MaxWidth(560).Margin(6, 0, 0).Padding(4).Radius(10).Background(p.surface).
-				Role(ui.RoleList).Label("搜索建议").Children(func() {
-				for i, word := range s.suggests {
-					b := ui.ButtonBase(c.Key(i)).Height(32).PaddingX(10).Radius(7).Justify(ui.Start).AlignItems(ui.Center).Gap(10).Label(word)
-					pressable(b, ui.Transparent, p.hover, 0.98)
-					b.Children(func() {
-						ui.Icon(c, iconSearch).Size(13, 13).TextColor(p.faint)
-						ui.Text(c, word).FontSize(13.5).TextColor(p.text).SingleLine()
-					})
-					if b.Clicked() {
-						s.query = word
-						app.runSearch(word)
-					}
-				}
-			})
-		}
-	})
-	if s.shown == "" {
-		app.hotBoards(c)
-		return
-	}
-	r := &s.results
-	if !r.loaded && !r.loading && r.err == "" {
-		app.loadMore(r) // a search canceled as the page was left
-	}
-	retry := func() { r.err = ""; app.loadMore(r) }
-	// The focus stays in the field, so nothing else says the search is done.
-	if r.loaded && !r.loading && r.err == "" && s.told != s.shown {
-		s.told = s.shown
-		c.Announce(ternary(len(r.items) > 0, "“"+s.shown+"”的搜索结果已显示", "没有找到“"+s.shown+"”"))
-	}
-	if len(r.items) == 0 {
-		switch {
-		case r.loading || !r.loaded && r.err == "":
-			app.skeletonGrid(c, 2)
-		case r.err != "":
-			app.centered(c, iconX, "搜索失败", r.errText(), retry)
-		default:
-			app.centered(c, iconSearch, "没有找到“"+s.shown+"”", "换个关键词试试", nil)
-		}
-		return
-	}
-	q := s.shown
-	n, _ := columns(app.contentWidth(c))
-	ui.Scroll(c.Key("results-"+q)).TrackScroll(&r.scroll).Grow(1).Padding(0, pagePad, 0).Children(func() {
-		ui.Text(c, fmt.Sprintf("“%s”的搜索结果", q)).FontSize(13).TextColor(p.muted).Margin(0, 0, 16)
-		app.cards(c, visible(r, n), source.LayoutGrid)
-		app.feedFooter(c, r.loading, r.errText(), r.more, retry)
-	})
-	app.pump(c, r)
-}
-
-// hotBoards shows the search home: its ranked sections as boards side by
-// side, the others as rows of cards.
-func (app *App) hotBoards(c *ui.Context) {
-	s := &app.search
-	p := app.pal
-	if !app.hasCap(source.CapSearchHome) {
-		app.centered(c, iconSearch, "搜索", "输入关键词后按回车", nil)
-		return
-	}
-	if s.hot == nil {
-		if s.hotErr != "" {
-			app.centered(c, iconSearch, "搜索", "输入关键词后按回车", nil)
-			return
-		}
-		sh := app.shimmer(c)
-		ui.Row(c).Padding(0, pagePad).Gap(20).Role(ui.RoleStatus).Label("加载中").Children(func() {
-			for i := range 2 {
-				sh.bone(c.Key(i), 16).Size(320, 420)
-			}
-		})
-		return
-	}
-	if s.hotFeeds == nil {
-		s.hotFeeds = map[string]*Feed{}
-	}
-	items := func(sec Section) []Card {
-		if len(sec.Items) == 0 && sec.Collection != "" {
-			return app.sectionFeed(s.hotFeeds, app.src, sec.Collection).items
-		}
-		return sec.Items
-	}
-	n, _ := columns(app.contentWidth(c))
-	ui.Scroll(c.Key("hot")).Grow(1).Padding(0, pagePad, 28).Children(func() {
-		ui.Row(c).Gap(20).AlignItems(ui.Start).Wrap().Children(func() {
-			for bi, b := range s.hot {
-				if b.Layout != source.SectionRanked {
-					continue
-				}
-				list := items(b)
-				ui.Column(c.Key(bi)).Width(320).Padding(18, 14, 12).Radius(16).Background(p.surface).Gap(2).Children(func() {
-					ui.Row(c).Gap(7).Padding(0, 6, 10).Children(func() {
-						ui.Icon(c, iconFlame).Size(16, 16).TextColor(p.accent)
-						ui.Text(c, b.Title).FontSize(15).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(2)
-					})
-					for i, it := range list {
-						if i >= 10 {
-							break
-						}
-						row := ui.ButtonBase(c.Key(it.ID)).Gap(12).Padding(8, 8).Radius(9).AlignItems(ui.Center).Label(it.Title).Description(joinNonEmpty(fmt.Sprintf("第%d名", i+1), it.Note))
-						pressable(row, ui.Transparent, p.hover.Mix(p.text, 0.02), 0.98)
-						row.Children(func() {
-							n := ui.Text(c, itoa(i+1)).FontSize(15).Bold().Width(18).TextAlign(ui.Center)
-							n.TextColor(ternary(i < 3, p.accent, p.faint))
-							ui.Text(c, it.Title).FontSize(13.5).SingleLine().Grow(1).TextColor(p.text)
-							if it.Note != "" {
-								ui.Text(c, it.Note).FontSize(11).TextColor(p.muted).NoWrap()
-							}
-						})
-						if row.Clicked() {
-							app.openCard(app.sourceID(), it)
-						}
-					}
-				})
-			}
-		})
-		for bi, b := range s.hot {
-			if b.Layout == source.SectionRanked {
-				continue
-			}
-			list := items(b)
-			if len(list) == 0 {
-				continue
-			}
-			ui.Column(c.Key(fmt.Sprint("row", bi))).Margin(28, 0, 0).Children(func() {
-				ui.Text(c, b.Title).FontSize(17).Bold().TextColor(p.text).Margin(0, 0, 12).Role(ui.RoleHeading).Level(2)
-				shown := list
-				if b.Layout != source.SectionGrid && len(shown) > n {
-					shown = shown[:n]
-				}
-				app.cards(c, shown, source.LayoutGrid)
-			})
-		}
-	})
-}
-
-// ---- Library ----
-
-// The filters of the history page: everything, the dramas being watched,
-// and those watched to the end.
-var historyFilters = []string{"全部", "在看", "看完"}
-
-// historyShown is the records the history filter f shows, latest first.
-func historyShown(recent []*Record, f int) []*Record {
+// HistoryShown is the records the history filter f shows, latest first.
+func HistoryShown(recent []*Record, f int) []*Record {
 	if f == 0 {
 		return recent
 	}
@@ -562,127 +147,20 @@ func historyShown(recent []*Record, f int) []*Record {
 	return out
 }
 
-// watchBadge says where a drama watched got to, over its cover.
-func watchBadge(r *Record) string {
-	if r.Done() {
-		return "已看完"
-	}
-	return fmt.Sprintf("看到第%d集", r.Episode+1)
-}
-
-// watchBar draws how much of a drama was watched, under a card's title.
-func (app *App) watchBar(c *ui.Context, r *Record) {
-	p := app.pal
-	frac := float32(0)
-	if n := r.Episodes; n > 0 {
-		done := float64(r.Episode)
-		if r.Duration > 0 {
-			done += min(r.Position/r.Duration, 1)
-		}
-		frac = float32(done / float64(n))
-	}
-	ui.Box(c).Height(3).Radius(2).Background(p.hairline).Margin(2, 0).Draw(func(pt *ui.Painter, rc ui.Rect) {
-		pt.Fill(ui.Rect{X: rc.X, Y: rc.Y, W: rc.W * min(max(frac, 0.02), 1), H: rc.H}, p.accent, 2)
-	})
-}
-
-func (app *App) historyPage(c *ui.Context) {
-	p := app.pal
-	all := app.lib.Recent()
-	app.header(c, "继续观看", "从上次停下的地方接着看", nil)
-	if len(all) == 0 {
-		app.centered(c, iconClock, "还没有观看记录", "看过的短剧会出现在这里", nil)
-		return
-	}
-	ui.Row(c).Padding(0, pagePad, 18).Children(func() {
-		choices(c, "筛选观看记录").Gap(8).Children(func() {
-			for i, name := range historyFilters {
-				label := fmt.Sprintf("%s %d", name, len(historyShown(all, i)))
-				on := i == app.historyFilter
-				if radio(app.chip(c.Key(i), label, on), on).Label(name).Clicked() && !on {
-					app.historyFilter = i
-					app.shelf = ui.ScrollState{}
-				}
-			}
-		})
-	})
-	recent := historyShown(all, app.historyFilter)
-	if len(recent) == 0 {
-		app.centered(c, iconClock, ternary(app.historyFilter == 2, "还没有看完的剧", "没有在看的剧"), "", nil)
-		return
-	}
-	cards := make([]Card, len(recent))
-	for i, w := range recent {
-		cards[i] = w.Card
-	}
-	ui.Scroll(c.Key("history")).TrackScroll(&app.shelf).Grow(1).Padding(4, pagePad, 24).Children(func() {
-		app.grid(c, cards, func(i int, s Card) cardExtras {
-			w := recent[i]
-			return cardExtras{
-				badge: watchBadge(w),
-				under: func() string {
-					app.watchBar(c, w)
-					ui.Text(c, ago(w)).FontSize(11).TextColor(p.muted)
-					return ago(w)
-				},
-				corner: func() {
-					x := ui.ButtonBase(c.Key("forget")).Label("移除“" + s.Title + "”的记录")
-					x.Children(func() {
-						ui.Text(c, "移除").FontSize(11).TextColor(x.AnimateColor("fg", ternary(x.Hovered(), p.accent, p.faint), quick))
-					})
-					if x.Clicked() {
-						app.lib.Forget(w.Ref())
-					}
-				},
-				onClick: func() { app.open(w.Source, w.Card, -1) },
-			}
-		})
-	})
-}
-
-func (app *App) followsPage(c *ui.Context) {
-	followed := app.lib.Followed()
-	app.header(c, "追剧", "收藏的短剧都在这里", nil)
-	if len(followed) == 0 {
-		app.centered(c, iconHeart, "还没有追的剧", "在播放页点“追剧”即可收藏", nil)
-		return
-	}
-	cards := make([]Card, len(followed))
-	for i, fl := range followed {
-		cards[i] = fl.Card
-	}
-	ui.Scroll(c.Key("follows")).Grow(1).Padding(4, pagePad, 24).Children(func() {
-		app.grid(c, cards, func(i int, s Card) cardExtras {
-			fl := followed[i]
-			w := app.lib.History[fl.Ref()]
-			if w == nil {
-				return cardExtras{
-					badge: cardBadge(s),
-					under: func() string {
-						ui.Text(c, "还没看").FontSize(11).TextColor(app.pal.muted)
-						return "还没看"
-					},
-					onClick: func() { app.open(fl.Source, fl.Card, -1) },
-				}
-			}
-			return cardExtras{
-				badge: watchBadge(w),
-				under: func() string {
-					app.watchBar(c, w)
-					ui.Text(c, ago(w)).FontSize(11).TextColor(app.pal.muted)
-					return ago(w)
-				},
-				onClick: func() { app.open(fl.Source, fl.Card, -1) },
-			}
-		})
-	})
-}
-
-func (app *App) toggleFollow(sourceID string, s Card) {
-	app.lib.ToggleFollow(sourceID, s)
-	if app.lib.Following(source.Ref{Source: sourceID, ID: s.ID}) {
-		app.toast = "已加入追剧"
+func (app *App) ToggleFollow(sourceID string, s Card) {
+	app.Lib.ToggleFollow(sourceID, s)
+	if app.Lib.Following(source.Ref{Source: sourceID, ID: s.ID}) {
+		app.Toast = "已加入追剧"
 	} else {
-		app.toast = "已取消追剧"
+		app.Toast = "已取消追剧"
+	}
+}
+
+// ShowSearch is the search page shown: a search canceled as the page was
+// left searches again, and the search home loads.
+func (app *App) ShowSearch() {
+	app.LoadHot()
+	if r := &app.Search.Results; r.Src != nil && !r.Loaded && !r.Loading && r.Err == "" {
+		app.LoadMore(r)
 	}
 }

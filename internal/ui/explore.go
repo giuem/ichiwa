@@ -1,4 +1,4 @@
-package app
+package ui
 
 import (
 	"fmt"
@@ -92,5 +92,5 @@ func (app *App) actorCard(c *ui.Context, i int, a Card, width float32, ranked bo
 			}
 		})
 	})
-	b.OnClick(func() { app.openCollection(a) })
+	b.OnClick(func() { app.OpenCollection(a) })
 }

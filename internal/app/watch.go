@@ -3,81 +3,66 @@ package app
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
-
-	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/video"
 
 	"github.com/giuem/ichiwa/internal/source"
 )
 
-// speedSteps are the speeds to choose from, in order, for the panel and
+// SpeedSteps are the speeds to choose from, in order, for the panel and
 // for the keys that step them.
-var speedSteps = []float64{0.75, 1, 1.25, 1.5, 2}
+var SpeedSteps = []float64{0.75, 1, 1.25, 1.5, 2}
 
-// boostRate is the speed while the right arrow is held, and boostDelay how
+// BoostRate is the speed while the right arrow is held, and boostDelay how
 // long it takes being held rather than pressed.
 const (
-	boostRate  = 2
+	BoostRate  = 2
 	boostDelay = 350 * time.Millisecond
 )
 
-// clickDelay is how long a click on the picture waits to see whether it is
+// ClickDelay is how long a click on the picture waits to see whether it is
 // the first of a double click, and clickUndo how late that can turn out,
 // as a slow double click goes by the system's longer interval.
 const (
-	clickDelay = 220 * time.Millisecond
+	ClickDelay = 220 * time.Millisecond
 	clickUndo  = 600 * time.Millisecond
 )
 
-// sleepEpisode is the sleep timer's choice of stopping as the episode ends.
-const sleepEpisode = -1
+// SleepEpisode is the sleep timer's choice of stopping as the episode ends.
+const SleepEpisode = -1
 
 // The smallest the small window gets, and the long side it starts at.
 const (
-	miniMinWidth  = 340
-	miniMinHeight = 360
+	MiniMinWidth  = 340
+	MiniMinHeight = 360
 	miniLongSide  = 640
 )
-
-// miniFixFor is how long the small window holds its size after full screen.
-const miniFixFor = 1500 * time.Millisecond
-
-// keyLinger is how long the controls show after a key acted on the video.
-const keyLinger = 1500 * time.Millisecond
 
 // maxSkips is how many episodes in a row autoplay skips when unavailable
 // before it gives up and says so.
 const maxSkips = 3
 
-// episodesPerRange is how many episodes the episode grid shows at once.
-const episodesPerRange = 50
+// EpisodesPerRange is how many episodes the episode grid shows at once.
+const EpisodesPerRange = 50
 
-// panelWidth is the width of the player page's side panel. Pinning the
+// PanelWidth is the width of the player page's side panel. Pinning the
 // window takes it off the window.
-const panelWidth = 368
-
-// chromeLinger is how long full screen keeps the title bar and the controls
-// after the pointer last moved.
-const chromeLinger = 3 * time.Second
+const PanelWidth = 368
 
 // Watching is the player page: a drama, the episode playing and the
 // player playing it.
 type Watching struct {
-	app      *App
-	sourceID string
-	src      source.Source // nil when the source is not loaded
-	show     Card
+	App      *App
+	SourceID string
+	Src      source.Source // nil when the source is not loaded
+	Show     Card
 
-	detail    *Media
-	detailErr string
-	recs      []Card
+	Detail    *Media
+	DetailErr string
+	Recs      []Card
 
-	index         int
+	Index         int
 	gen           int // counts episodes started, to drop stale results
-	player        *ui.VideoPlayer
+	Player        Player
 	stop          chan struct{}
 	preloadCancel context.CancelFunc
 	// ctx ends when the page is left, playCtx when the episode is: the
@@ -85,72 +70,70 @@ type Watching struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	playCancel context.CancelFunc
-	loading    bool
-	err        string
-	ended      bool
-	paused     bool // the user paused
+	Loading    bool
+	Err        string
+	Ended      bool
+	Paused     bool // the user paused
 	auto       bool // the next play call comes from autoplay
-	skipped    int  // episodes autoplay skipped in a row
-	retryAt    time.Time
+	Skipped    int  // episodes autoplay skipped in a row
+	RetryAt    time.Time
 	awake      func() // releases the display, while it is kept on
 
-	seek     float64
-	dragging bool
-	panel    bool
-	unpin    bool // the panel opens again when the window is unpinned
-	onTop    bool // what the window was last told
-	descOpen bool
-	epRange  int
+	Seek     float64
+	Dragging bool
+	Panel    bool
+	Unpin    bool // the panel opens again when the window is unpinned
+	DescOpen bool
+	EpRange  int
 
 	// Where the pointer was over the stage in full screen, and since when.
 	pointerX, pointerY float32
 	pointerAt          time.Time
 
-	seekBar ui.Handle
-
 	// The right arrow: when it went down, while it is, and whether holding
 	// it sped the video up, which then asks for no seek as it comes up.
-	rightAt        time.Time
-	boost, boosted bool
+	RightAt        time.Time
+	Boost, boosted bool
 
-	keyAt time.Time // when a key last acted on the video
+	KeyAt time.Time // when a key last acted on the video
 
 	// A click on the picture waiting to count, when one last did, and
 	// whether the release of a double click is still to come.
-	clickAt, toggledAt time.Time
+	ClickAt, toggledAt time.Time
 	skipClick          bool
 
-	halt   bool // the episode ended and the page waits rather than go on
-	drawer bool // the episodes are open over the picture
+	Halt   bool // the episode ended and the page waits rather than go on
+	Drawer bool // the episodes are open over the picture
 
-	side      ui.ScrollState
-	dm        *danmaku // the comments of the episode playing
-	dmOpen    bool     // the danmaku settings show
-	speedOpen bool     // the speed picker shows
-	volOpen   bool     // the volume panel shows
-	told      string   // what screen readers were last told is playing
+	// UI is the view's own state of the page, which the app never reads.
+	UI        any
+	DM        *Danmaku // the comments of the episode playing
+	DmOpen    bool     // the danmaku settings show
+	SpeedOpen bool     // the speed picker shows
+	VolOpen   bool     // the volume panel shows
+	Told      string   // what screen readers were last told is playing
 
 	// seasons are the drama's seasons when it has more than one, the one
 	// showing among them; switchSeason opens another at an episode, -1
 	// for where the user left it.
-	seasons      []Season
-	switchSeason func(s Season, ep int)
+	Seasons      []Season
+	SwitchSeason func(s Season, ep int)
 }
 
 // has tells whether the drama's source has capability c.
-func (w *Watching) has(c source.Capability) bool {
-	return w.src != nil && w.src.Info().Has(c)
+func (w *Watching) Has(c source.Capability) bool {
+	return w.Src != nil && w.Src.Info().Has(c)
 }
 
-func (w *Watching) ref() source.Ref {
-	srcID := w.sourceID
-	if srcID == "" && w.app != nil {
-		srcID = w.app.sourceID()
+func (w *Watching) Ref() source.Ref {
+	srcID := w.SourceID
+	if srcID == "" && w.App != nil {
+		srcID = w.App.SourceID()
 	}
-	return source.Ref{Source: srcID, ID: w.show.ID}
+	return source.Ref{Source: srcID, ID: w.Show.ID}
 }
 
-func seasonCard(next Season) Card {
+func SeasonCard(next Season) Card {
 	title := next.Name
 	if title == "" {
 		title = next.Title
@@ -181,7 +164,7 @@ func episodeIndex(eps []source.Episode, id string) int {
 	return -1
 }
 
-func lockMessage(lock source.Lock) string {
+func LockMessage(lock source.Lock) string {
 	switch lock {
 	case source.LockLogin:
 		return "该集需要登录才能观看"
@@ -196,53 +179,55 @@ func lockMessage(lock source.Lock) string {
 
 // open shows the player page for a drama, at episode ep, or where the
 // user left it when ep is -1.
-func (app *App) open(sourceID string, s Card, ep int) { app.openIn(sourceID, s, ep, nil) }
+func (app *App) Open(sourceID string, s Card, ep int) { app.openIn(sourceID, s, ep, nil) }
 
 // openIn opens a drama among seasons already known, which the page keeps
 // until Media returns.
 func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 	if sourceID == "" {
-		sourceID = app.sourceID()
+		sourceID = app.SourceID()
 	}
 	var awake func()
-	if app.watch != nil {
-		app.watch.close()
+	if app.Watch != nil {
+		app.Watch.Close()
 		// A season going on to the next keeps the display on throughout.
-		awake, app.watch.awake = app.watch.awake, nil
+		awake, app.Watch.awake = app.Watch.awake, nil
 	}
-	w := &Watching{app: app, sourceID: sourceID, show: s, index: max(ep, 0), loading: true, panel: !app.lib.OnTop, unpin: app.lib.OnTop, awake: awake}
+	w := &Watching{App: app, SourceID: sourceID, Show: s, Index: max(ep, 0), Loading: true, Panel: !app.Lib.OnTop, Unpin: app.Lib.OnTop, awake: awake}
 	w.ctx, w.cancel = context.WithCancel(context.Background())
-	w.switchSeason = func(next Season, ep int) { app.openIn(w.sourceID, seasonCard(next), ep, w.seasons) }
-	if seasonOf(seasons, s.ID) >= 0 {
-		w.seasons = seasons
+	w.SwitchSeason = func(next Season, ep int) { app.openIn(w.SourceID, SeasonCard(next), ep, w.Seasons) }
+	if SeasonOf(seasons, s.ID) >= 0 {
+		w.Seasons = seasons
 	}
-	app.watch = w
-	go w.keepAwake()
+	app.Watch = w
+	if app.host != nil {
+		go w.keepAwake()
+	}
 
-	src := app.sources.get(sourceID)
-	w.src = src
+	src := app.Sources.Get(sourceID)
+	w.Src = src
 	if src == nil {
-		w.loading = false
-		w.detailErr = "片源不可用：这部剧来自没有加载的片源"
+		w.Loading = false
+		w.DetailErr = "片源不可用：这部剧来自没有加载的片源"
 		return
 	}
 	ctx := w.ctx
 	async(app, func() (*Media, error) { return src.Media(ctx, s.ID) }, func(d *Media, err error) {
-		if app.watch != w || ctx.Err() != nil {
+		if app.Watch != w || ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			w.loading = false
-			w.detailErr = errText(err)
+			w.Loading = false
+			w.DetailErr = errText(err)
 			return
 		}
-		w.detail = d
+		w.Detail = d
 		// Keep what the grid knew when the detail lacks it.
 		img := d.Image
 		if img == "" {
 			img = s.Image
 		}
-		w.show = Card{
+		w.Show = Card{
 			Kind:     source.CardMedia,
 			ID:       d.ID,
 			Title:    d.Title,
@@ -252,15 +237,15 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 			Badges:   d.Badges,
 			Note:     s.Note,
 		}
-		if len(d.Seasons) > 0 && seasonOf(d.Seasons, d.ID) >= 0 {
-			w.seasons = d.Seasons
+		if len(d.Seasons) > 0 && SeasonOf(d.Seasons, d.ID) >= 0 {
+			w.Seasons = d.Seasons
 		}
-		app.lib.ResolveEpisodes(w.ref(), episodeIDs(d.Episodes))
+		app.Lib.ResolveEpisodes(w.Ref(), episodeIDs(d.Episodes))
 
 		start, at := ep, 0.0
 		if ep < 0 {
 			start = 0
-			if rec := app.lib.History[w.ref()]; rec != nil {
+			if rec := app.Lib.History[w.Ref()]; rec != nil {
 				if rec.EpisodeID != "" {
 					if idx := episodeIndex(d.Episodes, rec.EpisodeID); idx >= 0 {
 						start = idx
@@ -277,12 +262,12 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 			}
 		}
 		start = min(max(start, 0), len(d.Episodes)-1)
-		w.play(start, at)
+		w.Play(start, at)
 
 		// Load related section from Media.Sections.
 		for _, sec := range d.Sections {
 			if len(sec.Items) > 0 {
-				w.recs = sec.Items
+				w.Recs = sec.Items
 				break
 			}
 			if sec.Collection != "" {
@@ -290,8 +275,8 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 				async(app, func() (*source.CollectionPage, error) {
 					return src.Collection(ctx, source.CollectionRequest{ID: colID})
 				}, func(p *source.CollectionPage, err error) {
-					if app.watch == w && ctx.Err() == nil && err == nil && p != nil {
-						w.recs = p.Items
+					if app.Watch == w && ctx.Err() == nil && err == nil && p != nil {
+						w.Recs = p.Items
 					}
 				})
 				break
@@ -300,16 +285,18 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 	})
 }
 
-func (app *App) closeWatch() {
-	if app.watch != nil {
-		app.miniOn = false
-		app.setSleep(0)
-		if app.watch.onTop { // only the player page stays on top
-			app.win.SetAlwaysOnTop(false)
+func (app *App) CloseWatch() {
+	if app.Watch != nil {
+		app.MiniOn = false
+		app.SetSleep(0)
+		if app.host != nil { // only the player page stays on top
+			app.host.SetAlwaysOnTop(false)
 		}
-		app.watch.close()
-		app.watch = nil
-		mygo.NowPlaying.Clear()
+		app.Watch.Close()
+		app.Watch = nil
+		if app.host != nil {
+			app.host.NowPlaying(nil)
+		}
 	}
 }
 
@@ -335,60 +322,60 @@ func (w *Watching) stopPlayer() {
 		close(w.stop)
 		w.stop = nil
 	}
-	if w.player != nil {
-		w.saveProgress()
-		w.player.Close()
-		w.player = nil
+	if w.Player != nil {
+		w.SaveProgress()
+		w.Player.Close()
+		w.Player = nil
 	}
 }
 
 // close leaves the page.
-func (w *Watching) close() {
+func (w *Watching) Close() {
 	w.stopPlayer()
 	if w.cancel != nil {
 		w.cancel()
 	}
 	w.gen++
-	w.app.lib.Flush()
+	w.App.Lib.Flush()
 }
 
-func (w *Watching) saveProgress() {
-	if w.player == nil || w.detail == nil || w.index < 0 || w.index >= len(w.detail.Episodes) {
+func (w *Watching) SaveProgress() {
+	if w.Player == nil || w.Detail == nil || w.Index < 0 || w.Index >= len(w.Detail.Episodes) {
 		return
 	}
-	ep := w.detail.Episodes[w.index]
-	w.app.lib.Progress(w.ref().Source, w.show, ep.ID, w.index, len(w.detail.Episodes), w.player.Position().Seconds(), w.player.Duration().Seconds())
+	ep := w.Detail.Episodes[w.Index]
+	w.App.Lib.Progress(w.Ref().Source, w.Show, ep.ID, w.Index, len(w.Detail.Episodes), w.Player.Position().Seconds(), w.Player.Duration().Seconds())
 }
 
 // play starts episode i at second at.
-func (w *Watching) play(i int, at float64) {
-	app := w.app
+func (w *Watching) Play(i int, at float64) {
+	app := w.App
 	w.stopPlayer()
 	w.gen++
 	gen := w.gen
 	auto := w.auto
 	w.auto = false
 	if !auto {
-		w.skipped = 0
+		w.Skipped = 0
 	}
-	w.index, w.err, w.ended, w.paused, w.loading = i, "", false, false, true
-	w.halt = false
-	w.retryAt = time.Time{}
-	w.boost = false
-	w.epRange = i / episodesPerRange
-	ep := w.detail.Episodes[i]
+	w.Index, w.Err, w.Ended, w.Paused, w.Loading = i, "", false, false, true
+	w.Halt = false
+	w.RetryAt = time.Time{}
+	w.Boost = false
+	w.EpRange = i / EpisodesPerRange
+	ep := w.Detail.Episodes[i]
 	if ep.Lock != source.LockNone {
-		if auto && i+1 < len(w.detail.Episodes) {
+		if auto && i+1 < len(w.Detail.Episodes) {
 			w.auto = true
-			w.play(i+1, 0)
+			w.Play(i+1, 0)
 			return
 		}
-		w.loading, w.err = false, lockMessage(ep.Lock)
+		w.Loading, w.Err = false, LockMessage(ep.Lock)
 		return
 	}
-	ref := w.ref()
-	app.lib.Progress(ref.Source, w.show, ep.ID, i, len(w.detail.Episodes), at, 0)
-	src, mgr := w.src, app.media
+	ref := w.Ref()
+	app.Lib.Progress(ref.Source, w.Show, ep.ID, i, len(w.Detail.Episodes), at, 0)
+	src, mgr := w.Src, app.Media
 	if src == nil || mgr == nil {
 		return
 	}
@@ -398,43 +385,40 @@ func (w *Watching) play(i int, at float64) {
 		item, err := mgr.Open(playCtx, ref.Source, ref.ID, ep.ID, func(ctx context.Context, prefer source.PlayPrefer) (*source.Playback, error) {
 			return src.Play(ctx, source.PlayRequest{MediaID: ref.ID, EpisodeID: ep.ID, Prefer: prefer})
 		})
-		app.win.Update(func() {
-			if app.watch != w || w.gen != gen || playCtx.Err() != nil {
+		app.dispatch(func() {
+			if app.Watch != w || w.gen != gen || playCtx.Err() != nil {
 				return
 			}
-			w.loading = false
-			var p *ui.VideoPlayer
+			w.Loading = false
+			var p Player
 			if err == nil {
-				if item.URL != "" {
-					p, err = video.OpenURL(item.URL)
-				} else {
-					p, err = video.Open(item.Path)
-				}
+				p, err = app.host.OpenVideo(item.URL, item.Path)
 			}
 			if err != nil {
 				w.failed(i, auto, err)
 				return
 			}
-			w.skipped = 0
-			w.player = p
+			w.Skipped = 0
+			w.Player = p
 			// It starts playing once the view shows it.
-			p.SetVolume(app.lib.Volume).SetRate(app.lib.Speed)
+			p.SetVolume(app.Lib.Volume)
+			p.SetRate(app.Lib.Speed)
 			if at > 1 {
-				p.Seek(seconds(at - 1))
+				p.Seek(Seconds(at - 1))
 			}
 			w.stop = make(chan struct{})
 			go w.watchEnd(gen, p, w.stop)
 			// Control Center learns the duration once the item loaded.
 			time.AfterFunc(600*time.Millisecond, func() {
-				mygo.RunOnMain(func() {
-					if w.gen == gen && app.watch == w {
+				w.App.sync(func() {
+					if w.gen == gen && app.Watch == w {
 						w.nowPlaying()
 					}
 				})
 			})
 			// The next episode downloads meanwhile, so it starts at once.
-			if i+1 < len(w.detail.Episodes) && w.detail.Episodes[i+1].Lock == source.LockNone {
-				nextID := w.detail.Episodes[i+1].ID
+			if i+1 < len(w.Detail.Episodes) && w.Detail.Episodes[i+1].Lock == source.LockNone {
+				nextID := w.Detail.Episodes[i+1].ID
 				pCtx, pCancel := context.WithCancel(w.context())
 				w.preloadCancel = pCancel
 				mgr.Preload(pCtx, ref.Source, ref.ID, nextID, 2*time.Second, func(ctx context.Context, prefer source.PlayPrefer) (*source.Playback, error) {
@@ -448,7 +432,7 @@ func (w *Watching) play(i int, at float64) {
 // watchEnd notices the end of the episode. It asks the clock rather than
 // wait for the view, as a window out of sight builds no frames while the
 // sound plays on.
-func (w *Watching) watchEnd(gen int, p *ui.VideoPlayer, stop chan struct{}) {
+func (w *Watching) watchEnd(gen int, p Player, stop chan struct{}) {
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -458,8 +442,8 @@ func (w *Watching) watchEnd(gen int, p *ui.VideoPlayer, stop chan struct{}) {
 		case <-tick.C:
 		}
 		var failed, finished bool
-		mygo.RunOnMain(func() {
-			if w.gen != gen || w.app.watch != w { // the player may be closed
+		w.App.sync(func() {
+			if w.gen != gen || w.App.Watch != w { // the player may be closed
 				return
 			}
 			dur := p.Duration()
@@ -469,12 +453,12 @@ func (w *Watching) watchEnd(gen int, p *ui.VideoPlayer, stop chan struct{}) {
 		if !failed && !finished {
 			continue
 		}
-		w.app.win.Update(func() {
-			if w.gen != gen || w.app.watch != w {
+		w.App.dispatch(func() {
+			if w.gen != gen || w.App.Watch != w {
 				return
 			}
 			if failed {
-				w.err = "播放失败"
+				w.Err = "播放失败"
 				return
 			}
 			w.onEnded()
@@ -486,8 +470,8 @@ func (w *Watching) watchEnd(gen int, p *ui.VideoPlayer, stop chan struct{}) {
 // wantsDisplay tells whether the display should stay on: from the moment
 // an episode is asked for until the user pauses or nothing is left to
 // play, so autoplay moving on leaves no gap for an idle display to go dark.
-func (w *Watching) wantsDisplay() bool {
-	return w.app.watch == w && w.err == "" && !w.ended && !w.halt && !w.paused && (w.loading || w.player != nil)
+func (w *Watching) WantsDisplay() bool {
+	return w.App.Watch == w && w.Err == "" && !w.Ended && !w.Halt && !w.Paused && (w.Loading || w.Player != nil)
 }
 
 // keepAwake holds the display on while the page wants it, until the page
@@ -499,18 +483,18 @@ func (w *Watching) keepAwake() {
 	defer tick.Stop()
 	for {
 		left := false
-		mygo.RunOnMain(func() {
+		w.App.sync(func() {
 			if w.sleepTick(time.Now()) {
-				w.app.win.Invalidate()
+				w.App.redraw()
 			}
-			switch want := w.wantsDisplay(); {
+			switch want := w.WantsDisplay(); {
 			case want && w.awake == nil:
-				w.awake = mygo.Power.KeepAwake("正在播放短剧", true)
+				w.awake = w.App.host.KeepAwake("正在播放短剧")
 			case !want && w.awake != nil:
 				w.awake()
 				w.awake = nil
 			}
-			left = w.app.watch != w
+			left = w.App.Watch != w
 		})
 		if left {
 			return
@@ -522,41 +506,41 @@ func (w *Watching) keepAwake() {
 // failed shows why episode i did not play. Autoplay skips an unavailable
 // episode, up to maxSkips in a row.
 func (w *Watching) failed(i int, auto bool, err error) {
-	app := w.app
-	if auto && source.Is(err, source.ErrUnavailable) && i+1 < len(w.detail.Episodes) {
-		w.skipped++
-		if w.skipped < maxSkips {
-			app.toast = fmt.Sprintf("第%d集暂时无法播放，已跳过", i+1)
+	app := w.App
+	if auto && source.Is(err, source.ErrUnavailable) && i+1 < len(w.Detail.Episodes) {
+		w.Skipped++
+		if w.Skipped < maxSkips {
+			app.Toast = fmt.Sprintf("第%d集暂时无法播放，已跳过", i+1)
 			w.auto = true
-			w.play(i+1, 0)
+			w.Play(i+1, 0)
 			return
 		}
 	}
-	w.err = errText(err)
-	if w.skipped >= maxSkips {
-		w.err = fmt.Sprintf("连续%d集无法播放：%s", w.skipped, w.err)
+	w.Err = errText(err)
+	if w.Skipped >= maxSkips {
+		w.Err = fmt.Sprintf("连续%d集无法播放：%s", w.Skipped, w.Err)
 	}
 	if wait := source.RetryAfter(err); wait > 0 {
-		w.retryAt = time.Now().Add(wait)
-		until := w.retryAt
+		w.RetryAt = time.Now().Add(wait)
+		until := w.RetryAt
 		go func() { // redraw the countdown each second
 			for time.Now().Before(until) {
 				time.Sleep(time.Second)
-				app.win.Invalidate()
+				app.redraw()
 			}
 		}()
 	}
 }
 
-// retryWait is how many seconds the retry button still waits.
-func (w *Watching) retryWait() int {
-	if d := time.Until(w.retryAt); d > 0 {
+// retryWait is how many Seconds the retry button still waits.
+func (w *Watching) RetryWait() int {
+	if d := time.Until(w.RetryAt); d > 0 {
 		return int(d.Seconds()) + 1
 	}
 	return 0
 }
 
-func seasonOf(seasons []Season, id string) int {
+func SeasonOf(seasons []Season, id string) int {
 	for i, s := range seasons {
 		if s.ID == id {
 			return i
@@ -566,51 +550,51 @@ func seasonOf(seasons []Season, id string) int {
 }
 
 // nextSeason is the season after the one showing, if there is one.
-func (w *Watching) nextSeason() (Season, bool) {
-	i := seasonOf(w.seasons, w.show.ID)
-	if i < 0 || i+1 >= len(w.seasons) {
+func (w *Watching) NextSeason() (Season, bool) {
+	i := SeasonOf(w.Seasons, w.Show.ID)
+	if i < 0 || i+1 >= len(w.Seasons) {
 		return Season{}, false
 	}
-	return w.seasons[i+1], true
+	return w.Seasons[i+1], true
 }
 
 // lastEpisode tells whether the episode playing is the season's last.
-func (w *Watching) lastEpisode() bool {
-	return w.detail != nil && w.index+1 >= len(w.detail.Episodes)
+func (w *Watching) LastEpisode() bool {
+	return w.Detail != nil && w.Index+1 >= len(w.Detail.Episodes)
 }
 
 // toNextSeason starts the next season from its first episode, if it is
 // out, and tells whether it did.
 func (w *Watching) toNextSeason() bool {
-	next, ok := w.nextSeason()
+	next, ok := w.NextSeason()
 	if !ok || !next.IsAvailable() {
 		return false
 	}
-	w.app.toast = "接着看" + next.Title
-	w.switchSeason(next, 0)
+	w.App.Toast = "接着看" + next.Title
+	w.SwitchSeason(next, 0)
 	return true
 }
 
 // hasNext tells whether something follows the episode playing.
-func (w *Watching) hasNext() bool {
-	if !w.lastEpisode() {
+func (w *Watching) HasNext() bool {
+	if !w.LastEpisode() {
 		return true
 	}
-	next, ok := w.nextSeason()
+	next, ok := w.NextSeason()
 	return ok && next.IsAvailable()
 }
 
-// sleepOptions are the sleep timer's choices, in minutes.
-var sleepOptions = []struct {
-	label string
-	mins  int
-}{{"不开启", 0}, {"播完本集", sleepEpisode}, {"15 分钟", 15}, {"30 分钟", 30}, {"60 分钟", 60}}
+// SleepOptions are the sleep timer's choices, in minutes.
+var SleepOptions = []struct {
+	Label string
+	Mins  int
+}{{"不开启", 0}, {"播完本集", SleepEpisode}, {"15 分钟", 15}, {"30 分钟", 30}, {"60 分钟", 60}}
 
-// setSleep sets the sleep timer to one of sleepOptions.
-func (app *App) setSleep(mins int) {
-	app.sleepMins, app.sleepAt = mins, time.Time{}
+// setSleep sets the sleep timer to one of SleepOptions.
+func (app *App) SetSleep(mins int) {
+	app.SleepMins, app.SleepAt = mins, time.Time{}
 	if mins > 0 {
-		app.sleepAt = time.Now().Add(time.Duration(mins) * time.Minute)
+		app.SleepAt = time.Now().Add(time.Duration(mins) * time.Minute)
 	}
 }
 
@@ -618,1224 +602,283 @@ func (app *App) setSleep(mins int) {
 // whether it did anything. It asks the clock, as a window out of sight
 // builds no views. An episode still loading waits for its player.
 func (w *Watching) sleepTick(now time.Time) bool {
-	app := w.app
-	if app.sleepAt.IsZero() || now.Before(app.sleepAt) || w.loading {
+	app := w.App
+	if app.SleepAt.IsZero() || now.Before(app.SleepAt) || w.Loading {
 		return false
 	}
-	app.setSleep(0)
-	if w.player != nil && w.player.Playing() {
-		w.togglePlay()
-		app.toast = "定时已到，已暂停"
+	app.SetSleep(0)
+	if w.Player != nil && w.Player.Playing() {
+		w.TogglePlay()
+		app.Toast = "定时已到，已暂停"
 	}
 	return true
 }
 
-func (w *Watching) toggleAutoplay() {
-	lib := w.app.lib
+func (w *Watching) ToggleAutoplay() {
+	lib := w.App.Lib
 	lib.Autoplay = !lib.Autoplay
 	lib.MarkDirty()
-	w.app.toast = ternary(lib.Autoplay, "已开启自动连播", "已关闭自动连播")
+	w.App.Toast = ternary(lib.Autoplay, "已开启自动连播", "已关闭自动连播")
 }
 
 // pictureClicks turns what the picture got this frame into what to do: a
-// click waits out clickDelay, so that a double click goes to full screen
+// click waits out ClickDelay, so that a double click goes to full screen
 // without pausing, and one slower than that puts the pause back.
-func (w *Watching) pictureClicks(clicked, double, pressed bool, now time.Time) (toggle, full bool) {
+func (w *Watching) PictureClicks(clicked, double, pressed bool, now time.Time) (toggle, full bool) {
 	if double {
 		full, w.skipClick = true, true
-		if w.clickAt.IsZero() && !w.toggledAt.IsZero() && now.Sub(w.toggledAt) < clickUndo {
+		if w.ClickAt.IsZero() && !w.toggledAt.IsZero() && now.Sub(w.toggledAt) < clickUndo {
 			toggle = true
 		}
-		w.clickAt, w.toggledAt = time.Time{}, time.Time{}
+		w.ClickAt, w.toggledAt = time.Time{}, time.Time{}
 	}
 	switch {
 	case clicked && w.skipClick:
 		w.skipClick = false
 	case clicked:
-		w.clickAt = now
+		w.ClickAt = now
 	case !pressed:
 		w.skipClick = false // the second press let go elsewhere
 	}
-	if !w.clickAt.IsZero() && now.Sub(w.clickAt) >= clickDelay {
-		w.clickAt, w.toggledAt, toggle = time.Time{}, now, true
+	if !w.ClickAt.IsZero() && now.Sub(w.ClickAt) >= ClickDelay {
+		w.ClickAt, w.toggledAt, toggle = time.Time{}, now, true
 	}
 	return toggle, full
 }
 
 func (w *Watching) onEnded() {
-	if w.player != nil {
-		w.saveProgress()
+	if w.Player != nil {
+		w.SaveProgress()
 	}
-	app := w.app
-	once := app.sleepMins == sleepEpisode
+	app := w.App
+	once := app.SleepMins == SleepEpisode
 	if once {
-		app.setSleep(0)
+		app.SetSleep(0)
 	}
-	if w.hasNext() && (once || !app.lib.Autoplay) {
-		w.halt = true
-		if p := w.player; p != nil {
+	if w.HasNext() && (once || !app.Lib.Autoplay) {
+		w.Halt = true
+		if p := w.Player; p != nil {
 			p.Pause()
-			w.syncNowPlaying()
+			w.SyncNowPlaying()
 		}
 		return
 	}
-	if w.index+1 < len(w.detail.Episodes) {
+	if w.Index+1 < len(w.Detail.Episodes) {
 		w.auto = true
-		w.play(w.index+1, 0)
+		w.Play(w.Index+1, 0)
 		return
 	}
 	if w.toNextSeason() {
 		return
 	}
-	w.ended = true
+	w.Ended = true
 }
 
-func (w *Watching) togglePlay() {
-	p := w.player
+func (w *Watching) TogglePlay() {
+	p := w.Player
 	if p == nil {
 		return
 	}
-	if w.ended || w.halt { // the watch on its end is over: start it anew
-		w.play(w.index, 0)
+	if w.Ended || w.Halt { // the watch on its end is over: start it anew
+		w.Play(w.Index, 0)
 		return
 	}
 	if p.Playing() {
 		p.Pause()
-		w.paused = true
-		w.saveProgress()
+		w.Paused = true
+		w.SaveProgress()
 	} else {
 		p.Play()
-		w.paused = false
+		w.Paused = false
 	}
-	w.syncNowPlaying()
+	w.SyncNowPlaying()
 }
 
 // toggleOnTop pins the window above others, or unpins it. A pinned window
 // is out of the way as far as it can be, so the panel folds, and opens
 // again on unpinning unless the user touched it since.
-func (w *Watching) toggleOnTop() {
-	lib := w.app.lib
+func (w *Watching) ToggleOnTop() {
+	lib := w.App.Lib
 	lib.OnTop = !lib.OnTop
 	lib.MarkDirty()
 	switch {
-	case lib.OnTop && w.panel:
-		w.panel, w.unpin = false, true
-	case !lib.OnTop && w.unpin:
-		w.panel, w.unpin = true, false
+	case lib.OnTop && w.Panel:
+		w.Panel, w.Unpin = false, true
+	case !lib.OnTop && w.Unpin:
+		w.Panel, w.Unpin = true, false
 	}
-	w.app.toast = ternary(lib.OnTop, "窗口已置顶", "已取消置顶")
-}
-
-// syncOnTop tells the window to stay on top or not: a full screen window
-// has nothing to stay above.
-func (w *Watching) syncOnTop(full bool) {
-	if want := w.app.lib.OnTop && !full; want != w.onTop {
-		w.onTop = want
-		w.app.win.SetAlwaysOnTop(want)
-	}
-}
-
-// syncNarrow takes the width of a panel folded by pinning off the window,
-// as far as the minimum size lets it, and gives that back when the panel
-// opens, the window unpins or the page closes. It waits out full screen,
-// which keeps its own size, and leaves a maximized window alone.
-func (app *App) syncNarrow() {
-	if app.miniOn || app.mini { // that one has the size until it ends
-		return
-	}
-	w := app.watch
-	want := w != nil && app.lib.OnTop && w.unpin
-	if want == app.narrowed || app.win.IsFullScreen() || want && app.win.IsMaximized() {
-		return
-	}
-	app.narrowed = want
-	// After this build: resizing makes a frame of its own.
-	app.win.Update(func() {
-		width, height := app.win.Size()
-		if want {
-			app.narrowedBy = narrowing(width)
-			app.win.SetSize(width-app.narrowedBy, height)
-		} else {
-			app.win.SetSize(width+app.narrowedBy, height)
-		}
-	})
-}
-
-// widen gives a narrowed window its width back at once, as the app quits,
-// so that the size saved for the next launch is the usual one.
-func (app *App) widen() {
-	if app.mini && !app.win.IsFullScreen() {
-		app.mini = false
-		app.win.SetSize(app.miniBackW, app.miniBackH)
-		app.win.SetMinimumSize(minWindowWidth, minWindowHeight)
-	}
-	if !app.narrowed || app.win.IsFullScreen() {
-		return
-	}
-	app.narrowed = false
-	width, height := app.win.Size()
-	app.win.SetSize(width+app.narrowedBy, height)
+	w.App.Toast = ternary(lib.OnTop, "窗口已置顶", "已取消置顶")
 }
 
 // toggleMini asks for the small window that fits the video, or for the
 // window it was.
-func (w *Watching) toggleMini() {
-	app := w.app
-	if app.win.IsFullScreen() {
-		return
-	}
-	app.miniOn = !app.miniOn
-	app.toast = ternary(app.miniOn, "已进入小窗", "已退出小窗")
+func (w *Watching) ToggleMini() {
+	app := w.App
+	app.MiniOn = !app.MiniOn
+	app.Toast = ternary(app.MiniOn, "已进入小窗", "已退出小窗")
 }
 
-// syncMini resizes the window for the small window, or back from it. Like
-// syncNarrow, it waits out full screen.
-func (app *App) syncMini() {
-	want := app.watch != nil && app.miniOn
-	if app.win.IsFullScreen() {
-		app.miniFull = app.mini
-		return
-	}
-	// Leaving full screen does not bring a window that small back, and its
-	// animation undoes a size set while it runs, so keep at it until it ended.
-	if app.miniFull {
-		app.miniFull = false
-		app.miniFixUntil = time.Now().Add(miniFixFor)
-		for _, d := range []time.Duration{miniFixFor / 2, miniFixFor} { // a paused video draws no frames
-			time.AfterFunc(d, app.win.Invalidate)
-		}
-	}
-	if want && app.mini && time.Now().Before(app.miniFixUntil) {
-		if w, h := app.win.Size(); w != app.miniW || h != app.miniH {
-			app.win.Update(func() { app.win.SetSize(app.miniW, app.miniH) })
-		}
-		return
-	}
-	if want == app.mini {
-		return
-	}
-	app.mini = want
-	vw, vh := 0, 0
-	if want && app.watch.player != nil && app.watch.player.Ready() {
-		vw, vh = app.watch.player.Size()
-	}
-	// After this build: resizing makes a frame of its own.
-	app.win.Update(func() {
-		if want {
-			app.miniBackW, app.miniBackH = app.win.Size()
-			app.win.SetMinimumSize(miniMinWidth, miniMinHeight)
-			app.miniW, app.miniH = miniSize(vw, vh)
-			app.win.SetSize(app.miniW, app.miniH)
-		} else {
-			app.win.SetSize(app.miniBackW, app.miniBackH)
-			app.win.SetMinimumSize(minWindowWidth, minWindowHeight)
-		}
-	})
-}
-
-// miniSize is the small window for a video of this size, portrait when
+// MiniSize is the small window for a video of this size, portrait when
 // the size is not known yet.
-func miniSize(vw, vh int) (int, int) {
+func MiniSize(vw, vh int) (int, int) {
 	if vw <= 0 || vh <= 0 {
 		vw, vh = 9, 16
 	}
 	if vh >= vw {
-		return max(miniLongSide*vw/vh, miniMinWidth), miniLongSide
+		return max(miniLongSide*vw/vh, MiniMinWidth), miniLongSide
 	}
-	return miniLongSide, max(miniLongSide*vh/vw, miniMinHeight)
+	return miniLongSide, max(miniLongSide*vh/vw, MiniMinHeight)
 }
 
-// drawerFits tells the episodes open over the picture here: full screen
+// DrawerFits tells the episodes open over the picture here: full screen
 // and a window with no room for the side panel have nowhere else for them.
-func drawerFits(width float32, full bool) bool { return full || !panelFits(width) }
+func DrawerFits(width float32, full bool) bool { return full || !PanelFits(width) }
 
 // toggleEpisodes opens or closes the episodes, wherever they go here.
-func (w *Watching) toggleEpisodes(width float32, full bool) {
-	if drawerFits(width, full) {
-		w.drawer = !w.drawer
+func (w *Watching) ToggleEpisodes(width float32, full bool) {
+	if DrawerFits(width, full) {
+		w.Drawer = !w.Drawer
 	} else {
-		w.panel, w.unpin = !w.panel, false
+		w.Panel, w.Unpin = !w.Panel, false
 	}
 }
 
-// narrowing is how much of the panel's width a window this wide can give up.
-func narrowing(width int) int {
-	return max(min(panelWidth, width-minWindowWidth), 0)
+// Narrowing is how much of the panel's width a window this wide can give up.
+func Narrowing(width int) int {
+	return max(min(PanelWidth, width-MinWindowWidth), 0)
 }
 
-// panelFits tells a window this wide has room for the side panel beside
+// PanelFits tells a window this wide has room for the side panel beside
 // the controls of the video.
-func panelFits(width float32) bool { return width >= minWindowWidth+panelWidth }
+func PanelFits(width float32) bool { return width >= MinWindowWidth+PanelWidth }
 
-func (w *Watching) step(d int) {
-	if w.detail == nil {
+func (w *Watching) Step(d int) {
+	if w.Detail == nil {
 		return
 	}
-	i := w.index + d
-	if i >= 0 && i < len(w.detail.Episodes) {
-		w.play(i, w.app.lib.EpisodeStart(w.ref(), w.detail.Episodes[i].ID))
+	i := w.Index + d
+	if i >= 0 && i < len(w.Detail.Episodes) {
+		w.Play(i, w.App.Lib.EpisodeStart(w.Ref(), w.Detail.Episodes[i].ID))
 	} else if d > 0 {
 		w.toNextSeason()
 	}
 }
 
-func (w *Watching) seekBy(d float64) {
-	if p := w.player; p != nil {
-		p.Seek(min(max(p.Position()+seconds(d), 0), p.Duration()))
-		w.keyAt = time.Now()
-		w.syncNowPlaying()
+func (w *Watching) SeekBy(d float64) {
+	if p := w.Player; p != nil {
+		p.Seek(min(max(p.Position()+Seconds(d), 0), p.Duration()))
+		w.KeyAt = time.Now()
+		w.SyncNowPlaying()
 	}
 }
 
 // holdRight follows the right arrow as it is held: a press seeks as it
 // comes up, a hold plays faster until it does.
-func (w *Watching) holdRight(down bool, now time.Time) {
+func (w *Watching) HoldRight(down bool, now time.Time) {
 	switch {
-	case w.rightAt.IsZero():
+	case w.RightAt.IsZero():
 	case !down:
-		if w.boost && w.player != nil {
-			w.player.SetRate(w.app.lib.Speed)
+		if w.Boost && w.Player != nil {
+			w.Player.SetRate(w.App.Lib.Speed)
 		}
 		if !w.boosted {
-			w.seekBy(5)
+			w.SeekBy(5)
 		}
-		w.rightAt, w.boost, w.boosted = time.Time{}, false, false
-	case !w.boost && now.Sub(w.rightAt) >= boostDelay && w.player != nil && w.player.Playing():
-		w.player.SetRate(boostRate)
-		w.boost, w.boosted = true, true
+		w.RightAt, w.Boost, w.boosted = time.Time{}, false, false
+	case !w.Boost && now.Sub(w.RightAt) >= boostDelay && w.Player != nil && w.Player.Playing():
+		w.Player.SetRate(BoostRate)
+		w.Boost, w.boosted = true, true
 	}
 }
 
 // resumeAt is where a retry of the episode picks up.
-func (w *Watching) resumeAt() float64 {
-	if w.player != nil {
-		return w.player.Position().Seconds()
+func (w *Watching) ResumeAt() float64 {
+	if w.Player != nil {
+		return w.Player.Position().Seconds()
 	}
-	if w.detail != nil && w.index >= 0 && w.index < len(w.detail.Episodes) {
-		return w.app.lib.EpisodeStart(w.ref(), w.detail.Episodes[w.index].ID)
+	if w.Detail != nil && w.Index >= 0 && w.Index < len(w.Detail.Episodes) {
+		return w.App.Lib.EpisodeStart(w.Ref(), w.Detail.Episodes[w.Index].ID)
 	}
 	return 0
 }
 
-func (w *Watching) setVolume(v float64) {
-	lib := w.app.lib
+func (w *Watching) SetVolume(v float64) {
+	lib := w.App.Lib
 	lib.Volume = min(max(v, 0), 1)
 	lib.MarkDirty()
-	if p := w.player; p != nil {
+	if p := w.Player; p != nil {
 		p.SetVolume(lib.Volume)
 	}
-	w.keyAt = time.Now()
+	w.KeyAt = time.Now()
 }
 
 // toggleMute silences the video, or brings back the volume it had.
-func (w *Watching) toggleMute() {
-	app := w.app
-	if app.lib.Volume > 0 {
-		app.unmute = app.lib.Volume
-		w.setVolume(0)
-		app.toast = "已静音"
+func (w *Watching) ToggleMute() {
+	app := w.App
+	if app.Lib.Volume > 0 {
+		app.unmute = app.Lib.Volume
+		w.SetVolume(0)
+		app.Toast = "已静音"
 		return
 	}
-	w.setVolume(ternary(app.unmute > 0, app.unmute, 1.0))
-	app.toast = volumeText(app.lib.Volume)
+	w.SetVolume(ternary(app.unmute > 0, app.unmute, 1.0))
+	app.Toast = volumeText(app.Lib.Volume)
 }
 
-func (w *Watching) nudgeVolume(d float64) {
-	w.setVolume(w.app.lib.Volume + d)
-	w.app.toast = volumeText(w.app.lib.Volume)
+func (w *Watching) NudgeVolume(d float64) {
+	w.SetVolume(w.App.Lib.Volume + d)
+	w.App.Toast = volumeText(w.App.Lib.Volume)
 }
 
 func volumeText(v float64) string { return fmt.Sprintf("音量 %d%%", int(v*100+0.5)) }
 
-func (w *Watching) setSpeed(next float64) {
-	app := w.app
-	app.lib.Speed = next
-	app.lib.MarkDirty()
-	if p := w.player; p != nil && !w.boost {
+func (w *Watching) SetSpeed(next float64) {
+	app := w.App
+	app.Lib.Speed = next
+	app.Lib.MarkDirty()
+	if p := w.Player; p != nil && !w.Boost {
 		p.SetRate(next)
 	}
-	w.keyAt = time.Now()
-	app.toast = fmt.Sprintf("播放速度 %gx", next)
+	w.KeyAt = time.Now()
+	app.Toast = fmt.Sprintf("播放速度 %gx", next)
 }
 
-// stepSpeed moves the speed d steps along speedSteps, stopping at its ends.
-func (w *Watching) stepSpeed(d int) { w.setSpeed(steppedSpeed(w.app.lib.Speed, d)) }
+// stepSpeed moves the speed d steps along SpeedSteps, stopping at its ends.
+func (w *Watching) StepSpeed(d int) { w.SetSpeed(SteppedSpeed(w.App.Lib.Speed, d)) }
 
-func steppedSpeed(cur float64, d int) float64 {
-	for i, s := range speedSteps {
+func SteppedSpeed(cur float64, d int) float64 {
+	for i, s := range SpeedSteps {
 		if s == cur {
-			return speedSteps[min(max(i+d, 0), len(speedSteps)-1)]
+			return SpeedSteps[min(max(i+d, 0), len(SpeedSteps)-1)]
 		}
 	}
 	return 1
 }
 
-// seconds is s seconds as a Duration.
-func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
-
-func fmtTime(s float64) string {
-	if s < 0 {
-		s = 0
-	}
-	n := int(s + 0.5)
-	if n >= 3600 {
-		return fmt.Sprintf("%d:%02d:%02d", n/3600, n/60%60, n%60)
-	}
-	return fmt.Sprintf("%02d:%02d", n/60, n%60)
-}
-
-func ago(r *Record) string {
-	d := time.Since(r.Updated)
-	switch {
-	case d < time.Minute:
-		return "刚刚看过"
-	case d < time.Hour:
-		return fmt.Sprintf("%d分钟前", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d小时前", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%d天前", int(d.Hours()/24))
-	}
-	return r.Updated.Format("2006-01-02")
-}
-
-func (app *App) watchView(c *ui.Context) {
-	w := app.watch
-	// A click leaves the focus alone, or the button clicked would take Space
-	// and the sliders the arrows from the shortcuts below. Tab still reaches them.
-	c.Root().Background(app.pal.bg).KeepFocus()
-	full := app.win.IsFullScreen()
-	w.syncOnTop(full)
-
-	// Keyboard.
-	c.OnShortcut(0, ui.KeySpace, w.togglePlay)
-	c.OnShortcut(0, ui.KeyLeft, func() { w.seekBy(-5) })
-	c.OnShortcut(0, ui.KeyRight, func() {
-		if w.rightAt.IsZero() {
-			w.rightAt = time.Now()
-		}
-	})
-	w.holdRight(c.KeyDown(ui.KeyRight), time.Now())
-	if !w.rightAt.IsZero() && !w.boost {
-		c.After(50 * time.Millisecond) // to notice the hold
-	}
-	c.OnShortcut(0, ui.KeyUp, func() { w.step(-1) })
-	c.OnShortcut(0, ui.KeyDown, func() { w.step(1) })
-	c.OnShortcut(0, ui.KeyF, app.win.ToggleFullScreen)
-	width, _ := c.Size()
-	if !drawerFits(width, full) || w.detail == nil {
-		w.drawer = false
-	}
-	c.OnShortcut(0, ui.KeyE, func() { w.toggleEpisodes(width, full) })
-	c.OnShortcut(0, ui.KeyA, w.toggleAutoplay)
-	if w.has(source.CapDanmaku) {
-		c.OnShortcut(0, ui.KeyD, w.toggleDanmaku)
-	}
-	c.OnShortcut(0, ui.KeyV, w.toggleMini)
-	c.OnShortcut(0, ui.KeyM, w.toggleMute)
-	c.OnShortcut(0, ui.KeyMinus, func() { w.nudgeVolume(-0.1) })
-	c.OnShortcut(0, ui.KeyEqual, func() { w.nudgeVolume(0.1) })
-	c.OnShortcut(0, ui.KeyBracketLeft, func() { w.stepSpeed(-1) })
-	c.OnShortcut(0, ui.KeyBracketRight, func() { w.stepSpeed(1) })
-	c.OnShortcut(0, ui.KeyT, func() {
-		if !app.win.IsFullScreen() {
-			w.toggleOnTop()
-		}
-	})
-	c.OnShortcut(0, ui.KeyEscape, func() {
-		if w.drawer {
-			w.drawer = false
-			return
-		}
-		if app.win.IsFullScreen() {
-			app.win.SetFullScreen(false)
-			return
-		}
-		app.closeWatch()
-	})
-
-	if news := w.news(); news != "" && news != w.told {
-		w.told = news
-		c.Announce(news)
-	}
-
-	playing := w.player != nil && w.player.Playing()
-	if w.player != nil {
-		if playing {
-			c.After(250 * time.Millisecond) // the clock and the progress bar
-		}
-		if !w.dragging {
-			w.saveProgress()
-		}
-	}
-
-	w.syncDanmaku()
-
-	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		app.stage(c, w, playing, full)
-		if w.panel && !full && app.panelRoom(c) {
-			app.sidePanel(c, w)
-		}
-	})
-}
+// Seconds is s Seconds as a Duration.
+func Seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
 
 // news is what screen readers are told as it changes: the episode that
 // started, and the end. Failures are read as the alerts they show as.
-func (w *Watching) news() string {
+func (w *Watching) News() string {
 	switch {
-	case w.detail == nil || w.loading || w.err != "":
+	case w.Detail == nil || w.Loading || w.Err != "":
 		return ""
-	case w.ended:
-		return w.show.Title + " 已看完"
-	case w.halt:
-		return fmt.Sprintf("第%d集播完", w.index+1)
+	case w.Ended:
+		return w.Show.Title + " 已看完"
+	case w.Halt:
+		return fmt.Sprintf("第%d集播完", w.Index+1)
 	}
-	return fmt.Sprintf("正在播放 %s 第%d集", w.show.Title, w.index+1)
-}
-
-// playPause draws the icon of a button that plays and pauses: the icon
-// going shrinks and fades as the one coming grows in, with a little spring.
-func playPause(c *ui.Context, b ui.Element, playing bool, size float32) {
-	v := b.AnimateTo("playing", boolf(playing), ui.Animation{Spring: ui.SpringOptions{Duration: 340 * time.Millisecond, Bounce: 0.3}})
-	ui.Box(c).Size(size, size).Children(func() {
-		for _, icon := range []struct {
-			name  string
-			shown float32
-		}{{"play.fill", 1 - v}, {"pause.fill", v}} {
-			if icon.shown <= 0.01 {
-				continue
-			}
-			s := 0.4 + 0.6*icon.shown
-			sfIcon(c, icon.name).Size(size).Color(white).Absolute().Top(0).Left(0).Scale(s, s).Opacity(min(icon.shown, 1))
-		}
-	})
-}
-
-// panelRoom tells the window has room for the side panel now.
-func (app *App) panelRoom(c *ui.Context) bool {
-	width, _ := c.Size()
-	return panelFits(width)
+	return fmt.Sprintf("正在播放 %s 第%d集", w.Show.Title, w.Index+1)
 }
 
 // pointerStill is how long the pointer has rested on the stage, which only
 // counts while the video plays and the user is not seeking. The frames that
 // let the controls go are those playing asks for anyway.
-func (w *Watching) pointerStill(stage ui.Element, playing bool) time.Duration {
-	x, y, _ := stage.PointerPosition()
+func (w *Watching) PointerStill(x, y float32, playing bool) time.Duration {
 	now := time.Now()
-	if x != w.pointerX || y != w.pointerY || !playing || w.dragging {
+	if x != w.pointerX || y != w.pointerY || !playing || w.Dragging {
 		w.pointerX, w.pointerY, w.pointerAt = x, y, now
 	}
 	return now.Sub(w.pointerAt)
-}
-
-// chromeShown tells whether the title bar and the controls show. A paused
-// video keeps them. Otherwise the pointer brings them by moving, over the
-// video in a window; in full screen it is always over the video.
-func chromeShown(playing, hover, full bool, still time.Duration) bool {
-	switch {
-	case !playing:
-		return true
-	case full:
-		return still < chromeLinger
-	}
-	return hover && still < chromeLinger
-}
-
-// stage is the video with its title bar and controls.
-func (app *App) stage(c *ui.Context, w *Watching, playing, full bool) {
-	bar := c.TitleBar()
-	stage := ui.Column(c).Grow(1).Background(black)
-	hover := stage.Hovered()
-	still := w.pointerStill(stage, playing)
-	// The keyboard's focus on a control keeps the controls in view.
-	shown := chromeShown(playing, hover, full, still) || time.Since(w.keyAt) < keyLinger || w.drawer || w.dmOpen || w.speedOpen || w.volOpen || stage.FocusWithin()
-	if !shown {
-		stage.Cursor(ui.CursorNone)
-	}
-	show := stage.AnimateTo("chrome", boolf(shown), ui.Smooth)
-	stage.Children(func() {
-		// The picture, under everything.
-		// Under the title bar and the controls, which are in the flow: absolute
-		// elements otherwise paint over those and take their clicks.
-		video := ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().ZIndex(-1)
-		video.Label("画面").ContextMenu(app.playerMenu(w, full))
-		toggle, toFull := w.pictureClicks(video.Clicked(), video.DoubleClicked(), video.Pressed(), time.Now())
-		if toggle {
-			w.togglePlay()
-		}
-		if toFull {
-			app.win.ToggleFullScreen()
-		}
-		if !w.clickAt.IsZero() {
-			c.After(clickDelay)
-		}
-		video.Children(func() {
-			// Built before its first picture too: only then does it start.
-			if w.player != nil {
-				ui.Video(c, w.player).Fill().Fit(ui.Contain)
-			}
-			app.danmakuLayer(c, w)
-			if w.player == nil || !w.player.Ready() {
-				if bmp := app.posters.Get(w.show.Image); bmp != nil {
-					ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Opacity(0.3).Blur(40)
-				}
-			}
-			ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Gap(14).PassThrough().Children(func() {
-				app.stageMessage(c, w)
-			})
-			if w.boost {
-				ui.Box(c).Absolute().Top(64).Left(0).Right(0).Center().PassThrough().Children(func() {
-					ui.Row(c).Gap(5).Padding(6, 12).Radius(999).Background(ui.RGBA(0, 0, 0, 0.55)).Children(func() {
-						sfIcon(c, "forward.fill").Size(12).Color(white)
-						ui.Text(c, fmt.Sprintf("%gx 快进中", float64(boostRate))).FontSize(12.5).FontWeight(600).TextColor(white)
-					})
-				})
-			}
-		})
-
-		// Title bar.
-		ui.Row(c).Padding(max(bar.Height, 28)/2-2, bar.Right+14, 34, bar.Left+14).Gap(8).DragWindow().
-			Gradient(ui.RGBA(0, 0, 0, 0.7), ui.Transparent, 180).Opacity(max(show, boolf(!playing))).
-			Children(func() {
-				if symbolButton(c, "chevron.left", 15, white, "返回 (Esc)").KeyShortcuts(0, ui.KeyEscape).Clicked() {
-					app.closeWatch()
-				}
-				ui.Column(c).Grow(1).Gap(1).Children(func() {
-					ui.Text(c, w.show.Title).FontSize(15).Bold().TextColor(white).SingleLine().Role(ui.RoleHeading).Level(1)
-					if w.detail != nil {
-						ui.Text(c, fmt.Sprintf("第%d集 · 共%d集", w.index+1, len(w.detail.Episodes))).FontSize(11.5).TextColor(white.Alpha(0.65))
-					}
-				})
-				if !full && app.panelRoom(c) && symbolButton(c, "sidebar.right", 15, white, "选集面板").Expanded(w.panel).Clicked() {
-					w.panel, w.unpin = !w.panel, false
-				}
-			})
-
-		// Painted above the picture, which is under the flow: it must let the
-		// pointer through or the picture gets no clicks.
-		ui.Spacer(c).PassThrough()
-
-		// Controls.
-		// What does not fit a narrow stage goes first, for keys and the menu.
-		width, _ := c.Size()
-		stageWidth := width
-		if w.panel && !full && app.panelRoom(c) {
-			stageWidth -= panelWidth
-		}
-		tiny := stageWidth < 460
-		ui.Column(c).Padding(40, 18, 12).Gap(4).Gradient(ui.Transparent, ui.RGBA(0, 0, 0, 0.78), 180).Opacity(show).Children(func() {
-			app.progress(c, w)
-			ui.Row(c).Gap(2).Children(func() {
-				hasPrev := w.detail != nil && w.index > 0
-				next, hasNextSeason := w.nextSeason()
-				hasNextSeason = hasNextSeason && next.IsAvailable() && w.lastEpisode()
-				hasNext := w.detail != nil && w.index+1 < len(w.detail.Episodes) || hasNextSeason
-				if !tiny && symbolButton(c, "backward.end.fill", 15, white, "上一集 (↑)").KeyShortcuts(0, ui.KeyUp).Disabled(!hasPrev).Clicked() {
-					w.step(-1)
-				}
-				pb := roundButton(c, 22, white, ternary(playing, "暂停 (空格)", "播放 (空格)")).KeyShortcuts(0, ui.KeySpace)
-				pb.Children(func() { playPause(c, pb, playing, 22) })
-				if pb.Clicked() {
-					w.togglePlay()
-				}
-				if !tiny && symbolButton(c, "forward.end.fill", 15, white, ternary(hasNextSeason, "下一季 (↓)", "下一集 (↓)")).KeyShortcuts(0, ui.KeyDown).Disabled(!hasNext).Clicked() {
-					w.step(1)
-				}
-				if pl := w.player; pl != nil {
-					ui.Row(c).Gap(4).Margin(0, 0, 0, 8).Children(func() {
-						ui.Text(c, fmtTime(w.seek)).FontSize(12.5).FontWeight(500).TextColor(white).NoWrap()
-						ui.Text(c, "/ "+fmtTime(pl.Duration().Seconds())).FontSize(12.5).TextColor(white.Alpha(0.55)).NoWrap()
-					})
-				}
-				ui.Spacer(c)
-				app.speedButton(c, w)
-				if !tiny {
-					app.volume(c, w)
-				} else {
-					w.volOpen = false
-				}
-				if w.has(source.CapDanmaku) {
-					if symbolButton(c, "text.bubble.fill", 14, ternary(app.lib.Danmaku, app.pal.accent, white), "弹幕 (D)").KeyShortcuts(0, ui.KeyD).Role(ui.RoleToggleButton).Checked(app.lib.Danmaku).Clicked() {
-						w.toggleDanmaku()
-					}
-					if app.lib.Danmaku && !tiny {
-						sb := symbolButton(c.Key("dm-settings"), "slider.horizontal.3", 14, ternary(w.dmOpen, app.pal.accent, white), "弹幕设置").Expanded(w.dmOpen)
-						if sb.Clicked() {
-							w.dmOpen = !w.dmOpen
-						}
-						app.danmakuSettings(c, w, sb)
-					} else {
-						w.dmOpen = false
-					}
-				} else {
-					w.dmOpen = false
-				}
-				if drawerFits(width, full) && w.detail != nil && symbolButton(c, "list.number", 14, ternary(w.drawer, app.pal.accent, white), "选集 (E)").KeyShortcuts(0, ui.KeyE).Clicked() {
-					w.toggleEpisodes(width, full)
-				}
-				symbolButton(c.Key("more"), "ellipsis", 14, white, "更多").Menu(app.playerMenu(w, full))
-				fs := ternary(full, "arrow.down.right.and.arrow.up.left", "arrow.up.left.and.arrow.down.right")
-				if !full && !tiny && symbolButton(c, "pin.fill", 14, ternary(app.lib.OnTop, app.pal.accent, white), "窗口置顶 (T)").KeyShortcuts(0, ui.KeyT).Role(ui.RoleToggleButton).Checked(app.lib.OnTop).Clicked() {
-					w.toggleOnTop()
-				}
-				if symbolButton(c, fs, 14, white, ternary(full, "退出全屏 (F)", "全屏 (F)")).KeyShortcuts(0, ui.KeyF).Clicked() {
-					app.win.ToggleFullScreen()
-				}
-			})
-		})
-
-		if w.drawer {
-			app.drawer(c, w, width)
-		}
-	})
-}
-
-// drawer shows the episodes over the picture. A click beside it closes it,
-// and does not reach the picture.
-func (app *App) drawer(c *ui.Context, w *Watching, width float32) {
-	p := app.pal
-	if ui.Box(c.Key("drawer-scrim")).Absolute().Top(0).Left(0).Right(0).Bottom(0).Label("关闭选集").Clicked() {
-		w.drawer = false
-	}
-	ui.Column(c.Key("drawer")).Absolute().Top(0).Right(0).Bottom(0).Width(min(panelWidth, width-24)).
-		Background(p.bg).BorderWidth(0, 0, 0, 1).BorderColor(p.hairline).Children(func() {
-		ui.Scroll(c.Key("drawer-list")).Grow(1).Padding(max(c.TitleBar().Height, 28)+12, 20, 28).Gap(24).Children(func() {
-			app.seasonRow(c, w)
-			app.episodes(c, w)
-		})
-	})
-}
-
-// playerMenu fills the menu of the controls and of the picture.
-func (app *App) playerMenu(w *Watching, full bool) func(m *ui.Menu) {
-	return func(m *ui.Menu) {
-		if m.Item("自动连播").Checked(app.lib.Autoplay).Trailing("A").Chosen() {
-			w.toggleAutoplay()
-		}
-		if w.has(source.CapDanmaku) {
-			if m.Item("弹幕").Checked(app.lib.Danmaku).Trailing("D").Chosen() {
-				w.toggleDanmaku()
-			}
-		}
-		sleep := m.Submenu("定时停止", func(m *ui.Menu) {
-			for _, o := range sleepOptions {
-				if m.Item(o.label).Radio(app.sleepMins == o.mins).Chosen() {
-					app.setSleep(o.mins)
-					app.toast = ternary(o.mins == 0, "已关闭定时停止", "定时停止："+o.label)
-				}
-			}
-		})
-		if app.sleepMins == sleepEpisode {
-			sleep.Trailing("本集")
-		} else if !app.sleepAt.IsZero() {
-			sleep.Trailing(fmt.Sprintf("%d 分钟", int(time.Until(app.sleepAt).Minutes())+1))
-		}
-		if full {
-			return
-		}
-		m.Separator()
-		if m.Item("小窗模式").Checked(app.miniOn).Trailing("V").Chosen() {
-			w.toggleMini()
-		}
-		if m.Item("窗口置顶").Checked(app.lib.OnTop).Trailing("T").Chosen() {
-			w.toggleOnTop()
-		}
-	}
-}
-
-// stageMessage is what shows over the picture: loading, errors, the end.
-func (app *App) stageMessage(c *ui.Context, w *Watching) {
-	dim := white.Alpha(0.7)
-	switch {
-	case w.detailErr != "":
-		sfIcon(c, "exclamationmark.triangle").Size(30).Color(dim)
-		ui.Text(c, w.detailErr).FontSize(15).TextColor(white).Role(ui.RoleAlert)
-		app.secondary(c, nil, "返回").OnClick(app.closeWatch)
-	case w.err != "":
-		sfIcon(c, "exclamationmark.triangle").Size(30).Color(dim)
-		ui.Text(c, w.err).FontSize(15).TextColor(white).Role(ui.RoleAlert)
-		ui.Row(c).Gap(10).Margin(6, 0, 0).Children(func() {
-			label := "重试"
-			wait := w.retryWait()
-			if wait > 0 {
-				label = fmt.Sprintf("重试 (%ds)", wait)
-			}
-			app.secondary(c, iconRefresh, label).Disabled(wait > 0).OnClick(func() {
-				if w.retryWait() == 0 {
-					w.play(w.index, w.resumeAt())
-				}
-			})
-			if w.detail != nil && w.index+1 < len(w.detail.Episodes) {
-				app.primary(c, nil, "下一集").OnClick(func() { w.step(1) })
-			} else if next, ok := w.nextSeason(); ok && next.IsAvailable() {
-				app.primary(c, nil, "下一季").OnClick(func() { w.step(1) })
-			}
-		})
-	case w.loading:
-		ui.Spinner(c).Size(30, 30)
-		label := "正在加载…"
-		if w.detail != nil {
-			label = fmt.Sprintf("正在加载第%d集…", w.index+1)
-		}
-		ui.Text(c, label).FontSize(13).TextColor(dim)
-	case w.halt:
-		ui.Text(c, fmt.Sprintf("第%d集播完", w.index+1)).FontSize(24).Bold().TextColor(white)
-		ui.Row(c).Gap(10).Margin(8, 0, 0).Children(func() {
-			app.secondary(c, iconRefresh, "重播").OnClick(func() { w.play(w.index, 0) })
-			app.primary(c, nil, ternary(w.lastEpisode(), "下一季", "下一集")).OnClick(func() { w.step(1) })
-		})
-	case w.ended:
-		next, more := w.nextSeason()
-		if !more {
-			ui.Text(c, "全剧终").FontSize(24).Bold().TextColor(white)
-			ui.Text(c, "已看完全部剧集").FontSize(13).TextColor(dim)
-			app.primary(c, iconRefresh, "从头再看").Margin(8, 0, 0).OnClick(func() { w.play(0, 0) })
-			return
-		}
-		cur := w.seasons[seasonOf(w.seasons, w.show.ID)]
-		ui.Text(c, cur.Title+"完").FontSize(24).Bold().TextColor(white)
-		ui.Text(c, seasonLine(next)).FontSize(13).TextColor(dim)
-		nextRef := source.Ref{Source: w.ref().Source, ID: next.ID}
-		ui.Row(c).Gap(10).Margin(8, 0, 0).Children(func() {
-			app.secondary(c, iconRefresh, "从头再看").OnClick(func() { w.play(0, 0) })
-			switch {
-			case next.IsAvailable():
-				app.primary(c, nil, "看"+next.Title).OnClick(func() { w.switchSeason(next, -1) })
-			case app.lib.Following(nextRef):
-				app.secondary(c, nil, "已追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(next)) })
-			default:
-				app.primary(c, iconHeart, "追"+next.Title).OnClick(func() { app.toggleFollow(nextRef.Source, seasonCard(next)) })
-			}
-		})
-	case w.paused && w.player != nil:
-		ui.Box(c).Size(76, 76).Radius(999).Background(ui.RGBA(0, 0, 0, 0.45)).Center().
-			Border(1, white.Alpha(0.15)).Children(func() {
-			sfIcon(c, "play.fill").Size(30).Color(white).Margin(0, 0, 0, 4)
-		})
-	}
-}
-
-func (app *App) speedButton(c *ui.Context, w *Watching) {
-	speed := app.lib.Speed
-	b := ui.ButtonBase(c.Key("speed")).Height(30).MinWidth(30).PaddingX(8).Radius(999).Center().Label("播放速度").
-		Value(fmt.Sprintf("%g倍", speed)).Expanded(w.speedOpen)
-	tooltip(c, b, "播放速度 ([ / ])")
-	pressable(b, ui.Transparent, white.Alpha(0.14), 0.92)
-	b.Children(func() {
-		ui.Text(c, fmt.Sprintf("%gx", speed)).FontSize(12.5).Bold().TextColor(ternary(w.speedOpen, app.pal.accent, white))
-	})
-	if b.Clicked() {
-		w.speedOpen = !w.speedOpen
-	}
-	app.speedPicker(c, w, b)
-}
-
-// speedPicker is the list of speeds that opens from anchor, the fastest on
-// top; choosing one closes it.
-func (app *App) speedPicker(c *ui.Context, w *Watching, anchor ui.Element) {
-	ui.PopoverBase(c, anchor, &w.speedOpen, func(panel ui.Element) {
-		popPanel(panel, anchor).Width(96).Padding(6).Gap(2).Radius(12).Role(ui.RoleListBox).Label("播放速度")
-		panel.Children(func() {
-			for i := len(speedSteps) - 1; i >= 0; i-- {
-				s := speedSteps[i]
-				on := s == app.lib.Speed
-				o := ui.ButtonBase(c.Key(i)).Height(30).Radius(8).Center().Role(ui.RoleOption).
-					Label(fmt.Sprintf("%g倍", s)).Checked(on)
-				pressable(o, ternary(on, white.Alpha(0.1), ui.Transparent), white.Alpha(0.14), 0.96)
-				o.Children(func() {
-					ui.Text(c, fmt.Sprintf("%gx", s)).FontSize(13).FontWeight(ternary(on, 700, 500)).
-						TextColor(ternary(on, app.pal.accent, white))
-				})
-				if o.Clicked() {
-					w.setSpeed(s)
-					w.speedOpen = false
-				}
-			}
-		})
-	})
-}
-
-// volume is the speaker button, which opens a panel of the volume: how
-// loud it is, a slider and a button to mute.
-func (app *App) volume(c *ui.Context, w *Watching) {
-	vol := app.lib.Volume
-	b := symbolButton(c.Key("volume"), volumeSymbol(vol), 14, ternary(w.volOpen, app.pal.accent, white), "音量 (M 静音)").
-		Value(fmt.Sprintf("%d%%", int(vol*100+0.5))).Expanded(w.volOpen)
-	if b.Clicked() {
-		w.volOpen = !w.volOpen
-	}
-	ui.PopoverBase(c, b, &w.volOpen, func(panel ui.Element) {
-		popPanel(panel, b).Width(52).Padding(12, 0, 8).Gap(8).Radius(12).AlignItems(ui.Center).Label("音量")
-		panel.Children(func() {
-			ui.Text(c, fmt.Sprintf("%d", int(app.lib.Volume*100+0.5))).FontSize(12.5).FontWeight(600).TextColor(white)
-			s := ui.SliderBase(c.Key("slider"), &app.lib.Volume, 0, 1).Vertical().Width(24).Height(110).PaddingY(7).
-				Label("音量").Value(fmt.Sprintf("%d%%", int(app.lib.Volume*100+0.5)))
-			if s.Changed() {
-				app.lib.MarkDirty()
-				if p := w.player; p != nil {
-					p.SetVolume(app.lib.Volume)
-				}
-			}
-			hot := s.AnimateTo("hot", boolf(s.Hovered() || s.Dragging()), ui.Smooth)
-			at := float32(app.lib.Volume)
-			s.Draw(func(pt *ui.Painter, r ui.Rect) {
-				const knob = 14
-				x := r.X + r.W/2
-				y0, h := r.Y+knob/2, r.H-knob
-				pt.Fill(ui.Rect{X: x - 2, Y: r.Y, W: 4, H: r.H}, white.Alpha(0.18), 2)
-				fill := knob/2 + h*at
-				pt.Fill(ui.Rect{X: x - 2, Y: r.Y + r.H - fill, W: 4, H: fill}, white.Alpha(0.85), 2)
-				k := knob + 2*hot
-				ky := y0 + h*(1-at)
-				pt.Fill(ui.Rect{X: x - k/2, Y: ky - k/2, W: k, H: k}, white, k/2)
-			})
-			if symbolButton(c.Key("mute"), volumeSymbol(app.lib.Volume), 13, white.Alpha(0.85), ternary(app.lib.Volume > 0, "静音", "取消静音")).Clicked() {
-				w.toggleMute()
-			}
-		})
-	})
-}
-
-// volumeSymbol is the speaker that shows how loud vol is.
-func volumeSymbol(vol float64) string {
-	switch {
-	case vol == 0:
-		return "speaker.slash.fill"
-	case vol < 0.5:
-		return "speaker.wave.1.fill"
-	}
-	return "speaker.wave.2.fill"
-}
-
-// popPanel gives a panel of the player's controls their look and centers
-// it a little above anchor, the button that opens it.
-func popPanel(panel, anchor ui.Element) ui.Element {
-	return panel.AttachTo(anchor, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 8, 0).
-		Background(ui.RGBA(30, 30, 32, 0.97)).Border(1, white.Alpha(0.08)).Shadow(0, 8, 28, 0, ui.RGBA(0, 0, 0, 0.4))
-}
-
-// spokenTime is a time as screen readers should say it.
-func spokenTime(s float64) string {
-	n := int(max(s, 0) + 0.5)
-	if n >= 3600 {
-		return fmt.Sprintf("%d小时%d分%d秒", n/3600, n/60%60, n%60)
-	}
-	return fmt.Sprintf("%d分%d秒", n/60, n%60)
-}
-
-// progress is the seek bar.
-func (app *App) progress(c *ui.Context, w *Watching) {
-	pl := w.player
-	dur := 1.0
-	if pl != nil {
-		dur = max(pl.Duration().Seconds(), 1)
-		if !w.dragging {
-			w.seek = pl.Position().Seconds()
-		}
-	} else {
-		w.seek = 0
-	}
-	box := ui.Box(c)
-	var s ui.Element
-	box.Children(func() {
-		s = ui.SliderBase(c.Key("seek"), &w.seek, 0, dur).Height(20).Label("进度").Disabled(pl == nil).Bind(&w.seekBar).
-			Value(spokenTime(w.seek) + "，共" + spokenTime(dur))
-		// The time under the pointer, over the bar.
-		x, _, over := s.PointerPosition()
-		if width := w.seekBar.Bounds(c).W; pl != nil && width > 0 && (over || s.Dragging()) {
-			const tip = 56
-			x = min(max(x, 0), width)
-			ui.Box(c).Width(tip).Padding(3, 0).Radius(5).Center().Background(ui.RGBA(0, 0, 0, 0.72)).
-				Absolute().Bottom(24).Left(min(max(x-tip/2, 0), width-tip)).PassThrough().Children(func() {
-				ui.Text(c, fmtTime(float64(x/width)*dur)).FontSize(11.5).FontWeight(600).TextColor(white).NoWrap()
-			})
-		}
-	})
-	if s.Changed() && pl != nil {
-		pl.Seek(seconds(w.seek))
-	}
-	if w.dragging && !s.Dragging() {
-		w.syncNowPlaying()
-	}
-	w.dragging = s.Dragging()
-	hot := s.AnimateTo("hot", boolf(s.Hovered() || w.dragging), ui.Smooth)
-	at := float32(w.seek / dur)
-	accent := app.pal.accent
-	s.Draw(func(pt *ui.Painter, r ui.Rect) {
-		h := 3 + 2*hot
-		y := r.Y + (r.H-h)/2
-		pt.Fill(ui.Rect{X: r.X, Y: y, W: r.W, H: h}, white.Alpha(0.22), h/2)
-		pt.Fill(ui.Rect{X: r.X, Y: y, W: r.W * at, H: h}, accent, h/2)
-		if k := 13 * hot; k > 0.5 {
-			pt.Fill(ui.Rect{X: r.X + r.W*at - k/2, Y: r.Y + (r.H-k)/2, W: k, H: k}, white, k/2)
-		}
-	})
-}
-
-// sidePanel shows the drama, its episodes and related dramas.
-func (app *App) sidePanel(c *ui.Context, w *Watching) {
-	p := app.pal
-	ui.Column(c).Width(panelWidth).Shrink(0).Background(p.bg).BorderWidth(0, 0, 0, 1).BorderColor(p.hairline).Children(func() {
-		ui.Box(c).Height(max(c.TitleBar().Height, 28) + 12).DragWindow()
-		ui.Scroll(c.Key("side")).TrackScroll(&w.side).Grow(1).Padding(0, 20, 28).Gap(24).Children(func() {
-			app.about(c, w)
-			app.seasonRow(c, w)
-			if w.detail != nil {
-				app.episodes(c, w)
-			} else if w.detailErr == "" {
-				sh := app.shimmer(c)
-				ui.Grid(c).Columns(6).Gap(8).Role(ui.RoleStatus).Label("加载中").Children(func() {
-					for i := range 24 {
-						sh.bone(c.Key(i), 9).Height(36)
-					}
-				})
-			}
-			app.related(c, w)
-		})
-	})
-}
-
-func (app *App) about(c *ui.Context, w *Watching) {
-	p := app.pal
-	ref := w.ref()
-	ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
-		app.poster(c, w.show.Image, w.show.Title, 10).Width(96).Shrink(0)
-		ui.Column(c).Grow(1).Gap(7).Children(func() {
-			ui.Text(c, w.show.Title).FontSize(17).Bold().MaxLines(3).TextColor(p.text).Role(ui.RoleHeading).Level(2)
-			var meta []string
-			if w.detail != nil {
-				for _, m := range w.detail.Meta {
-					if m.Label != "" {
-						meta = append(meta, m.Label+" "+m.Value)
-					} else if m.Value != "" {
-						meta = append(meta, m.Value)
-					}
-				}
-				if len(meta) == 0 && len(w.detail.Episodes) > 0 {
-					meta = append(meta, fmt.Sprintf("全%d集", len(w.detail.Episodes)))
-				}
-			}
-			if len(meta) > 0 {
-				ui.Text(c, strings.Join(meta, " · ")).FontSize(12).TextColor(p.muted)
-			}
-			if w.detail != nil {
-				ui.Row(c).Gap(5).Wrap().Children(func() {
-					shown := 0
-					for _, tag := range w.detail.Tags {
-						if shown >= 4 || strings.HasPrefix(tag, "全") && strings.HasSuffix(tag, "集") {
-							continue
-						}
-						shown++
-						ui.Text(c, tag).FontSize(11).TextColor(p.muted).Padding(2, 8).Radius(5).Background(p.surface)
-					}
-				})
-			}
-			following := app.lib.Following(ref)
-			var b ui.Element
-			if following {
-				b = app.secondary(c, nil, "已追剧")
-			} else {
-				b = app.primary(c, iconHeart, "追剧")
-			}
-			b.Margin(4, 0, 0).AlignSelf(ui.Start)
-			if b.Clicked() {
-				app.toggleFollow(ref.Source, w.show)
-			}
-		})
-	})
-	desc := w.show.Subtitle
-	if w.detail != nil && w.detail.Description != "" {
-		desc = w.detail.Description
-	}
-	if desc != "" {
-		// A button reads no text inside it: its Description reads the synopsis.
-		d := ui.ButtonBase(c.Key("desc")).AlignItems(ui.Start).Justify(ui.Start).Shrink(1).Cursor(ui.CursorPointer).
-			Label("简介").Description(desc).Expanded(w.descOpen)
-		d.Children(func() {
-			t := ui.Text(c, desc).FontSize(12.5).LineHeight(1.55).TextColor(p.muted).Grow(1).Shrink(1)
-			if !w.descOpen {
-				t.MaxLines(3)
-			}
-		})
-		if d.Clicked() {
-			w.descOpen = !w.descOpen
-		}
-	}
-}
-
-func (app *App) episodes(c *ui.Context, w *Watching) {
-	p := app.pal
-	ref := w.ref()
-	eps := w.detail.Episodes
-	ui.Column(c).Gap(12).Children(func() {
-		ui.Row(c).Children(func() {
-			ui.Text(c, "选集").FontSize(15).Bold().TextColor(p.text).Grow(1).Role(ui.RoleHeading).Level(2)
-			ui.Text(c, fmt.Sprintf("第%d集 / 共%d集", w.index+1, len(eps))).FontSize(12).TextColor(p.muted)
-		})
-		ranges := (len(eps) + episodesPerRange - 1) / episodesPerRange
-		if ranges > 1 {
-			ui.ScrollHorizontal(c.Key("ranges")).Children(func() {
-				choices(c, "集数范围").Gap(6).Children(func() {
-					for r := range ranges {
-						from, to := r*episodesPerRange+1, min((r+1)*episodesPerRange, len(eps))
-						chip := app.chip(c.Key(r), fmt.Sprintf("%d-%d", from, to), r == w.epRange).Shrink(0)
-						if radio(chip, r == w.epRange).Label(fmt.Sprintf("第%d到%d集", from, to)).Clicked() {
-							w.epRange = r
-						}
-					}
-				})
-			})
-		}
-		playing := w.player != nil && w.player.Playing()
-		from := w.epRange * episodesPerRange
-		ui.Grid(c.Key(w.epRange)).Columns(6).Gap(8).Children(func() {
-			for i := from; i < min(from+episodesPerRange, len(eps)); i++ {
-				ep := eps[i]
-				current := i == w.index
-				locked := ep.Lock != source.LockNone
-				done := app.lib.Watched(ref, ep.ID)
-				part := 0.0
-				if e := app.lib.Episode(ref, ep.ID); e != nil && !done && !current {
-					part = e.Fraction()
-				}
-				note := ""
-				switch {
-				case locked:
-					note = lockMessage(ep.Lock)
-				case done:
-					note = "已看完"
-				case part > 0:
-					note = fmt.Sprintf("看到%d%%", int(part*100))
-				}
-				cell := ui.ButtonBase(c.Key(ep.ID)).Height(36).Radius(9).Center().Clip().Label(fmt.Sprintf("第%d集", i+1)).Description(note)
-				if current {
-					cell.Current(ui.CurrentItem)
-				}
-				rest := ternary(current, p.accent, p.surface)
-				pressable(cell, rest, ternary(current, rest, p.surface.Mix(p.text, 0.08)), 0.92)
-				cell.Children(func() {
-					if current && playing {
-						sfIcon(c, "waveform").Size(13).Color(white)
-						return
-					}
-					n := ui.Text(c, itoa(i+1)).FontSize(13).FontWeight(600)
-					switch {
-					case current:
-						n.TextColor(white)
-					case locked:
-						n.TextColor(p.faint)
-					case done:
-						n.TextColor(p.muted)
-					default:
-						n.TextColor(p.text)
-					}
-					switch {
-					case locked:
-						sfIcon(c, "lock.fill").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
-					case done && !current:
-						sfIcon(c, "checkmark").Size(7).Color(p.faint).Absolute().Top(4).Right(5)
-					case part > 0.02:
-						// How far it got, along the cell's bottom.
-						ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(2.5).Draw(func(pt *ui.Painter, r ui.Rect) {
-							pt.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * float32(part), H: r.H}, p.accent, 0)
-						})
-					}
-				})
-				if cell.Clicked() && !current {
-					w.drawer = false
-					w.play(i, app.lib.EpisodeStart(ref, ep.ID))
-				}
-			}
-		})
-	})
-}
-
-func (app *App) related(c *ui.Context, w *Watching) {
-	p := app.pal
-	if len(w.recs) == 0 {
-		return
-	}
-	ui.Column(c).Gap(4).Children(func() {
-		ui.Text(c, "相关推荐").FontSize(15).Bold().TextColor(p.text).Margin(0, 0, 8).Role(ui.RoleHeading).Level(2)
-		for i, s := range w.recs {
-			if i >= 12 {
-				break
-			}
-			badge := cardBadge(s)
-			row := ui.ButtonBase(c.Key("rec-" + s.ID)).Gap(12).Padding(6).Radius(10).AlignItems(ui.Start).Label(s.Title).
-				Description(joinNonEmpty(badge, s.Subtitle))
-			pressable(row, ui.Transparent, p.hover, 0.98)
-			row.Children(func() {
-				app.poster(c, s.Image, s.Title, 7).Width(56).Shrink(0)
-				ui.Column(c).Grow(1).Gap(4).Padding(2, 0).Children(func() {
-					ui.Text(c, s.Title).FontSize(13).FontWeight(600).MaxLines(2).TextColor(p.text)
-					if badge != "" {
-						ui.Text(c, badge).FontSize(11.5).TextColor(p.muted)
-					}
-					if s.Subtitle != "" {
-						ui.Text(c, s.Subtitle).FontSize(11.5).TextColor(p.faint).MaxLines(2)
-					}
-				})
-			})
-			if row.Clicked() {
-				app.open(w.ref().Source, s, -1)
-			}
-		}
-	})
-}
-
-// seasonLine says where a season stands: when it comes out, that it is
-// new, how many wait for it.
-func seasonLine(s Season) string {
-	parts := []string{s.Title}
-	switch {
-	case !s.IsAvailable():
-		parts = append(parts, ternary(s.Note != "", s.Note, "即将上线"))
-	case s.Note != "":
-		parts = append(parts, s.Note)
-	}
-	return strings.Join(parts, " · ")
-}
-
-// seasonRow switches between the seasons of a drama that has several.
-func (app *App) seasonRow(c *ui.Context, w *Watching) {
-	p := app.pal
-	if seasonOf(w.seasons, w.show.ID) < 0 {
-		return
-	}
-	latest := w.seasons[len(w.seasons)-1]
-	ui.Column(c).Gap(12).Children(func() {
-		ui.Row(c).Children(func() {
-			ui.Text(c, "系列").FontSize(15).Bold().TextColor(p.text).Grow(1).Role(ui.RoleHeading).Level(2)
-			ui.Text(c, fmt.Sprintf("共%d季", len(w.seasons))).FontSize(12).TextColor(p.muted)
-		})
-		ui.ScrollHorizontal(c.Key("seasons")).Gap(6).Children(func() {
-			for _, s := range w.seasons {
-				label := s.Title
-				switch {
-				case !s.IsAvailable():
-					label += " · 预告"
-				case s.Note != "":
-					label += " · 新"
-				}
-				current := s.ID == w.show.ID
-				chip := app.chip(c.Key("season-"+s.ID), label, current).Shrink(0).Label(label)
-				if current {
-					chip.Current(ui.CurrentItem)
-				}
-				if !chip.Clicked() || current {
-					continue
-				}
-				if s.IsAvailable() {
-					w.switchSeason(s, -1)
-				} else {
-					app.toast = seasonLine(s)
-				}
-			}
-		})
-		if !latest.IsAvailable() || latest.Note != "" {
-			ui.Text(c, seasonLine(latest)).FontSize(12).TextColor(p.muted)
-		}
-	})
 }

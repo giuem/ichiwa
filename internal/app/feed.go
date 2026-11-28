@@ -14,18 +14,16 @@ import (
 	"slices"
 	"time"
 
-	"github.com/egoist/mygo/ui"
-
 	"github.com/giuem/ichiwa/internal/source"
 	"github.com/giuem/ichiwa/internal/sources/hongguo"
 )
 
 // feedPage is one page of a feed as its source returns it.
 type feedPage struct {
-	items  []Card
+	Items  []Card
 	cursor string
-	more   bool
-	page   *source.CollectionPage // full protocol page for onPage (filters, header, sections)
+	More   bool
+	Page   *source.CollectionPage // full protocol page for onPage (filters, header, sections)
 	// failed tells the page came with an error: its list failed, and a
 	// retry asks for it again.
 	failed bool
@@ -35,7 +33,7 @@ func pageResult(p *source.CollectionPage, err error) (feedPage, error) {
 	if p == nil {
 		return feedPage{}, err
 	}
-	return feedPage{items: p.Items, cursor: p.Cursor, more: p.Cursor != "", page: p}, err
+	return feedPage{Items: p.Items, cursor: p.Cursor, More: p.Cursor != "", Page: p}, err
 }
 
 // Feed is a list of cards loaded page by page from fetch. The view keeps
@@ -46,23 +44,25 @@ type Feed struct {
 	// src is the source the feed loads from, and fetch loads a page of
 	// it, off the main thread; set together by setFetch, so that a feed
 	// keeps to its source when the app switches to another.
-	src    source.Source
+	Src    source.Source
 	fetch  fetchFunc
 	onPage func(feedPage) // runs on the main thread
 
-	items   []Card
+	Items   []Card
 	seen    map[string]bool
 	cursor  string
-	more    bool
-	loading bool
-	loaded  bool
-	err     string
-	scroll  ui.ScrollState
-	gen     int // bumped by reset, so results of earlier loads are dropped
-	stalls  int // pages in a row that brought nothing new
+	More    bool
+	Loading bool
+	Loaded  bool
+	Err     string
+	// UI is the view's own state of the list, which the app keeps
+	// with it and never reads.
+	UI     any
+	gen    int // bumped by reset, so results of earlier loads are dropped
+	stalls int // pages in a row that brought nothing new
 	// retryAt is when a source that limited the rate lets the feed ask
 	// again (protocol §10); the error stays until then.
-	retryAt time.Time
+	RetryAt time.Time
 	waitErr string
 
 	// cache is the file that keeps the first items of the feed for the
@@ -82,11 +82,11 @@ type Feed struct {
 type fetchFunc func(ctx context.Context, src source.Source, cursor string) (feedPage, error)
 
 func newFeed(src source.Source, fetch fetchFunc) *Feed {
-	return &Feed{src: src, fetch: fetch, more: true}
+	return &Feed{Src: src, fetch: fetch, More: true}
 }
 
 // setFetch sets where f loads from.
-func (f *Feed) setFetch(src source.Source, fetch fetchFunc) { f.src, f.fetch = src, fetch }
+func (f *Feed) setFetch(src source.Source, fetch fetchFunc) { f.Src, f.fetch = src, fetch }
 
 // collectionFetch loads the pages of the collection req names.
 func collectionFetch(req source.CollectionRequest) fetchFunc {
@@ -103,8 +103,8 @@ func (f *Feed) reset() {
 	if f.end != nil {
 		f.end()
 	}
-	*f = Feed{src: f.src, fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache,
-		retryAt: f.retryAt, waitErr: f.waitErr}
+	*f = Feed{Src: f.Src, fetch: f.fetch, onPage: f.onPage, More: true, gen: f.gen + 1, cache: f.cache,
+		RetryAt: f.RetryAt, waitErr: f.waitErr}
 }
 
 // context is ctx, canceled also when f resets; done releases it.
@@ -126,10 +126,10 @@ func (f *Feed) add(items []Card) {
 			continue
 		}
 		f.seen[s.ID] = true
-		if len(f.items) < feedCacheSize {
+		if len(f.Items) < feedCacheSize {
 			f.changed = true
 		}
-		f.items = append(f.items, s)
+		f.Items = append(f.Items, s)
 	}
 }
 
@@ -138,34 +138,34 @@ func (f *Feed) add(items []Card) {
 // them, and they stay after it, so the grid doesn't shrink as it comes.
 func (f *Feed) take(p feedPage) (fresh bool, added []Card) {
 	if f.stale {
-		cached := f.items
-		f.items, f.seen, f.stale = nil, nil, false
-		f.add(p.items)
-		fresh = len(f.items) > 0
+		cached := f.Items
+		f.Items, f.seen, f.stale = nil, nil, false
+		f.add(p.Items)
+		fresh = len(f.Items) > 0
 		f.add(cached)
-		return fresh, f.items
+		return fresh, f.Items
 	}
-	before := len(f.items)
-	f.add(p.items)
-	return len(f.items) > before, f.items[before:]
+	before := len(f.Items)
+	f.add(p.Items)
+	return len(f.Items) > before, f.Items[before:]
 }
 
 // loadMore loads the next page of f, unless one is loading or f ended,
 // for the page shown: leaving it cancels the load.
-func (app *App) loadMore(f *Feed) { app.loadMoreIn(app.pageContext(), f) }
+func (app *App) LoadMore(f *Feed) { app.loadMoreIn(app.pageContext(), f) }
 
 // loadMoreIn loads the next page of f until ctx ends. A load canceled
 // leaves f as it was before, to load again when shown.
 func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
-	if f.loading || !f.more || f.fetch == nil || f.src == nil {
+	if f.Loading || !f.More || f.fetch == nil || f.Src == nil {
 		return
 	}
-	if f.retryWait() > 0 {
-		f.err = f.waitErr // a retry clears it: it stays until the wait ends
+	if f.RetryWait() > 0 {
+		f.Err = f.waitErr // a retry clears it: it stays until the wait ends
 		return
 	}
-	f.loading, f.err = true, ""
-	src, fetch, cursor, gen := f.src, f.fetch, f.cursor, f.gen
+	f.Loading, f.Err = true, ""
+	src, fetch, cursor, gen := f.Src, f.fetch, f.cursor, f.gen
 	wait := time.Duration(f.stalls) * stallWait
 	ctx, done := f.context(ctx)
 	async(app, func() (feedPage, error) {
@@ -180,26 +180,26 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 		if f.gen != gen {
 			return
 		}
-		f.loading = false
+		f.Loading = false
 		if ctx.Err() != nil {
 			return // canceled by the app: not an error, and dropped
 		}
 		if err != nil {
-			f.loaded = true
-			if p.page != nil && f.onPage != nil {
+			f.Loaded = true
+			if p.Page != nil && f.onPage != nil {
 				p.failed = true
 				f.onPage(p)
 			}
-			f.err = errText(err)
+			f.Err = errText(err)
 			if wait := source.RetryAfter(err); wait > 0 {
-				f.retryAt, f.waitErr = time.Now().Add(wait), f.err
-				app.countdown(f.retryAt)
+				f.RetryAt, f.waitErr = time.Now().Add(wait), f.Err
+				app.countdown(f.RetryAt)
 			}
 			return
 		}
-		f.loaded = true
+		f.Loaded = true
 		fresh, added := f.take(p)
-		f.more = f.step(p, fresh)
+		f.More = f.Step(p, fresh)
 		if f.onPage != nil {
 			f.onPage(p)
 		}
@@ -210,34 +210,34 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 	})
 }
 
-// retryWait is how many seconds the feed still waits to ask again.
-func (f *Feed) retryWait() int {
-	if d := time.Until(f.retryAt); d > 0 {
+// retryWait is how many Seconds the feed still waits to ask again.
+func (f *Feed) RetryWait() int {
+	if d := time.Until(f.RetryAt); d > 0 {
 		return int(math.Ceil(d.Seconds()))
 	}
 	return 0
 }
 
 // errText is the feed's error as shown, with the wait before a retry.
-func (f *Feed) errText() string {
-	if f.err == "" {
+func (f *Feed) ErrText() string {
+	if f.Err == "" {
 		return ""
 	}
-	if s := f.retryWait(); s > 0 {
-		return fmt.Sprintf("%s（%d 秒后可以重试）", f.err, s)
+	if s := f.RetryWait(); s > 0 {
+		return fmt.Sprintf("%s（%d 秒后可以重试）", f.Err, s)
 	}
-	return f.err
+	return f.Err
 }
 
 // countdown redraws the window each second until, for a countdown.
 func (app *App) countdown(until time.Time) {
-	if app.win == nil {
+	if app.host == nil {
 		return
 	}
 	go func() {
 		for time.Now().Before(until) {
 			time.Sleep(time.Second)
-			app.win.Invalidate()
+			app.redraw()
 		}
 	}()
 }
@@ -254,8 +254,8 @@ const (
 
 // step takes in where page p leaves f, which it added to if fresh, and
 // reports whether more may come.
-func (f *Feed) step(p feedPage, fresh bool) bool {
-	if !p.more || p.cursor == "" {
+func (f *Feed) Step(p feedPage, fresh bool) bool {
+	if !p.More || p.cursor == "" {
 		return false
 	}
 	f.cursor = p.cursor // a page of repeats still moves on
@@ -263,7 +263,7 @@ func (f *Feed) step(p feedPage, fresh bool) bool {
 	case fresh:
 		f.stalls = 0
 		return true
-	case len(f.items) == 0:
+	case len(f.Items) == 0:
 		return false // nothing to show: an empty search, say, ends at once
 	}
 	f.stalls++
@@ -277,7 +277,7 @@ func cardLacking(c Card) bool {
 // fill looks up the covers and badges that new media cards lack via Refresh,
 // and merges them in when they arrive.
 func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
-	src := f.src
+	src := f.Src
 	if src == nil || !src.Info().Has(source.CapRefresh) {
 		return
 	}
@@ -312,7 +312,7 @@ func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
 		for _, s := range filled {
 			byID[s.ID] = s
 		}
-		for i, s := range f.items {
+		for i, s := range f.Items {
 			if d, ok := byID[s.ID]; ok {
 				if s.Image == "" {
 					s.Image = d.Image
@@ -323,33 +323,20 @@ func (app *App) fill(ctx context.Context, f *Feed, fresh []Card) {
 				if s.Subtitle == "" {
 					s.Subtitle = d.Subtitle
 				}
-				f.items[i] = s
+				f.Items[i] = s
 				f.changed = f.changed || i < feedCacheSize
 			}
 		}
 	})
 }
 
-// pump loads the next page of f, shown in a scroll container of the view
-// c builds, while less than about two screens are loaded below the view.
-// That covers a feed too short to fill the view, whose MaxY is 0.
-func (app *App) pump(c *ui.Context, f *Feed) {
-	if !f.more || f.loading || f.err != "" {
-		return
-	}
-	_, h := c.Size()
-	if f.scroll.MaxY-f.scroll.Y < 2*h {
-		app.loadMore(f)
-	}
-}
-
-// visible is what of f the grid shows: whole rows of n while more pages
+// Visible is what of f the grid shows: whole rows of n while more pages
 // come, so that the last row doesn't fill in piece by piece.
-func visible(f *Feed, n int) []Card {
-	if f.more && f.err == "" && len(f.items) > n {
-		return f.items[:len(f.items)/n*n]
+func Visible(f *Feed, n int) []Card {
+	if f.More && f.Err == "" && len(f.Items) > n {
+		return f.Items[:len(f.Items)/n*n]
 	}
-	return f.items
+	return f.Items
 }
 
 // feedCache is what a feed keeps for the next launch: the header of its
@@ -391,12 +378,12 @@ var legacyFeedNames = map[string]string{"channel:推荐": "recommend", "channel:
 // and moves it to path.
 func (app *App) legacyFeedCache(colID, path string) *feedCache {
 	name := legacyFeedNames[colID]
-	if name == "" || app.sourceID() != hongguo.SourceID {
+	if name == "" || app.SourceID() != hongguo.SourceID {
 		return nil
 	}
 	var items []Card
-	bySource := filepath.Join(app.cacheDir, "feeds", hongguo.SourceID, name+".json")
-	oldest := filepath.Join(app.cacheDir, "feeds", name+".json")
+	bySource := filepath.Join(app.CacheDir, "feeds", hongguo.SourceID, name+".json")
+	oldest := filepath.Join(app.CacheDir, "feeds", name+".json")
 	if data, err := os.ReadFile(bySource); err == nil {
 		if json.Unmarshal(data, &items) != nil {
 			items = nil
@@ -463,19 +450,19 @@ func loadLegacyFeedCache(path string) []Card {
 // saveFeeds writes the first items of the collections that changed, on a
 // goroutine unless wait. Only pages without filters are kept: what a
 // filter shows depends on a choice the next launch starts without.
-func (app *App) saveFeeds(wait bool) {
+func (app *App) SaveFeeds(wait bool) {
 	type job struct {
 		path  string
 		cache *feedCache
 	}
 	var jobs []job
 	for _, cs := range app.cols {
-		f := &cs.results
-		if f.cache == "" || f.stale || !f.changed || len(f.items) == 0 || cs.first == nil || len(cs.first.Filters) > 0 {
+		f := &cs.Results
+		if f.cache == "" || f.stale || !f.changed || len(f.Items) == 0 || cs.First == nil || len(cs.First.Filters) > 0 {
 			continue
 		}
 		f.changed = false
-		jobs = append(jobs, job{f.cache, &feedCache{Header: cs.header, Items: slices.Clone(f.items[:min(len(f.items), feedCacheSize)])}})
+		jobs = append(jobs, job{f.cache, &feedCache{Header: cs.Header, Items: slices.Clone(f.Items[:min(len(f.Items), feedCacheSize)])}})
 	}
 	if len(jobs) == 0 {
 		return
@@ -512,19 +499,19 @@ func writeFeedCache(path string, c *feedCache) error {
 // warm asks once for the first pages of the source's other pages and its
 // search home, so they show at once when opened.
 func (app *App) warm() {
-	if app.warmed || app.src == nil {
+	if app.warmed || app.Src == nil {
 		return
 	}
 	app.warmed = true
 	// For the source, not the page: they are for the pages to come.
-	for _, it := range app.nav {
-		cs := app.col(it.ID)
-		if cs.results.loaded || cs.results.loading {
+	for _, it := range app.Nav {
+		cs := app.Col(it.ID)
+		if cs.Results.Loaded || cs.Results.Loading {
 			continue
 		}
-		cs.results.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: cs.id, Filters: maps.Clone(cs.chosen)}))
-		cs.results.onPage = cs.applyPage
-		app.loadMoreIn(app.srcContext(), &cs.results)
+		cs.Results.setFetch(app.Src, collectionFetch(source.CollectionRequest{ID: cs.ID, Filters: maps.Clone(cs.Chosen)}))
+		cs.Results.onPage = cs.applyPage
+		app.loadMoreIn(app.srcContext(), &cs.Results)
 	}
-	app.loadHot()
+	app.LoadHot()
 }

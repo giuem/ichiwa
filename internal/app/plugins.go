@@ -8,13 +8,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
 
 	"github.com/giuem/ichiwa/internal/media"
 	"github.com/giuem/ichiwa/internal/netguard"
@@ -35,18 +31,18 @@ import (
 type registry struct {
 	mu      sync.Mutex
 	builtin []source.Source
-	dev     source.Source
+	Dev     source.Source
 	// guard checks where images not of a loaded plugin go; nil uses the
 	// system resolver.
 	guard   *netguard.Guard
 	guarded *http.Client
 }
 
-func (r *registry) get(id string) source.Source {
+func (r *registry) Get(id string) source.Source {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.dev != nil && r.dev.Info().ID == id {
-		return r.dev
+	if r.Dev != nil && r.Dev.Info().ID == id {
+		return r.Dev
 	}
 	for _, s := range r.builtin {
 		if s.Info().ID == id {
@@ -58,25 +54,25 @@ func (r *registry) get(id string) source.Source {
 
 // all returns the sources to choose from: the built-in ones, with the
 // developer mode's plugin in place of the one of its id, or after them.
-func (r *registry) all() []source.Source {
+func (r *registry) All() []source.Source {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]source.Source, 0, len(r.builtin)+1)
-	placed := r.dev == nil
+	placed := r.Dev == nil
 	for _, s := range r.builtin {
-		if r.dev != nil && s.Info().ID == r.dev.Info().ID {
-			s, placed = r.dev, true
+		if r.Dev != nil && s.Info().ID == r.Dev.Info().ID {
+			s, placed = r.Dev, true
 		}
 		out = append(out, s)
 	}
 	if !placed {
-		out = append(out, r.dev)
+		out = append(out, r.Dev)
 	}
 	return out
 }
 
 // add adds a source, replacing one of the same id.
-func (r *registry) add(s source.Source) {
+func (r *registry) Add(s source.Source) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	id := s.Info().ID
@@ -94,13 +90,13 @@ func (r *registry) add(s source.Source) {
 func (r *registry) setDev(s source.Source) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.dev = s
+	r.Dev = s
 }
 
 // mediaPolicy is what a source's media may reach: a plugin only its
 // hosts, an unknown source nothing.
 func (r *registry) mediaPolicy(id string) media.Policy {
-	if s := r.get(id); s != nil {
+	if s := r.Get(id); s != nil {
 		return media.PolicyFor(s.Info())
 	}
 	return media.Policy{Sandboxed: true}
@@ -111,9 +107,9 @@ func (r *registry) mediaPolicy(id string) media.Policy {
 // cookies. Any other image, of a built-in source or of a plugin not
 // loaded now (a record, a follow), goes through the guard: to any host,
 // but never to this machine or its network, every redirect included.
-func (r *registry) imageRoute(raw string) (*http.Client, map[string]string) {
+func (r *registry) ImageRoute(raw string) (*http.Client, map[string]string) {
 	if u, err := url.Parse(raw); err == nil {
-		for _, s := range r.all() {
+		for _, s := range r.All() {
 			if p, ok := s.(*plugin.Plugin); ok && netguard.Hosts(p.Info().Network).AllowsURL(u) {
 				return p.ImageClient(), p.Info().ImageHeaders
 			}
@@ -134,23 +130,24 @@ func (r *registry) imageRoute(raw string) (*http.Client, map[string]string) {
 
 // devState is the developer mode: a plugin folder, loaded and watched.
 type devState struct {
-	dir    string
-	plugin *plugin.Plugin
-	err    string
+	Dir    string
+	Plugin *plugin.Plugin
+	Err    string
 	stop   context.CancelFunc
 	// logOpen shows the plugin's log page; logGen counts lines, to redraw.
-	logOpen bool
-	logGen  int
+	LogOpen bool
+	LogGen  int
 }
 
 // devSettings is what the developer mode keeps between launches.
 type devSettings struct {
 	Dir     string `json:"dir,omitempty"`
 	Current string `json:"current,omitempty"` // the source shown
+	Env     bool   `json:"-"`                 // Dir comes from ICHIWA_PLUGIN_DIR
 }
 
 func (app *App) devSettingsPath() string {
-	return filepath.Join(app.dataDir, "plugins", "dev.json")
+	return filepath.Join(app.DataDir, "plugins", "dev.json")
 }
 
 func (app *App) loadDevSettings() devSettings {
@@ -160,18 +157,18 @@ func (app *App) loadDevSettings() devSettings {
 	}
 	// For trying a plugin from the command line, as the tour does.
 	if dir := os.Getenv("ICHIWA_PLUGIN_DIR"); dir != "" {
-		s.Dir = dir
+		s.Dir, s.Env = dir, true
 	}
 	return s
 }
 
-func (app *App) saveDevSettings() {
-	if app.dataDir == "" {
+func (app *App) SaveDevSettings() {
+	if app.DataDir == "" {
 		return
 	}
-	s := devSettings{Dir: app.dev.dir}
-	if app.src != nil && app.src == source.Source(app.dev.plugin) {
-		s.Current = app.src.Info().ID
+	s := devSettings{Dir: app.Dev.Dir}
+	if app.Src != nil && app.Src == source.Source(app.Dev.Plugin) {
+		s.Current = app.Src.Info().ID
 	}
 	path := app.devSettingsPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
@@ -181,48 +178,39 @@ func (app *App) saveDevSettings() {
 	}
 }
 
-// userLocale is the language the user reads first, for plugins, which
-// may serve content in it; zh-CN when the system does not say.
-func userLocale() string {
-	if langs := mygo.App.PreferredLanguages(); len(langs) > 0 && langs[0] != "" {
-		return langs[0]
-	}
-	return "zh-CN"
-}
-
 func (app *App) pluginOptions() plugin.Options {
 	return plugin.Options{
-		AppVersion: mygo.App.Version(),
+		AppVersion: app.version,
 		Locale:     app.locale,
-		DataDir:    filepath.Join(app.dataDir, "plugins", "data"),
+		DataDir:    filepath.Join(app.DataDir, "plugins", "data"),
 	}
 }
 
 // loadDev loads the plugin folder dir in the developer mode and watches
 // it, replacing a folder loaded before. A folder that does not load is
 // watched still, and loads once it is fixed. It runs on the main thread.
-func (app *App) loadDev(dir string) error {
-	app.unloadDev()
+func (app *App) LoadDev(dir string) error {
+	app.UnloadDev()
 	ctx, cancel := context.WithCancel(context.Background())
-	app.dev.dir, app.dev.stop = dir, cancel
+	app.Dev.Dir, app.Dev.stop = dir, cancel
 	p, err := plugin.Open(dir, app.pluginOptions())
 	if err != nil {
-		app.dev.err = err.Error()
+		app.Dev.Err = err.Error()
 		plugin.WatchFolder(ctx, dir, 0, func() {
 			app.dispatch(func() {
-				if ctx.Err() != nil || app.dev.plugin != nil {
+				if ctx.Err() != nil || app.Dev.Plugin != nil {
 					return
 				}
-				app.retryDev()
+				app.RetryDev()
 			})
 		})
 		return err
 	}
-	app.dev.plugin, app.dev.err = p, ""
-	app.sources.setDev(p)
+	app.Dev.Plugin, app.Dev.Err = p, ""
+	app.Sources.setDev(p)
 	go p.WatchDir(ctx, dir, 0, func(err error) {
 		app.dispatch(func() {
-			if app.dev.plugin != p {
+			if app.Dev.Plugin != p {
 				return
 			}
 			app.reloaded(p, err)
@@ -230,52 +218,52 @@ func (app *App) loadDev(dir string) error {
 	})
 	var redraw throttle
 	stopLogs := p.Logs().Watch(func(plugin.LogEntry) {
-		redraw.poke(logRedraw, func() { app.dispatch(func() { app.dev.logGen++ }) })
+		redraw.poke(logRedraw, func() { app.dispatch(func() { app.Dev.LogGen++ }) })
 	})
 	go func() { <-ctx.Done(); stopLogs() }()
 	// It stands in for the built-in source of its id, if that is shown.
-	if app.src != nil && app.src != source.Source(p) && app.src.Info().ID == p.Info().ID {
-		app.useSource(p)
+	if app.Src != nil && app.Src != source.Source(p) && app.Src.Info().ID == p.Info().ID {
+		app.UseSource(p)
 	}
 	return nil
 }
 
 // retryDev loads the developer mode's folder again after it failed to
 // load, and shows the plugin once it does.
-func (app *App) retryDev() {
-	if err := app.loadDev(app.dev.dir); err != nil {
-		app.toast = "插件加载失败：" + err.Error()
+func (app *App) RetryDev() {
+	if err := app.LoadDev(app.Dev.Dir); err != nil {
+		app.Toast = "插件加载失败：" + err.Error()
 		return
 	}
-	app.useSource(app.dev.plugin)
-	app.toast = "已加载插件 " + app.dev.plugin.Info().Name
+	app.UseSource(app.Dev.Plugin)
+	app.Toast = "已加载插件 " + app.Dev.Plugin.Info().Name
 }
 
 // reloadDev is the menu's reload: the plugin loaded reloads in place, and
 // keeps the code it ran when the folder does not load; a folder that did
 // not load, or whose plugin changed its id, loads anew.
-func (app *App) reloadDev() {
-	p := app.dev.plugin
+func (app *App) ReloadDev() {
+	p := app.Dev.Plugin
 	if p == nil {
-		app.retryDev()
+		app.RetryDev()
 		return
 	}
-	if pkg, err := plugin.ReadDir(app.dev.dir, mygo.App.Version()); err == nil && pkg.Manifest.ID != p.Info().ID {
-		app.retryDev()
+	if pkg, err := plugin.ReadDir(app.Dev.Dir, app.version); err == nil && pkg.Manifest.ID != p.Info().ID {
+		app.RetryDev()
 		return
 	}
-	app.reloaded(p, p.ReloadDir(app.dev.dir))
+	app.reloaded(p, p.ReloadDir(app.Dev.Dir))
 }
 
 // reloaded tells how a reload of the developer mode's plugin went, and
 // loads the pages of the plugin again when it is shown.
 func (app *App) reloaded(p *plugin.Plugin, err error) {
 	if err != nil {
-		app.toast = "插件重新加载失败，仍在用之前的版本，详见插件日志"
+		app.Toast = "插件重新加载失败，仍在用之前的版本，详见插件日志"
 		return
 	}
-	app.toast = "插件已重新加载"
-	if app.src == source.Source(p) {
+	app.Toast = "插件已重新加载"
+	if app.Src == source.Source(p) {
 		app.refreshSource() // the navigation and pages may have changed
 	}
 }
@@ -300,69 +288,44 @@ func (t *throttle) poke(after time.Duration, fn func()) {
 // unloadDev stops the developer mode's plugin. When the app showed it,
 // it goes back to the built-in source the plugin stood in for, or to
 // Hongguo.
-func (app *App) unloadDev() {
-	p := app.dev.plugin
-	if app.dev.stop != nil {
-		app.dev.stop()
+func (app *App) UnloadDev() {
+	p := app.Dev.Plugin
+	if app.Dev.stop != nil {
+		app.Dev.stop()
 	}
-	app.dev = devState{}
+	app.Dev = devState{}
 	if p == nil {
 		return
 	}
-	app.sources.setDev(nil)
-	if app.src == source.Source(p) {
-		back := app.sources.get(p.Info().ID)
+	app.Sources.setDev(nil)
+	if app.Src == source.Source(p) {
+		back := app.Sources.Get(p.Info().ID)
 		if back == nil {
-			back = app.sources.get(hongguo.SourceID)
+			back = app.Sources.Get(hongguo.SourceID)
 		}
 		if back != nil {
-			app.useSource(back)
+			app.UseSource(back)
 		}
 	}
-}
-
-// pickDevFolder asks for a plugin folder and loads it.
-func (app *App) pickDevFolder() {
-	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent:      app.win,
-		Title:       "选择插件文件夹",
-		Message:     "开发者模式：从文件夹加载插件，文件变化时自动重新加载",
-		ButtonLabel: "加载",
-		Directory:   true,
-	})
-	if err != nil || len(paths) == 0 {
-		return
-	}
-	if err := app.loadDev(paths[0]); err != nil {
-		app.toast = "插件加载失败：" + err.Error()
-		app.dev.logOpen = false
-		app.saveDevSettings()
-		return
-	}
-	app.useSource(app.dev.plugin)
-	app.toast = "已加载插件 " + app.dev.plugin.Info().Name
 }
 
 // useSource shows s: its navigation, its first page, and nothing of the
 // source shown before.
-func (app *App) useSource(s source.Source) {
-	if app.watch != nil {
-		app.closeWatch()
+func (app *App) UseSource(s source.Source) {
+	if app.Watch != nil {
+		app.CloseWatch()
 	}
 	app.leaveSource()
-	app.src = s
-	app.nav, app.navErr = nil, ""
-	app.cols = map[string]*colState{}
-	app.search = searchState{}
-	app.stack = nil
+	app.Src = s
+	app.Nav, app.NavErr = nil, ""
+	app.cols = map[string]*Collection{}
+	app.Search = searchState{}
+	app.Stack = nil
 	app.warmed = false
-	app.dev.logOpen = false
-	app.page = ""
-	app.loadNav()
-	if app.win != nil {
-		app.setMenu()
-	}
-	app.saveDevSettings()
+	app.Dev.LogOpen = false
+	app.Page = ""
+	app.LoadNav()
+	app.SaveDevSettings()
 }
 
 // refreshSource loads the pages of the source shown again, as a plugin
@@ -370,27 +333,27 @@ func (app *App) useSource(s source.Source) {
 // the player open.
 func (app *App) refreshSource() {
 	app.leaveSource()
-	app.cols = map[string]*colState{}
-	app.search = searchState{}
-	app.stack = nil
+	app.cols = map[string]*Collection{}
+	app.Search = searchState{}
+	app.Stack = nil
 	app.warmed = false
-	src, page := app.src, app.page
+	src, page := app.Src, app.Page
 	ctx := app.srcContext()
-	app.navBusy = true
+	app.NavBusy = true
 	async(app, func() ([]source.NavItem, error) {
 		return src.Navigation(ctx)
 	}, func(nav []source.NavItem, err error) {
-		if app.src != src || ctx.Err() != nil {
+		if app.Src != src || ctx.Err() != nil {
 			return
 		}
-		app.navBusy = false
+		app.NavBusy = false
 		if err != nil {
-			app.navErr = errText(err)
+			app.NavErr = errText(err)
 			return
 		}
-		app.nav, app.navErr = nav, ""
+		app.Nav, app.NavErr = nav, ""
 		switch page {
-		case pageSearch, pageHistory, pageFollows:
+		case PageSearch, PageHistory, PageFollows:
 			return
 		}
 		for _, it := range nav {
@@ -399,7 +362,7 @@ func (app *App) refreshSource() {
 			}
 		}
 		if len(nav) > 0 {
-			app.page = nav[0].ID
+			app.Page = nav[0].ID
 		}
 	})
 }
@@ -408,15 +371,15 @@ func (app *App) refreshSource() {
 // one saved, if it has it, or its first.
 func (app *App) startPage(nav []source.NavItem) string {
 	saved := ""
-	if app.lib != nil {
-		saved = normalizeSavedPage(app.lib.Page)
+	if app.Lib != nil {
+		saved = normalizeSavedPage(app.Lib.Page)
 	}
 	switch saved {
-	case pageSearch:
-		if app.hasCap(source.CapSearch) {
+	case PageSearch:
+		if app.HasCap(source.CapSearch) {
 			return saved
 		}
-	case pageHistory, pageFollows:
+	case PageHistory, PageFollows:
 		return saved
 	}
 	for _, it := range nav {
@@ -431,113 +394,27 @@ func (app *App) startPage(nav []source.NavItem) string {
 }
 
 // loadNav loads the navigation of the source shown.
-func (app *App) loadNav() {
-	src := app.src
+func (app *App) LoadNav() {
+	src := app.Src
 	if src == nil {
 		return
 	}
 	ctx := app.srcContext()
-	app.navBusy = true
+	app.NavBusy = true
 	async(app, func() ([]source.NavItem, error) {
 		return src.Navigation(ctx)
 	}, func(nav []source.NavItem, err error) {
-		if app.src != src || ctx.Err() != nil {
+		if app.Src != src || ctx.Err() != nil {
 			return
 		}
-		app.navBusy = false
+		app.NavBusy = false
 		if err != nil {
-			app.navErr = errText(err)
+			app.NavErr = errText(err)
 			return
 		}
-		app.nav = nav
-		if app.page == "" {
-			app.page = app.startPage(nav)
-		}
-	})
-}
-
-// sourceMenu is the sidebar's switcher: the sources, and the developer
-// mode.
-func (app *App) sourceMenu(m *ui.Menu) {
-	for _, s := range app.sources.all() {
-		info := s.Info()
-		label := info.Name
-		if _, ok := s.(*plugin.Plugin); ok {
-			label += "（开发中）"
-		}
-		if m.Item(label).ID("src-"+info.ID).Radio(app.src == s).Chosen() && app.src != s {
-			app.useSource(s)
-		}
-	}
-	m.Separator()
-	m.Submenu("开发者模式", func(m *ui.Menu) {
-		if m.Item("从文件夹加载插件…").Chosen() {
-			app.pickDevFolder()
-		}
-		if app.dev.dir != "" {
-			if m.Item("重新加载").Chosen() {
-				app.reloadDev()
-			}
-			if app.dev.plugin != nil && m.Item("插件日志").Chosen() {
-				app.dev.logOpen = true
-			}
-			if m.Item("关闭开发者模式").Chosen() {
-				app.unloadDev()
-				app.saveDevSettings()
-			}
-		}
-	})
-}
-
-// sourceSwitch draws the switcher at the top of the sidebar.
-func (app *App) sourceSwitch(c *ui.Context) {
-	p := app.pal
-	name := "片源"
-	if app.src != nil {
-		name = app.src.Info().Name
-	}
-	b := ui.ButtonBase(c.Key("source")).Height(34).PaddingX(10).Gap(8).Radius(8).AlignItems(ui.Center).Justify(ui.Start).
-		Label("片源：" + name).Description("切换片源")
-	pressable(b, ui.Transparent, p.hover, 0.98)
-	b.Children(func() {
-		ui.Text(c, name).FontSize(13.5).FontWeight(600).TextColor(p.text).Grow(1).SingleLine()
-		ui.Icon(c, iconChevronDown).Size(12, 12).TextColor(p.muted)
-	})
-	b.Menu(app.sourceMenu)
-	if app.dev.err != "" {
-		ui.Text(c, "开发插件加载失败："+app.dev.err).FontSize(11).TextColor(p.muted).Padding(2, 10).MaxLines(3)
-	}
-}
-
-// logPageLines is how much of the log the page shows: the newest lines.
-const logPageLines = 500
-
-// logPage shows the log of the developer mode's plugin as it grows.
-func (app *App) logPage(c *ui.Context) {
-	p := app.pal
-	pl := app.dev.plugin
-	if pl == nil {
-		app.dev.logOpen = false
-		return
-	}
-	_ = app.dev.logGen
-	app.header(c, "插件日志", pl.Info().Name+" "+pl.Info().Version, func() {
-		app.secondary(c, iconX, "关闭").OnClick(func() { app.dev.logOpen = false })
-	})
-	var lines []string
-	for _, e := range pl.Logs().Tail(logPageLines) {
-		// An entry may hold several lines; the page shows its last ones.
-		lines = append(lines, strings.Split(e.String(), "\n")...)
-	}
-	if len(lines) > logPageLines {
-		lines = lines[len(lines)-logPageLines:]
-	}
-	if len(lines) == 0 {
-		lines = []string{"还没有日志"}
-	}
-	ui.Scroll(c.Key("plugin-log")).Grow(1).Padding(0, pagePad, 24).Children(func() {
-		for i, l := range lines {
-			ui.Text(c.Key(i), l).FontSize(12).TextColor(p.text).Selectable()
+		app.Nav = nav
+		if app.Page == "" {
+			app.Page = app.startPage(nav)
 		}
 	})
 }

@@ -1,5 +1,5 @@
 // Draws the app icon: swift scripts/icon.swift resources/icon.png
-// then: sips -z 128 128 resources/icon.png --out internal/app/assets/logo.png
+// then: sips -z 128 128 resources/icon.png --out internal/ui/assets/logo.png
 //
 // Episodes stacked like cards, portrait as short dramas are shot, the
 // front one playing: one episode, then the next.

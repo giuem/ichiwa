@@ -14,12 +14,12 @@ import (
 // the list again, as Hongguo does where its server says it ended, goes on
 // while pages bring something new.
 func TestFeedEndsWithoutCursor(t *testing.T) {
-	f := &Feed{more: true, items: make([]Card, 8)}
-	if f.step(feedPage{more: false}, true) {
+	f := &Feed{More: true, Items: make([]Card, 8)}
+	if f.Step(feedPage{More: false}, true) {
 		t.Fatalf("a page without a cursor didn't end the feed: %+v", f)
 	}
-	f = &Feed{more: true, items: make([]Card, 8), stalls: 1}
-	if !f.step(feedPage{more: true, cursor: "again:c1"}, true) || f.cursor != "again:c1" || f.stalls != 0 {
+	f = &Feed{More: true, Items: make([]Card, 8), stalls: 1}
+	if !f.Step(feedPage{More: true, cursor: "again:c1"}, true) || f.cursor != "again:c1" || f.stalls != 0 {
 		t.Fatalf("a page with something new: %+v", f)
 	}
 }
@@ -27,12 +27,12 @@ func TestFeedEndsWithoutCursor(t *testing.T) {
 // A page of only repeats moves on from its cursor, and enough of them in a
 // row end the feed, so it doesn't loop.
 func TestFeedRepeatsMoveOn(t *testing.T) {
-	f := &Feed{more: true, items: make([]Card, 8), cursor: "c0"}
-	if !f.step(feedPage{more: true, cursor: "c1"}, false) || f.cursor != "c1" {
+	f := &Feed{More: true, Items: make([]Card, 8), cursor: "c0"}
+	if !f.Step(feedPage{More: true, cursor: "c1"}, false) || f.cursor != "c1" {
 		t.Fatalf("a page of repeats: %+v", f)
 	}
-	f.step(feedPage{more: true, cursor: "c2"}, false)
-	if f.step(feedPage{more: true, cursor: "c3"}, false) {
+	f.Step(feedPage{More: true, cursor: "c2"}, false)
+	if f.Step(feedPage{More: true, cursor: "c3"}, false) {
 		t.Fatalf("%d pages of repeats didn't end the feed", maxStalls)
 	}
 }
@@ -40,8 +40,8 @@ func TestFeedRepeatsMoveOn(t *testing.T) {
 // An end with nothing to show is believed at once: an empty search shows
 // its message without waiting on tries.
 func TestFeedEmptyEndsAtOnce(t *testing.T) {
-	f := &Feed{more: true}
-	if f.step(feedPage{more: false}, false) || f.stalls != 0 {
+	f := &Feed{More: true}
+	if f.Step(feedPage{More: false}, false) || f.stalls != 0 {
 		t.Fatalf("an empty end: %+v", f)
 	}
 }
@@ -54,40 +54,40 @@ func TestFeedCache(t *testing.T) {
 	srcA := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
 	srcB := &sourcetest.Source{InfoData: source.Info{ID: "other"}}
 
-	app := &App{src: srcA, cacheDir: cacheDir}
-	cs := app.col("channel:推荐")
-	f := &cs.results
-	if f.stale || len(f.items) != 0 {
+	app := &App{Src: srcA, CacheDir: cacheDir}
+	cs := app.Col("channel:推荐")
+	f := &cs.Results
+	if f.stale || len(f.Items) != 0 {
 		t.Fatalf("a first launch has nothing kept: %+v", f)
 	}
 	if want := feedCachePath(cacheDir, "hongguo", "channel:推荐"); f.cache != want || filepath.Dir(want) != filepath.Join(cacheDir, "feeds") {
 		t.Fatalf("cache path = %q, want %q", f.cache, want)
 	}
-	cs.applyPage(feedPage{page: &source.CollectionPage{Header: &source.Header{Title: "推荐", Description: "精选"}}})
-	f.take(feedPage{items: []Card{{ID: "a"}, {ID: "b"}, {ID: "c"}}})
-	app.saveFeeds(true)
+	cs.applyPage(feedPage{Page: &source.CollectionPage{Header: &source.Header{Title: "推荐", Description: "精选"}}})
+	f.take(feedPage{Items: []Card{{ID: "a"}, {ID: "b"}, {ID: "c"}}})
+	app.SaveFeeds(true)
 	if f.changed {
 		t.Fatal("saved, yet changed")
 	}
 
 	// Another source does not see hongguo's cached items.
-	if of := (&App{src: srcB, cacheDir: cacheDir}).col("channel:推荐"); of.results.stale || len(of.results.items) != 0 {
-		t.Fatalf("feed cache leaked across sources: %+v", of.results)
+	if of := (&App{Src: srcB, CacheDir: cacheDir}).Col("channel:推荐"); of.Results.stale || len(of.Results.Items) != 0 {
+		t.Fatalf("feed cache leaked across sources: %+v", of.Results)
 	}
 
-	app = &App{src: srcA, cacheDir: cacheDir}
-	cs = app.col("channel:推荐")
-	f = &cs.results
-	if !f.stale || len(f.items) != 3 || cs.header == nil || cs.header.Description != "精选" {
-		t.Fatalf("not kept: %+v, header %+v", f, cs.header)
+	app = &App{Src: srcA, CacheDir: cacheDir}
+	cs = app.Col("channel:推荐")
+	f = &cs.Results
+	if !f.stale || len(f.Items) != 3 || cs.Header == nil || cs.Header.Description != "精选" {
+		t.Fatalf("not kept: %+v, header %+v", f, cs.Header)
 	}
-	app.saveFeeds(true) // nothing new: the kept items stay
-	fresh, added := f.take(feedPage{items: []Card{{ID: "d"}, {ID: "b"}}})
+	app.SaveFeeds(true) // nothing new: the kept items stay
+	fresh, added := f.take(feedPage{Items: []Card{{ID: "d"}, {ID: "b"}}})
 	if !fresh || f.stale || len(added) != 4 {
 		t.Fatalf("fresh = %v, added = %v", fresh, added)
 	}
 	var ids string
-	for _, s := range f.items {
+	for _, s := range f.Items {
 		ids += s.ID
 	}
 	if ids != "dbac" {
@@ -95,12 +95,12 @@ func TestFeedCache(t *testing.T) {
 	}
 
 	// A page with filters is not kept.
-	app = &App{src: srcA, cacheDir: cacheDir}
-	rank := app.col("rank")
-	rank.applyPage(feedPage{page: &source.CollectionPage{Filters: []FilterRow{{Key: "board"}}}})
-	rank.results.take(feedPage{items: []Card{{ID: "a"}}})
-	app.saveFeeds(true)
-	if _, err := os.Stat(rank.results.cache); !os.IsNotExist(err) {
+	app = &App{Src: srcA, CacheDir: cacheDir}
+	rank := app.Col("rank")
+	rank.applyPage(feedPage{Page: &source.CollectionPage{Filters: []FilterRow{{Key: "board"}}}})
+	rank.Results.take(feedPage{Items: []Card{{ID: "a"}}})
+	app.SaveFeeds(true)
+	if _, err := os.Stat(rank.Results.cache); !os.IsNotExist(err) {
 		t.Fatalf("a page with filters was kept: %v", err)
 	}
 }
@@ -125,20 +125,20 @@ func TestFeedCacheMigratesLegacy(t *testing.T) {
 
 	// Non-hongguo source ignores the legacy file.
 	otherSrc := &sourcetest.Source{InfoData: source.Info{ID: "other"}}
-	if of := (&App{src: otherSrc, cacheDir: cacheDir}).col("channel:推荐"); of.results.stale || len(of.results.items) != 0 {
-		t.Fatalf("non-hongguo read legacy cache: %+v", of.results)
+	if of := (&App{Src: otherSrc, CacheDir: cacheDir}).Col("channel:推荐"); of.Results.stale || len(of.Results.Items) != 0 {
+		t.Fatalf("non-hongguo read legacy cache: %+v", of.Results)
 	}
 	if _, err := os.Stat(legacyPath); err != nil {
 		t.Fatalf("non-hongguo removed legacy cache: %v", err)
 	}
 
 	hgSrc := &sourcetest.Source{InfoData: source.Info{ID: "hongguo"}}
-	app := &App{src: hgSrc, cacheDir: cacheDir}
-	f := &app.col("channel:推荐").results
-	if !f.stale || len(f.items) != 1 {
+	app := &App{Src: hgSrc, CacheDir: cacheDir}
+	f := &app.Col("channel:推荐").Results
+	if !f.stale || len(f.Items) != 1 {
 		t.Fatalf("migrated feed = %+v", f)
 	}
-	c := f.items[0]
+	c := f.Items[0]
 	if c.Kind != source.CardMedia || c.ID != "s1" || c.Title != "旧缓存剧" || c.Subtitle != "简介内容" ||
 		c.Image != "https://ex/1.jpg" || !slices.Equal(c.Badges, []string{"全80集"}) || c.Note != "甜宠" {
 		t.Fatalf("converted card = %+v", c)
@@ -146,14 +146,14 @@ func TestFeedCacheMigratesLegacy(t *testing.T) {
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
 		t.Fatalf("legacy feed cache was not removed: %v", err)
 	}
-	if l := &app.col("channel:真人剧").results; len(l.items) != 1 || l.items[0].ID != "l1" {
-		t.Fatalf("the file kept by source = %+v", l.items)
+	if l := &app.Col("channel:真人剧").Results; len(l.Items) != 1 || l.Items[0].ID != "l1" {
+		t.Fatalf("the file kept by source = %+v", l.Items)
 	}
 	if _, err := os.Stat(bySource); !os.IsNotExist(err) {
 		t.Fatalf("the file kept by source was not removed: %v", err)
 	}
 	// A subsequent launch (even offline) reads from the new path.
-	if f2 := &(&App{src: hgSrc, cacheDir: cacheDir}).col("channel:推荐").results; !f2.stale || len(f2.items) != 1 || f2.items[0].Title != "旧缓存剧" {
+	if f2 := &(&App{Src: hgSrc, CacheDir: cacheDir}).Col("channel:推荐").Results; !f2.stale || len(f2.Items) != 1 || f2.Items[0].Title != "旧缓存剧" {
 		t.Fatalf("second launch feed = %+v", f2)
 	}
 }
