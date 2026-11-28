@@ -382,6 +382,82 @@ func TestOpenCancelsCallNoOneWaitsFor(t *testing.T) {
 	}
 }
 
+// A caller that comes and leaves again within the grace of one that left
+// before has a grace of its own: the timer of the first does not cancel
+// the call under it. Once the grace ends, the job is gone, and a caller
+// to come starts the call anew.
+func TestGraceStartsAnewWithEachCaller(t *testing.T) {
+	defer func(g time.Duration) { orphanGrace = g }(orphanGrace)
+	orphanGrace = 200 * time.Millisecond
+	mgr, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	started, ended := make(chan struct{}, 2), make(chan struct{}, 2)
+	resolve := func(ctx context.Context, _ source.PlayPrefer) (*source.Playback, error) {
+		calls.Add(1)
+		started <- struct{}{}
+		<-ctx.Done()
+		ended <- struct{}{}
+		return nil, ctx.Err()
+	}
+	key := CacheKey("p", "m", "e")
+	waiters := func() int {
+		mgr.mu.Lock()
+		defer mgr.mu.Unlock()
+		if j := mgr.inflight[key]; j != nil {
+			return j.waiters
+		}
+		return -1
+	}
+	open := func(ctx context.Context) chan error {
+		errs := make(chan error, 1)
+		go func() { _, err := mgr.Open(ctx, "p", "m", "e", resolve); errs <- err }()
+		return errs
+	}
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	errs1 := open(ctx1)
+	<-started
+	cancel1()
+	<-errs1
+	time.Sleep(orphanGrace / 2)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	errs2 := open(ctx2)
+	for waiters() != 1 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(orphanGrace / 4)
+	cancel2()
+	<-errs2
+	// The first caller's timer fires a quarter of the grace from now.
+	select {
+	case <-ended:
+		t.Fatal("the first caller's grace canceled the call the second left")
+	case <-time.After(orphanGrace * 6 / 10):
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call went on after its callers left")
+	}
+	mgr.mu.Lock()
+	_, kept := mgr.inflight[key]
+	mgr.mu.Unlock()
+	if kept {
+		t.Fatal("the job stayed in flight after its grace")
+	}
+	ctx3, cancel3 := context.WithCancel(context.Background())
+	errs3 := open(ctx3)
+	<-started
+	cancel3()
+	<-errs3
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+	<-ended
+}
+
 // Playing an episode right after its preload was canceled takes over
 // the download, rather than cancel it and start anew.
 func TestOpenTakesOverCanceledPreload(t *testing.T) {
