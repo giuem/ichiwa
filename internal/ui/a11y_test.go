@@ -2,10 +2,12 @@ package ui
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	core "github.com/giuem/ichiwa/internal/app"
+	"github.com/giuem/ichiwa/internal/plugin"
 	"github.com/giuem/ichiwa/internal/source/sourcetest"
 
 	"github.com/egoist/mygo/ui"
@@ -242,5 +244,75 @@ func TestSourcePagesSpeak(t *testing.T) {
 	tt.Frame()
 	if app.Search.Shown != "兔子二" {
 		t.Fatalf("searched %q", app.Search.Shown)
+	}
+}
+
+// The pages new with the sources speak: the guide, a plugin's log, the
+// dialog of a record that can't open, an actor's header and the cast.
+func TestNewPagesSpeak(t *testing.T) {
+	app := viewApp(t, darkPalette().contrasted())
+	tt := ui.NewTester(app.content, 1000, 700)
+	tt.UseScreenReader()
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleHeading, "还没有片源"); a.Level != 1 {
+		t.Errorf("the guide's title is at level %d", a.Level)
+	}
+	accessOf(t, tt, ui.RoleButton, "管理片源")
+
+	p, err := plugin.Open(filepath.Join("..", "plugin", "testdata", "example"), plugin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app = viewApp(t, darkPalette().contrasted(), p)
+	app.Go(core.PageSources)
+	app.LogOf = "example"
+	tt = ui.NewTester(app.content, 1000, 700)
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleHeading, "示例片源的日志"); a.Level != 1 {
+		t.Errorf("the log's title is at level %d", a.Level)
+	}
+	accessOf(t, tt, ui.RoleButton, "返回")
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if app.LogOf != "" {
+		t.Error("Esc left the log open")
+	}
+
+	app.Unavailable = &core.Unavailable{Source: "gone", Name: "gone", Title: "丙剧"}
+	tt = ui.NewTester(app.view, 1000, 700)
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleDialog, "片源不可用"); a.Name == "" {
+		t.Error("the dialog has no name")
+	}
+	accessOf(t, tt, ui.RoleButton, "好")
+	accessOf(t, tt, ui.RoleButton, "管理片源")
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if app.Unavailable != nil {
+		t.Error("Esc left the dialog open")
+	}
+
+	app.OpenCollection(Card{Kind: source.CardCollection, ID: "person:1", Title: "李柯以", Image: "x", Shape: source.ShapeCircle})
+	cs := app.Stack[0]
+	cs.First, cs.Header = &source.CollectionPage{}, &source.Header{Title: "李柯以", Meta: []source.Meta{{Value: "女演员"}}, Description: "演员简介"}
+	cs.Results.Loaded, cs.Results.More = true, false
+	tt = ui.NewTester(app.content, 1000, 700)
+	tt.Frame()
+	if a := accessOf(t, tt, ui.RoleHeading, "李柯以"); a.Level != 1 {
+		t.Errorf("the actor's name is at level %d", a.Level)
+	}
+	for _, s := range []string{"女演员", "演员简介"} {
+		if _, ok := tt.Access(s); !ok {
+			t.Errorf("screen readers don't read %q", s)
+		}
+	}
+
+	w := &Watching{App: app.App, SourceID: "example", Show: Card{Kind: source.CardMedia, ID: "s1"},
+		Detail: &Media{People: []Card{{Kind: source.CardCollection, ID: "person:1", Title: "张三", Subtitle: "饰 李四", Shape: source.ShapeCircle}}}}
+	tt = ui.NewTester(func(c *ui.Context) { app.related(c, w) }, 368, 300)
+	tt.Frame()
+	accessOf(t, tt, ui.RoleHeading, "演职人员")
+	if a := accessOf(t, tt, ui.RoleButton, "张三"); a.Description != "饰 李四" || !a.Focusable {
+		t.Errorf("the cast member: %+v", a)
 	}
 }
