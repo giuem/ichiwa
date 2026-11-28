@@ -27,16 +27,11 @@ var logoPNG []byte
 
 var logo, _ = ui.DecodeBitmap(logoPNG)
 
-// Page names.
+// The pages of the sidebar that are not a source's navigation items.
 const (
-	pageRecommend = hongguo.ColRecommend
-	pageLive      = hongguo.ColLive
-	pageComic     = hongguo.ColComic
-	pageRank      = hongguo.ColRank
-	pageFilter    = hongguo.ColFilter
-	pageSearch    = "search"
-	pageHistory   = "history"
-	pageFollows   = "follows"
+	pageSearch  = "search"
+	pageHistory = "history"
+	pageFollows = "follows"
 )
 
 // App is the state the window shows.
@@ -67,18 +62,15 @@ type App struct {
 	initErr  string
 	pal      palette
 
-	page  string
-	feeds map[string]*Feed
-
-	rank   rankState
-	filter filterState
+	page   string
 	search searchState
 	shelf  ui.ScrollState
 	// historyFilter is the history page's filter, in historyFilters.
 	historyFilter int
 
-	// person is an actor's page, over the sidebar's page while it is open.
-	person *personState
+	// stack is the collections opened from cards, over the sidebar's
+	// page, the last on top.
+	stack []*colState
 
 	// narrowed tells the window gave up the width of the folded panel.
 	narrowed bool
@@ -186,11 +178,13 @@ func (app *App) leaveSource() {
 
 // go2 shows a page of the sidebar.
 func (app *App) go2(page string) {
-	if page != app.page || app.person != nil {
+	if page != app.page || len(app.stack) > 0 {
 		app.leavePage()
 	}
 	app.page = page
-	app.person = nil
+	for len(app.stack) > 0 {
+		app.closeCollection()
+	}
 	app.lib.Page = page
 	app.lib.MarkDirty()
 	if app.watch != nil {
@@ -291,7 +285,6 @@ func (app *App) sidebar(c *ui.Context) {
 			})
 			if b.Clicked() {
 				app.dev.logOpen = true
-				app.closePerson()
 			}
 		}
 		ui.Spacer(c)
@@ -329,7 +322,7 @@ func (app *App) navSection(c *ui.Context, title string) {
 
 func (app *App) navItem(c *ui.Context, icon *ui.SVG, label, page string, count int) {
 	p := app.pal
-	selected := app.page == page && app.person == nil && !app.dev.logOpen
+	selected := app.page == page && len(app.stack) == 0 && !app.dev.logOpen
 	b := ui.ButtonBase(c.Key(page)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label(label)
 	if selected {
 		b.Current(ui.CurrentPage)
@@ -374,8 +367,8 @@ func (app *App) content(c *ui.Context) {
 		app.logPage(c)
 		return
 	}
-	if app.person != nil {
-		app.personPage(c)
+	if n := len(app.stack); n > 0 {
+		app.collectionPage(c, app.stack[n-1], true)
 		return
 	}
 	switch app.page {
@@ -389,40 +382,24 @@ func (app *App) content(c *ui.Context) {
 		app.followsPage(c)
 		return
 	}
-	if !app.builtin() {
-		switch {
-		case app.page != "":
-			app.collectionPage(c, app.page)
-		case app.navErr != "":
-			app.centered(c, iconX, "片源加载失败", app.navErr, func() { app.navErr = ""; app.loadNav() })
-		default:
-			app.skeletonGrid(c, 3)
-		}
-		return
-	}
-	switch app.page {
-	case pageRank:
-		app.rankPage(c)
-	case pageFilter:
-		app.filterPage(c)
+	switch {
+	case app.page != "":
+		app.collectionPage(c, app.col(app.page), false)
+	case app.navErr != "":
+		app.centered(c, iconX, "片源加载失败", app.navErr, func() { app.navErr = ""; app.loadNav() })
 	default:
-		app.feedPage(c, app.page)
+		app.skeletonGrid(c, 3)
 	}
 }
 
+// normalizeSavedPage is the page saved by an earlier version as this
+// version names it: the first ones named Hongguo's channels by title.
 func normalizeSavedPage(saved string) string {
 	switch saved {
-	case "推荐":
-		return pageRecommend
-	case "真人剧":
-		return pageLive
-	case "漫剧":
-		return pageComic
-	case pageRecommend, pageLive, pageComic, pageRank, pageFilter, pageSearch, pageHistory, pageFollows:
-		return saved
-	default:
-		return pageRecommend
+	case "推荐", "真人剧", "漫剧":
+		return "channel:" + saved
 	}
+	return saved
 }
 
 // hideWindow takes the window off the screen and leaves the app running.
@@ -440,7 +417,7 @@ func (app *App) hideWindow() {
 
 // Run starts the app and returns when it quits.
 func Run() {
-	app := &App{page: pageRecommend, feeds: map[string]*Feed{}}
+	app := &App{}
 	mygo.App.WhenReady(func() {
 		dataDir, _ := mygo.App.Path(mygo.PathUserData)
 		cacheDir, _ := mygo.App.Path(mygo.PathCache)
@@ -458,6 +435,7 @@ func Run() {
 			app.sources.add(src)
 			if nav, nerr := src.Navigation(context.Background()); nerr == nil {
 				app.nav = nav
+				app.page = app.startPage(nav)
 			}
 		}
 		if app.initErr == "" {

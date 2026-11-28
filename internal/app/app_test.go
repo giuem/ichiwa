@@ -609,10 +609,9 @@ func TestSourceCancellationShowsError(t *testing.T) {
 		},
 	}
 	app := &App{
-		src:   src,
-		feeds: map[string]*Feed{},
-		lib:   testLibrary(t),
-		post:  func(fn func()) { done <- fn },
+		src:  src,
+		lib:  testLibrary(t),
+		post: func(fn func()) { done <- fn },
 	}
 	drain := func() {
 		t.Helper()
@@ -624,8 +623,9 @@ func TestSourceCancellationShowsError(t *testing.T) {
 		}
 	}
 
-	f := app.feed(pageRecommend)
-	app.loadMore(f)
+	app.warmed = true
+	f := &app.col("home").results
+	app.ensure(app.col("home"))
 	drain()
 	if f.err == "" || f.loading || !f.loaded {
 		t.Fatalf("canceled feed: err=%q loading=%v loaded=%v", f.err, f.loading, f.loaded)
@@ -635,14 +635,6 @@ func TestSourceCancellationShowsError(t *testing.T) {
 	drain()
 	if app.search.hotErr == "" || app.search.hotBusy {
 		t.Fatalf("canceled hot: err=%q busy=%v", app.search.hotErr, app.search.hotBusy)
-	}
-
-	ps := &personState{actor: Card{Kind: source.CardCollection, ID: "person:1", Title: "演员"}}
-	app.person = ps
-	app.loadPerson(ps)
-	drain()
-	if ps.headerErr == "" || ps.headerBusy {
-		t.Fatalf("canceled person: err=%q busy=%v", ps.headerErr, ps.headerBusy)
 	}
 
 	w := &Watching{app: app, detail: &Media{Episodes: []source.Episode{{ID: "e1"}, {ID: "e2"}}}}

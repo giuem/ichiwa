@@ -34,7 +34,6 @@ func TestPluginSource(t *testing.T) {
 	builtin := &sourcetest.Source{InfoData: source.Info{ID: "hongguo", Name: "红果"}}
 	app := &App{
 		src:     builtin,
-		feeds:   map[string]*Feed{},
 		pal:     lightPalette(),
 		posters: newPosters(t.TempDir(), func() {}),
 		lib:     testLibrary(t),
@@ -54,7 +53,7 @@ func TestPluginSource(t *testing.T) {
 	}
 
 	app.useSource(p)
-	if app.builtin() || app.page != "" {
+	if app.page != "" {
 		t.Fatalf("page = %q", app.page)
 	}
 	drain() // navigation
@@ -130,7 +129,7 @@ func TestPluginSource(t *testing.T) {
 
 	// Back to the built-in source.
 	app.useSource(builtin)
-	if !app.builtin() || app.page != pageRecommend || len(app.cols) != 0 {
+	if app.page != "" || len(app.cols) != 0 {
 		t.Fatalf("back to the built-in: page %q", app.page)
 	}
 	drain()
@@ -246,7 +245,6 @@ func devApp(t *testing.T) (*App, source.Source, chan func()) {
 	builtin := &sourcetest.Source{InfoData: source.Info{ID: "hongguo", Name: "红果"}}
 	app := &App{
 		src:     builtin,
-		feeds:   map[string]*Feed{},
 		pal:     lightPalette(),
 		posters: newPosters(t.TempDir(), func() {}),
 		lib:     testLibrary(t),

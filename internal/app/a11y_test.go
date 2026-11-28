@@ -11,7 +11,7 @@ import (
 
 func a11yApp(t *testing.T) *App {
 	t.Helper()
-	return &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t), feeds: map[string]*Feed{}}
+	return &App{pal: darkPalette(), posters: newPosters(t.TempDir(), func() {}), lib: testLibrary(t)}
 }
 
 func accessOf(t *testing.T, tt *ui.Tester, r ui.Role, name string) ui.AccessInfo {
@@ -96,8 +96,8 @@ func TestPlayerControlsSpeak(t *testing.T) {
 // Filters are radio groups, with the row's all-option saying what it does.
 func TestFilterOptionsAreRadios(t *testing.T) {
 	app := a11yApp(t)
-	app.filter.rowsOK = true
-	app.filter.rows = []FilterRow{{
+	cs := newCol("filter", "筛选")
+	cs.rows = []FilterRow{{
 		Key:   "k",
 		Title: "题材",
 		Options: []source.FilterOption{
@@ -106,8 +106,8 @@ func TestFilterOptionsAreRadios(t *testing.T) {
 		},
 		Value: "v",
 	}}
-	app.filter.chosen = map[string]string{"k": "v"}
-	tt := ui.NewTester(app.filterPanel, 900, 600)
+	cs.chosen = map[string]string{"k": "v"}
+	tt := ui.NewTester(func(c *ui.Context) { app.filterRows(c, cs) }, 900, 600)
 	tt.Frame()
 	accessOf(t, tt, ui.RoleRadioGroup, "题材")
 	if a := accessOf(t, tt, ui.RoleRadio, "甜宠"); !a.Checked {
@@ -121,10 +121,10 @@ func TestFilterOptionsAreRadios(t *testing.T) {
 // The sidebar says which page shows, and page titles are headings.
 func TestNavigationSaysCurrentPage(t *testing.T) {
 	app := a11yApp(t)
-	app.page = pageRank
+	app.page = "rank"
 	tt := ui.NewTester(func(c *ui.Context) {
-		app.navItem(c, iconHome, "推荐", pageRecommend, 0)
-		app.navItem(c, iconTrophy, "排行榜", pageRank, 3)
+		app.navItem(c, iconHome, "推荐", "channel:推荐", 0)
+		app.navItem(c, iconTrophy, "排行榜", "rank", 3)
 		app.header(c, "排行榜", "", nil)
 	}, 900, 600)
 	tt.Frame()

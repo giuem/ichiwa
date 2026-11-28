@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -61,10 +64,6 @@ type Feed struct {
 	// again (protocol §10); the error stays until then.
 	retryAt time.Time
 	waitErr string
-	// exact takes a page without a cursor as the end, as the protocol
-	// says, rather than ask again: for plugins, whose lists end when
-	// they say.
-	exact bool
 
 	// cache is the file that keeps the first items of the feed for the
 	// next launch, empty for a feed not kept. stale tells the items came
@@ -104,7 +103,7 @@ func (f *Feed) reset() {
 	if f.end != nil {
 		f.end()
 	}
-	*f = Feed{src: f.src, fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache, exact: f.exact,
+	*f = Feed{src: f.src, fetch: f.fetch, onPage: f.onPage, more: true, gen: f.gen + 1, cache: f.cache,
 		retryAt: f.retryAt, waitErr: f.waitErr}
 }
 
@@ -243,10 +242,11 @@ func (app *App) countdown(until time.Time) {
 	}()
 }
 
-// A source ends a list early now and then: Hongguo's feeds answer a page
-// with no way on, or with only repeats, while asking again goes on. So a
-// feed takes an end for real only after maxStalls pages in a row bring
-// nothing new, asking each time a little later.
+// A list ends where its source gives no cursor (protocol §6). A source
+// may also ask for the same list again, as Hongguo does where its server
+// says a list ended while asking again goes on; so a feed ends, too,
+// after maxStalls pages in a row bring nothing new, asking each time a
+// little later.
 const (
 	maxStalls = 3
 	stallWait = 700 * time.Millisecond
@@ -255,16 +255,14 @@ const (
 // step takes in where page p leaves f, which it added to if fresh, and
 // reports whether more may come.
 func (f *Feed) step(p feedPage, fresh bool) bool {
-	end := !p.more || p.cursor == ""
-	if !end {
-		f.cursor = p.cursor // a page of repeats still moves on
+	if !p.more || p.cursor == "" {
+		return false
 	}
+	f.cursor = p.cursor // a page of repeats still moves on
 	switch {
-	case fresh && !end:
+	case fresh:
 		f.stalls = 0
 		return true
-	case f.exact && end:
-		return false
 	case len(f.items) == 0:
 		return false // nothing to show: an empty search, say, ends at once
 	}
@@ -354,48 +352,69 @@ func visible(f *Feed, n int) []Card {
 	return f.items
 }
 
-func (app *App) feed(colID string) *Feed {
-	f := app.feeds[colID]
-	if f == nil {
-		f = newFeed(app.src, collectionFetch(source.CollectionRequest{ID: colID}))
-		if name := feedCacheNames[colID]; name != "" && app.cacheDir != "" {
-			f.cache = filepath.Join(app.cacheDir, "feeds", app.sourceID(), name+".json")
-			f.items = loadFeedCache(f.cache)
-			if len(f.items) == 0 && app.sourceID() == hongguo.SourceID {
-				legacyPath := filepath.Join(app.cacheDir, "feeds", name+".json")
-				if items := loadLegacyFeedCache(legacyPath); len(items) > 0 {
-					f.items = items
-					// The old file goes only once the new one holds its items.
-					if err := writeFeedCache(f.cache, items); err == nil {
-						_ = os.Remove(legacyPath)
-					}
-				}
-			}
-			f.stale = len(f.items) > 0
-		}
-		app.feeds[colID] = f
-	}
-	return f
+// feedCache is what a feed keeps for the next launch: the header of its
+// page and its first items.
+type feedCache struct {
+	Header *source.Header `json:"header,omitempty"`
+	Items  []Card         `json:"items"`
 }
 
-// The channels whose first items are kept for the next launch, which
-// shows them at once and then what comes, and their files.
-var feedCacheNames = map[string]string{pageRecommend: "recommend", pageLive: "live", pageComic: "comic"}
+// feedCachePath is the file that keeps the first items of a collection of
+// a source, named by neither ID as given (protocol §3).
+func feedCachePath(cacheDir, sourceID, colID string) string {
+	sum := sha256.Sum256([]byte(sourceID + "\x00" + colID))
+	return filepath.Join(cacheDir, "feeds", hex.EncodeToString(sum[:16])+".json")
+}
 
-// feedCacheSize is how many items of a channel are kept: a few screens.
+// feedCacheSize is how many items of a collection are kept: a few screens.
 const feedCacheSize = 48
 
-func loadFeedCache(path string) []Card {
+func loadFeedCache(path string) *feedCache {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	var items []Card
-	if err := json.Unmarshal(data, &items); err != nil {
+	var c feedCache
+	if err := json.Unmarshal(data, &c); err != nil {
 		log.Printf("feeds: %s is unreadable: %v", path, err)
 		return nil
 	}
-	return items
+	return &c
+}
+
+// legacyFeedNames are the files that kept Hongguo's channels before the
+// collections were named by hash: by source, and before that for the
+// only source.
+var legacyFeedNames = map[string]string{"channel:推荐": "recommend", "channel:真人剧": "live", "channel:漫剧": "comic"}
+
+// legacyFeedCache reads what an earlier version kept of a Hongguo channel
+// and moves it to path.
+func (app *App) legacyFeedCache(colID, path string) *feedCache {
+	name := legacyFeedNames[colID]
+	if name == "" || app.sourceID() != hongguo.SourceID {
+		return nil
+	}
+	var items []Card
+	bySource := filepath.Join(app.cacheDir, "feeds", hongguo.SourceID, name+".json")
+	oldest := filepath.Join(app.cacheDir, "feeds", name+".json")
+	if data, err := os.ReadFile(bySource); err == nil {
+		if json.Unmarshal(data, &items) != nil {
+			items = nil
+		}
+		defer os.Remove(bySource)
+	}
+	if len(items) == 0 {
+		items = loadLegacyFeedCache(oldest)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	c := &feedCache{Items: items}
+	// The old files go only once the new one holds their items.
+	if err := writeFeedCache(path, c); err == nil {
+		_ = os.Remove(oldest)
+	}
+	return c
 }
 
 type legacyFeedShow struct {
@@ -441,27 +460,29 @@ func loadLegacyFeedCache(path string) []Card {
 	return out
 }
 
-// saveFeeds writes the first items of the channels that changed, on a
-// goroutine unless wait.
+// saveFeeds writes the first items of the collections that changed, on a
+// goroutine unless wait. Only pages without filters are kept: what a
+// filter shows depends on a choice the next launch starts without.
 func (app *App) saveFeeds(wait bool) {
 	type job struct {
 		path  string
-		items []Card
+		cache *feedCache
 	}
 	var jobs []job
-	for _, f := range app.feeds {
-		if f.cache == "" || f.stale || !f.changed || len(f.items) == 0 {
+	for _, cs := range app.cols {
+		f := &cs.results
+		if f.cache == "" || f.stale || !f.changed || len(f.items) == 0 || cs.first == nil || len(cs.first.Filters) > 0 {
 			continue
 		}
 		f.changed = false
-		jobs = append(jobs, job{f.cache, slices.Clone(f.items[:min(len(f.items), feedCacheSize)])})
+		jobs = append(jobs, job{f.cache, &feedCache{Header: cs.header, Items: slices.Clone(f.items[:min(len(f.items), feedCacheSize)])}})
 	}
 	if len(jobs) == 0 {
 		return
 	}
 	write := func() {
 		for _, j := range jobs {
-			if err := writeFeedCache(j.path, j.items); err != nil {
+			if err := writeFeedCache(j.path, j.cache); err != nil {
 				log.Printf("feeds: saving %s: %v", j.path, err)
 			}
 		}
@@ -473,8 +494,8 @@ func (app *App) saveFeeds(wait bool) {
 	}
 }
 
-func writeFeedCache(path string, items []Card) error {
-	data, err := json.Marshal(items)
+func writeFeedCache(path string, c *feedCache) error {
+	data, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
@@ -488,25 +509,22 @@ func writeFeedCache(path string, items []Card) error {
 	return os.Rename(tmp, path)
 }
 
-// warm asks once for the first pages of the other pages, so they show at
-// once when opened.
+// warm asks once for the first pages of the source's other pages and its
+// search home, so they show at once when opened.
 func (app *App) warm() {
 	if app.warmed || app.src == nil {
 		return
 	}
 	app.warmed = true
-	if !app.builtin() { // a plugin's pages load as they are opened
-		app.loadHot()
-		return
-	}
 	// For the source, not the page: they are for the pages to come.
-	for _, ch := range []string{pageRecommend, pageLive, pageComic} {
-		if f := app.feed(ch); !f.loaded {
-			app.loadMoreIn(app.srcContext(), f)
+	for _, it := range app.nav {
+		cs := app.col(it.ID)
+		if cs.results.loaded || cs.results.loading {
+			continue
 		}
-	}
-	if app.rank.list.fetch == nil {
-		app.loadRankIn(app.srcContext(), nil)
+		cs.results.setFetch(app.src, collectionFetch(source.CollectionRequest{ID: cs.id, Filters: maps.Clone(cs.chosen)}))
+		cs.results.onPage = cs.applyPage
+		app.loadMoreIn(app.srcContext(), &cs.results)
 	}
 	app.loadHot()
 }

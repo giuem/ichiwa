@@ -170,7 +170,7 @@ func (app *App) saveDevSettings() {
 		return
 	}
 	s := devSettings{Dir: app.dev.dir}
-	if app.src != nil && !app.builtin() {
+	if app.src != nil && app.src == source.Source(app.dev.plugin) {
 		s.Current = app.src.Info().ID
 	}
 	path := app.devSettingsPath()
@@ -352,19 +352,12 @@ func (app *App) useSource(s source.Source) {
 	app.leaveSource()
 	app.src = s
 	app.nav, app.navErr = nil, ""
-	app.feeds = map[string]*Feed{}
 	app.cols = map[string]*colState{}
-	app.filter = filterState{}
-	app.rank = rankState{}
 	app.search = searchState{}
-	app.person = nil
+	app.stack = nil
 	app.warmed = false
 	app.dev.logOpen = false
-	if app.builtin() {
-		app.page = pageRecommend
-	} else {
-		app.page = ""
-	}
+	app.page = ""
 	app.loadNav()
 	if app.win != nil {
 		app.setMenu()
@@ -377,10 +370,9 @@ func (app *App) useSource(s source.Source) {
 // the player open.
 func (app *App) refreshSource() {
 	app.leaveSource()
-	app.feeds = map[string]*Feed{}
 	app.cols = map[string]*colState{}
 	app.search = searchState{}
-	app.person = nil
+	app.stack = nil
 	app.warmed = false
 	src, page := app.src, app.page
 	ctx := app.srcContext()
@@ -412,12 +404,30 @@ func (app *App) refreshSource() {
 	})
 }
 
-// builtin tells whether the source shown is built into the app, as
-// Hongguo is, whose pages the app draws its own way; a plugin's pages are
-// drawn from its collections.
-func (app *App) builtin() bool {
-	_, isPlugin := app.src.(*plugin.Plugin)
-	return !isPlugin
+// startPage is the page to show of a source with navigation nav: the
+// one saved, if it has it, or its first.
+func (app *App) startPage(nav []source.NavItem) string {
+	saved := ""
+	if app.lib != nil {
+		saved = normalizeSavedPage(app.lib.Page)
+	}
+	switch saved {
+	case pageSearch:
+		if app.hasCap(source.CapSearch) {
+			return saved
+		}
+	case pageHistory, pageFollows:
+		return saved
+	}
+	for _, it := range nav {
+		if it.ID == saved {
+			return saved
+		}
+	}
+	if len(nav) > 0 {
+		return nav[0].ID
+	}
+	return ""
 }
 
 // loadNav loads the navigation of the source shown.
@@ -440,15 +450,8 @@ func (app *App) loadNav() {
 			return
 		}
 		app.nav = nav
-		if app.page == "" && len(nav) > 0 {
-			app.page = nav[0].ID
-			if saved := app.lib.Page; saved != "" {
-				for _, it := range nav {
-					if it.ID == saved {
-						app.page = saved
-					}
-				}
-			}
+		if app.page == "" {
+			app.page = app.startPage(nav)
 		}
 	})
 }
@@ -477,7 +480,6 @@ func (app *App) sourceMenu(m *ui.Menu) {
 			}
 			if app.dev.plugin != nil && m.Item("插件日志").Chosen() {
 				app.dev.logOpen = true
-				app.closePerson()
 			}
 			if m.Item("关闭开发者模式").Chosen() {
 				app.unloadDev()

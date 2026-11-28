@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo"
 
 	"github.com/giuem/ichiwa/internal/source"
+	"github.com/giuem/ichiwa/internal/sources/hongguo"
 )
 
 // tour walks the pages and saves a screenshot of each into the directory
@@ -29,77 +30,73 @@ func (app *App) tour() {
 			_ = os.WriteFile(filepath.Join(dir, name+".png"), png, 0o644)
 			fmt.Fprintln(os.Stderr, "shot", name)
 		}
-		goTo := func(page string) { app.win.Update(func() { app.page = page }) }
-		if !app.builtin() {
-			app.pluginTour(shot, goTo)
-			mygo.RunOnMain(func() { mygo.App.Quit() })
-			return
+		goTo := func(page string) { app.win.Update(func() { app.go2(page) }) }
+		hg := app.sourceID() == hongguo.SourceID
+		query, filterKey, filterValue, actors := "兔子", "genre", "奇幻", ""
+		if hg {
+			query, filterValue, actors = "总裁", "comic_series", "ranklist_celebrity"
 		}
-		shot("1-home", 8*time.Second)
-		goTo(pageComic)
-		shot("2-comic", 6*time.Second)
-		goTo(pageRank)
-		shot("3-rank", 6*time.Second)
+		var nav []source.NavItem
+		mygo.RunOnMain(func() { nav = app.nav })
+		shot("01-home", 8*time.Second)
+		for i, it := range nav[1:] {
+			goTo(it.ID)
+			shot(fmt.Sprintf("%02d-nav-%d", i+2, i+2), 6*time.Second)
+		}
 		goTo(pageSearch)
-		shot("4-search", 5*time.Second)
-		app.win.Update(func() { app.search.query = "总裁"; app.runSearch("总裁") })
-		shot("5-results", 6*time.Second)
+		shot("10-search", 5*time.Second)
+		app.win.Update(func() { app.search.query = query[:3]; app.typed(query[:3]) })
+		shot("11-suggest", 3*time.Second)
+		app.win.Update(func() { app.search.query = query; app.runSearch(query) })
+		shot("12-results", 6*time.Second)
 		app.win.Update(func() {
-			if f := app.feeds[pageRecommend]; f != nil && len(f.items) > 0 {
-				app.open(app.sourceID(), f.items[0], -1)
+			if cs := app.col(nav[0].ID); len(cs.results.items) > 0 {
+				app.lib.Danmaku = true
+				app.open(app.sourceID(), cs.results.items[0], -1)
 			}
 		})
-		shot("6-player", 15*time.Second)
+		shot("13-player", 15*time.Second)
 		app.win.Update(func() {
 			if app.watch != nil {
 				app.watch.togglePlay()
 			}
 		})
-		shot("7-player-paused", 2*time.Second)
-		app.win.Update(func() { app.closeWatch(); app.page = pageHistory })
-		shot("8-history", 2*time.Second)
-		goTo(pageFilter)
-		shot("9-filter", 6*time.Second)
-		app.win.Update(func() { app.filter.choose("genre", "comic_series") })
-		shot("10-filter-comic", 6*time.Second)
-		app.win.Update(func() { app.page = pageRank; app.loadRank(map[string]string{"content": "ranklist_celebrity"}) })
-		shot("11-actors", 6*time.Second)
+		shot("14-player-paused", 2*time.Second)
+		app.win.Update(func() { app.closeWatch(); app.go2(pageHistory) })
+		shot("15-history", 2*time.Second)
+		goTo(pageFollows)
+		shot("16-follows", 2*time.Second)
+		goTo("filter")
+		shot("17-filter", 6*time.Second)
+		app.win.Update(func() { app.col("filter").choose(filterKey, filterValue) })
+		shot("18-filter-chosen", 6*time.Second)
+		if !hg {
+			app.win.Update(func() { app.col("filter").choose(filterKey, "broken") })
+			shot("19-filter-broken", 3*time.Second)
+		}
+		goTo("rank")
+		if actors != "" {
+			app.win.Update(func() { app.col("rank").choose("content", actors) })
+		}
+		shot("20-rank", 6*time.Second)
 		app.win.Update(func() {
-			if len(app.rank.list.items) > 0 && app.rank.list.items[0].Kind == source.CardCollection {
-				app.openPerson(app.rank.list.items[0])
+			for _, it := range app.col("rank").results.items {
+				if it.Kind == source.CardCollection {
+					app.openCollection(it)
+					return
+				}
 			}
+			app.openCollection(Card{Kind: source.CardCollection, ID: "person:p1", Title: "大兔子"})
 		})
-		shot("12-person", 6*time.Second)
+		shot("21-person", 6*time.Second)
+		if !hg {
+			app.win.Update(func() {
+				app.open(app.sourceID(), Card{Kind: source.CardMedia, ID: "bipbop", Title: "测试信号"}, 0)
+			})
+			shot("22-player-hls", 12*time.Second)
+			app.win.Update(func() { app.closeWatch(); app.dev.logOpen = true })
+			shot("23-log", 2*time.Second)
+		}
 		mygo.RunOnMain(func() { mygo.App.Quit() })
 	}()
-}
-
-// pluginTour walks the pages of a plugin loaded with ICHIWA_PLUGIN_DIR,
-// written for the example plugin (internal/plugin/testdata/example).
-func (app *App) pluginTour(shot func(string, time.Duration), goTo func(string)) {
-	shot("p1-home", 6*time.Second)
-	goTo("rank")
-	shot("p2-rank", 3*time.Second)
-	goTo("filter")
-	shot("p3-filter", 3*time.Second)
-	app.win.Update(func() { app.col("filter").choose("genre", "奇幻") })
-	shot("p4-filter-fantasy", 3*time.Second)
-	app.win.Update(func() { app.col("filter").choose("genre", "broken") })
-	shot("p5-filter-broken", 3*time.Second)
-	app.win.Update(func() { app.openPerson(Card{Kind: source.CardCollection, ID: "person:p1", Title: "大兔子"}) })
-	shot("p6-person", 3*time.Second)
-	app.win.Update(func() { app.person = nil; app.page = pageSearch; app.search.query = "兔子"; app.runSearch("兔子") })
-	shot("p7-search", 3*time.Second)
-	app.win.Update(func() {
-		app.lib.Danmaku = true
-		app.open(app.sourceID(), Card{Kind: source.CardMedia, ID: "bunny", Title: "大兔子"}, 0)
-	})
-	shot("p8-player-mp4", 12*time.Second)
-	shot("p9-player-mp4-later", 4*time.Second)
-	app.win.Update(func() { app.open(app.sourceID(), Card{Kind: source.CardMedia, ID: "bipbop", Title: "测试信号"}, 0) })
-	shot("p10-player-hls", 12*time.Second)
-	app.win.Update(func() { app.closeWatch(); app.page = pageHistory })
-	shot("p11-history", 2*time.Second)
-	app.win.Update(func() { app.dev.logOpen = true })
-	shot("p12-log", 2*time.Second)
 }
