@@ -45,18 +45,6 @@ func TestCollectionChoose(t *testing.T) {
 	}
 }
 
-func drainer(t *testing.T, done chan func()) func() {
-	return func() {
-		t.Helper()
-		select {
-		case fn := <-done:
-			fn()
-		case <-time.After(5 * time.Second):
-			t.Fatal("timed out waiting for async callback")
-		}
-	}
-}
-
 // Refreshing a page drops its sections, canceling their calls, and leaving
 // an opened collection cancels what it was still loading.
 func TestRefreshAndLeaveCancelSections(t *testing.T) {

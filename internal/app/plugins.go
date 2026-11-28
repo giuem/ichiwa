@@ -20,9 +20,8 @@ import (
 )
 
 // The sources the app knows: the built-in Hongguo and a plugin loaded
-// from a folder in the developer mode (docs/plugin-design.md §13). The
-// switcher and the management page come in a later step; for now the
-// sidebar's menu switches between them.
+// from a folder in the developer mode (docs/plugin-design.md §13), which
+// the sidebar's switcher shows and the sources page manages.
 
 // registry holds the loaded sources: the built-in ones, and the
 // developer mode's plugin, which stands in for a built-in source of its

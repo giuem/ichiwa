@@ -34,5 +34,3 @@ func (app *App) pickDevFolder() {
 	app.UseSource(app.Dev.Plugin)
 	app.Toast = "已加载插件 " + app.Dev.Plugin.Info().Name
 }
-
-// logPageLines is how much of the log the page shows: the newest lines.

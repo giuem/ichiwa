@@ -345,7 +345,6 @@ func (app *App) hideWindow() {
 }
 
 // Run starts the app and returns when it quits.
-// Run starts the app and returns when it quits.
 func Run() {
 	app := &App{}
 	mygo.App.WhenReady(func() {

@@ -22,8 +22,6 @@ const keyLinger = 1500 * time.Millisecond
 // after the pointer last moved.
 const chromeLinger = 3 * time.Second
 
-// syncOnTop tells the window to stay on top or not: a full screen window
-// has nothing to stay above.
 // toggleMini asks for the small window, or for the window it was; a full
 // screen window keeps its size.
 func (app *App) toggleMini() {
@@ -32,6 +30,8 @@ func (app *App) toggleMini() {
 	}
 }
 
+// syncOnTop tells the window to stay on top or not: a full screen window
+// has nothing to stay above.
 func (app *App) syncOnTop(full bool) { app.SetAlwaysOnTop(app.Lib.OnTop && !full) }
 
 // watchUI is what the view keeps of the player page.

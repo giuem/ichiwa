@@ -2,17 +2,11 @@ package app
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/giuem/ichiwa/internal/source"
 )
-
-// joinNonEmpty joins what there is of parts, as one line to read.
-func joinNonEmpty(parts ...string) string {
-	return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), "，")
-}
 
 func ternary[T any](cond bool, a, b T) T {
 	if cond {
@@ -21,13 +15,14 @@ func ternary[T any](cond bool, a, b T) T {
 	return b
 }
 
+// NavTitle is the title of the navigation item id.
 func (app *App) NavTitle(id string) string {
 	for _, it := range app.Nav {
 		if it.ID == id {
 			return it.Title
 		}
 	}
-	return strings.TrimPrefix(id, "channel:")
+	return id
 }
 
 type searchState struct {

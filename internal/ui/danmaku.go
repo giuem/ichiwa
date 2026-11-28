@@ -102,19 +102,16 @@ type danmakuItem struct {
 // out when no lane has room. Lanes are given as the video reaches each
 // comment, so that seeking or resizing just gives them again from there.
 type danmaku struct {
-	episode string          // whose comments these are
-	seen    map[string]bool // the comments taken, by ID
-	cancel  func()          // stops reading them
-	done    bool            // all read
-	Items   []danmakuItem   // by when they appear
-	counts  []int           // how many viewers sent each
-	widths  []float32       // of their text, measured as they get a lane
-	lanes   []int           // the lane of each, -1 for none
-	next    int             // the first not given a lane yet
-	tails   []int           // the last comment given each lane, -1 for none
-	width   float32         // of the stage the lanes are for
-	style   danmakuStyle    // the lanes are for
-	last    time.Duration   // where the video was when lanes were last given
+	seen   map[string]bool // the comments taken, by ID
+	Items  []danmakuItem   // by when they appear
+	counts []int           // how many viewers sent each
+	widths []float32       // of their text, measured as they get a lane
+	lanes  []int           // the lane of each, -1 for none
+	next   int             // the first not given a lane yet
+	tails  []int           // the last comment given each lane, -1 for none
+	width  float32         // of the stage the lanes are for
+	style  danmakuStyle    // the lanes are for
+	last   time.Duration   // where the video was when lanes were last given
 }
 
 // add takes a page of comments in. A comment already taken is left out,

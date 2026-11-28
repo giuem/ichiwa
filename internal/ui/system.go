@@ -110,8 +110,6 @@ func (app *App) mediaKeys() {
 	})
 }
 
-// nowPlaying shows the episode in Control Center.
-
 // NowPlaying shows the episode in Control Center, nil for nothing.
 func (app *App) NowPlaying(n *core.NowPlaying) {
 	if n == nil {

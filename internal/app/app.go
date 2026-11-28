@@ -288,7 +288,7 @@ func (app *App) leaveSource() {
 	app.srcCtx, app.srcStop = nil, nil
 }
 
-// go2 shows a page of the sidebar.
+// Go shows a page of the sidebar.
 func (app *App) Go(page string) {
 	if page != app.Page || len(app.Stack) > 0 {
 		app.leavePage()
