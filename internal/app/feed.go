@@ -490,16 +490,21 @@ func loadLegacyFeedCache(path string) []Card {
 	return out
 }
 
-// saveFeeds writes the first items of the collections that changed, on a
-// goroutine unless wait. Only pages without filters are kept: what a
-// filter shows depends on a choice the next launch starts without.
+// SaveFeeds writes the first items of the collections that changed, of
+// every source the app showed, on a goroutine unless wait. Only pages
+// without filters are kept: what a filter shows depends on a choice the
+// next launch starts without.
 func (app *App) SaveFeeds(wait bool) {
 	type job struct {
 		path  string
 		cache *feedCache
 	}
 	var jobs []job
-	for _, cs := range app.cols {
+	cols := slices.Collect(maps.Values(app.cols))
+	for _, b := range app.kept { // sources left keep theirs until the app quits
+		cols = slices.AppendSeq(cols, maps.Values(b.cols))
+	}
+	for _, cs := range cols {
 		f := &cs.Results
 		if f.cache == "" || f.stale || !f.changed || len(f.Items) == 0 || cs.First == nil || len(cs.First.Filters) > 0 {
 			continue

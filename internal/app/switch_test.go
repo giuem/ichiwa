@@ -182,3 +182,21 @@ func TestCoversCompleteAfterSwitch(t *testing.T) {
 		t.Errorf("items = %+v", it)
 	}
 }
+
+// The pages of a source left are saved for the next launch too.
+func TestSaveFeedsOfSourcesLeft(t *testing.T) {
+	a, b := navSource("a", "a1"), navSource("b", "b1")
+	app, run := cancelApp(t, a)
+	app.CacheDir = t.TempDir()
+	app.Sources.Add(b)
+	app.UseSource(a)
+	run(5 * time.Second)
+	app.Ensure(app.Col("a1"))
+	run(5 * time.Second)
+	app.SwitchSource(b)
+	run(5 * time.Second)
+	app.SaveFeeds(true)
+	if c := loadFeedCache(feedCachePath(app.CacheDir, "a", "a1")); c == nil || len(c.Items) != 1 {
+		t.Errorf("a's page wasn't saved: %+v", c)
+	}
+}
