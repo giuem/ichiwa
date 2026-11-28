@@ -176,19 +176,26 @@ func New(cfg Config) *App {
 			delete(app.Lib.Off, shown)
 		}
 	}
+	app.start(shown)
+	return app
+}
+
+// start shows the source shown last, shown, where the user left it.
+func (app *App) start(shown string) {
 	s := app.Sources.Get(shown)
 	if s == nil || !app.SourceOn(shown) {
 		s = app.firstOn()
 	}
-	saved := app.Page
+	saved := normalizeSavedPage(app.Lib.Page)
 	app.UseSource(s)
-	if s != nil && s.Info().ID == shown {
-		app.srcPage = saved // where the user left it
-	}
-	if appPage(saved) {
+	switch {
+	case appPage(saved):
 		app.Page = saved
+	case s != nil && (shown == "" || s.Info().ID == shown):
+		// Where the user left it, or, saved before the app had
+		// sources, where they left the one it had.
+		app.srcPage = saved
 	}
-	return app
 }
 
 func (app *App) dispatch(fn func()) {

@@ -63,12 +63,12 @@ func (app *App) SetSourceOn(id string, on bool) {
 	switch {
 	case !on && app.Src != nil && app.Src.Info().ID == id:
 		app.UseSource(app.firstOn())
-		app.Page = PageSources // the page that turned it off stays
+		app.Page, app.Lib.Page = PageSources, PageSources // the page that turned it off stays
 	case on && app.Src == nil:
 		page := app.Page
 		app.UseSource(app.Sources.Get(id))
 		if appPage(page) {
-			app.Page = page
+			app.Page, app.Lib.Page = page, page
 		}
 	}
 }
@@ -152,6 +152,10 @@ func (app *App) show(s source.Source, b *browse) {
 		app.LoadNav()
 	} else if app.Page == "" {
 		app.Page = startPage(app.Nav, "", app.HasCap(source.CapSearch))
+		app.srcPage = app.Page
+	}
+	if app.Page != "" {
+		app.Lib.Page = app.Page // else LoadNav saves the first
 	}
 }
 
