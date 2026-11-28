@@ -200,3 +200,22 @@ func (app *App) SectionFeed(feeds map[string]*Feed, src source.Source, id string
 func (app *App) ColSection(cs *Collection, id string) *Feed {
 	return app.SectionFeed(cs.sections, cs.Results.Src, id)
 }
+
+// OpenCollectionOf opens a collection of the source sourceID over its
+// pages, leaving the player page: from the details of a drama of another
+// source, that source shows.
+func (app *App) OpenCollectionOf(sourceID string, a Card) {
+	if sourceID != "" && sourceID != app.SourceID() {
+		if !app.Available(sourceID) {
+			app.Unavailable = &Unavailable{Source: sourceID, Name: app.SourceName(sourceID), Title: a.Title,
+				Installed: app.Sources.Get(sourceID) != nil}
+			return
+		}
+		app.SwitchSource(app.Sources.Get(sourceID))
+	}
+	app.CloseWatch()
+	if appPage(app.Page) {
+		app.Go(startPage(app.Nav, app.srcPage, app.HasCap(source.CapSearch)))
+	}
+	app.OpenCollection(a)
+}

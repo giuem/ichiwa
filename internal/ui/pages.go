@@ -137,9 +137,13 @@ func cardBadge(s Card) string {
 
 func episodesExtras(_ int, s Card) cardExtras { return cardExtras{badge: cardBadge(s)} }
 
-func (app *App) openCard(sourceID string, s Card) {
+func (app *App) openCard(sourceID string, s Card) { app.openFrom(sourceID, s) }
+
+// openFrom opens a card of the source sourceID: a drama's player page, or
+// a collection over the pages of its source.
+func (app *App) openFrom(sourceID string, s Card) {
 	if s.Kind == source.CardCollection {
-		app.OpenCollection(s)
+		app.OpenCollectionOf(sourceID, s)
 		return
 	}
 	app.Open(sourceID, s, -1)
@@ -476,8 +480,7 @@ func (app *App) historyPage(c *ui.Context) {
 				badge: watchBadge(w),
 				under: func() string {
 					app.watchBar(c, w)
-					ui.Text(c, ago(w)).FontSize(11).TextColor(p.muted)
-					return ago(w)
+					return app.recordLine(c, w.Source, ago(w))
 				},
 				corner: func() {
 					x := ui.ButtonBase(c.Key("forget")).Label("移除“" + s.Title + "”的记录")
@@ -511,11 +514,8 @@ func (app *App) followsPage(c *ui.Context) {
 			w := app.Lib.History[fl.Ref()]
 			if w == nil {
 				return cardExtras{
-					badge: cardBadge(s),
-					under: func() string {
-						ui.Text(c, "还没看").FontSize(11).TextColor(app.pal.muted)
-						return "还没看"
-					},
+					badge:   cardBadge(s),
+					under:   func() string { return app.recordLine(c, fl.Source, "还没看") },
 					onClick: func() { app.Open(fl.Source, fl.Card, -1) },
 				}
 			}
@@ -523,11 +523,70 @@ func (app *App) followsPage(c *ui.Context) {
 				badge: watchBadge(w),
 				under: func() string {
 					app.watchBar(c, w)
-					ui.Text(c, ago(w)).FontSize(11).TextColor(app.pal.muted)
-					return ago(w)
+					return app.recordLine(c, fl.Source, ago(w))
 				},
 				onClick: func() { app.Open(fl.Source, fl.Card, -1) },
 			}
+		})
+	})
+}
+
+// recordLine says under a record's card which source it is of, marked
+// when it can't open now, and what else there is to say; it returns
+// what screen readers read of it.
+func (app *App) recordLine(c *ui.Context, sourceID, rest string) string {
+	p := app.pal
+	name := app.SourceName(sourceID)
+	off := !app.Available(sourceID)
+	ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+		src := ui.Text(c, name).FontSize(11).FontWeight(500).SingleLine().Shrink(1)
+		if off {
+			src.TextColor(p.faint)
+			ui.Text(c, "不可用").FontSize(10).FontWeight(600).TextColor(p.muted).Padding(0, 4).Radius(4).Background(p.surface).NoWrap()
+		} else {
+			src.TextColor(p.muted)
+		}
+		ui.Text(c, "·").FontSize(11).TextColor(p.faint)
+		ui.Text(c, rest).FontSize(11).TextColor(p.muted).NoWrap()
+	})
+	return joinNonEmpty(name, ternary(off, "片源不可用", ""), rest)
+}
+
+// unavailableDialog tells that a record's source can't open it now, and
+// leads to where it can be turned on.
+func (app *App) unavailableDialog(c *ui.Context) {
+	u := app.Unavailable
+	if u != app.unavail {
+		app.unavail, app.unavailOpen = u, u != nil
+	}
+	if u == nil {
+		return
+	}
+	if !app.unavailOpen { // closed with Esc or a click beside it
+		app.Unavailable, app.unavail = nil, nil
+		return
+	}
+	p := app.pal
+	detail := fmt.Sprintf("“%s”来自片源“%s”，这个片源已关闭。打开它就能接着看，观看记录都还在。", u.Title, u.Name)
+	if !u.Installed {
+		detail = fmt.Sprintf("“%s”来自片源“%s”，这个片源还没有安装。装上以后，观看记录会自动对上。", u.Title, u.Name)
+	}
+	ui.DialogBase(c, &app.unavailOpen, func(backdrop, panel ui.Element) {
+		backdrop.Background(ui.RGBA(0, 0, 0, 0.4))
+		panel.Width(400).Radius(16).Background(p.bg).Padding(24).Gap(12).Shadow(0, 16, 48, 0, ui.RGBA(0, 0, 0, 0.3)).
+			Label("片源不可用")
+		if p.dark {
+			panel.Border(1, p.hairline)
+		}
+		ui.Text(c, "片源不可用").FontSize(17).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(2)
+		ui.Text(c, detail).FontSize(13.5).LineHeight(1.5).TextColor(p.muted)
+		ui.Row(c).Gap(10).Justify(ui.End).Margin(8, 0, 0).Children(func() {
+			app.secondary(c, nil, "好").OnClick(func() { app.Unavailable = nil })
+			app.primary(c, nil, "管理片源").OnClick(func() {
+				app.Unavailable = nil
+				app.CloseWatch()
+				app.Go(core.PageSources)
+			})
 		})
 	})
 }

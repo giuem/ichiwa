@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -94,5 +95,46 @@ func TestSourcesPageSwitches(t *testing.T) {
 	}
 	if sw := accessOf(t, tt, ui.RoleSwitch, "打开甲片源"); sw.Checked {
 		t.Error("a source off says it is on")
+	}
+}
+
+// Records of every source show together, each saying its source; one of
+// a source turned off or not installed says it can't open, and opening it
+// tells why and leads to the sources page.
+func TestRecordsAcrossSources(t *testing.T) {
+	a, b := namedSource("a", "甲片源"), namedSource("b", "乙片源")
+	app := viewApp(t, lightPalette(), a, b)
+	app.Lib.Off["b"] = true
+	app.Lib.Progress("a", Card{Kind: source.CardMedia, ID: "1", Title: "甲剧"}, "e1", 0, 10, 30, 100)
+	app.Lib.Progress("b", Card{Kind: source.CardMedia, ID: "2", Title: "乙剧"}, "e1", 0, 10, 30, 100)
+	app.Lib.Progress("gone", Card{Kind: source.CardMedia, ID: "3", Title: "丙剧"}, "e1", 0, 10, 30, 100)
+	app.Go(core.PageHistory)
+	tt := ui.NewTester(app.view, 1100, 700)
+	tt.Frame()
+	if d := accessOf(t, tt, ui.RoleButton, "甲剧").Description; !strings.Contains(d, "甲片源") || strings.Contains(d, "不可用") {
+		t.Errorf("甲剧 says %q", d)
+	}
+	if d := accessOf(t, tt, ui.RoleButton, "乙剧").Description; !strings.Contains(d, "乙片源，片源不可用") {
+		t.Errorf("乙剧 says %q", d)
+	}
+	if d := accessOf(t, tt, ui.RoleButton, "丙剧").Description; !strings.Contains(d, "gone，片源不可用") {
+		t.Errorf("丙剧 says %q", d)
+	}
+	if err := tt.Click("乙剧"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	tt.Frame()
+	if app.Watch != nil || app.Unavailable == nil || !app.Unavailable.Installed {
+		t.Fatalf("watch %v, unavailable %+v", app.Watch, app.Unavailable)
+	}
+	accessOf(t, tt, ui.RoleHeading, "片源不可用")
+	if err := tt.Click("管理片源"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	tt.Frame()
+	if app.Page != core.PageSources || app.Unavailable != nil {
+		t.Fatalf("page %q, unavailable %+v", app.Page, app.Unavailable)
 	}
 }

@@ -58,7 +58,9 @@ type Watching struct {
 
 	Detail    *Media
 	DetailErr string
-	Recs      []Card
+	// Related is the sections under the details, their cards filled in
+	// as they load.
+	Related []Section
 
 	Index         int
 	gen           int // counts episodes started, to drop stale results
@@ -179,7 +181,40 @@ func LockMessage(lock source.Lock) string {
 
 // open shows the player page for a drama, at episode ep, or where the
 // user left it when ep is -1.
-func (app *App) Open(sourceID string, s Card, ep int) { app.openIn(sourceID, s, ep, nil) }
+// A record of a source not shown opens only while the source is loaded
+// and on; otherwise Unavailable says so.
+func (app *App) Open(sourceID string, s Card, ep int) {
+	if sourceID == "" {
+		sourceID = app.SourceID()
+	}
+	if !app.Available(sourceID) {
+		app.Unavailable = &Unavailable{Source: sourceID, Name: app.SourceName(sourceID), Title: s.Title,
+			Installed: app.Sources.Get(sourceID) != nil}
+		return
+	}
+	app.openIn(sourceID, s, ep, nil)
+}
+
+// Unavailable is a record whose source is not available, asked about.
+type Unavailable struct {
+	Source    string // its ID
+	Name      string // its name, or its ID when it is not installed
+	Title     string // the record's
+	Installed bool   // it is installed and turned off
+}
+
+// Available tells the source id can open what it gave: it is loaded and on.
+func (app *App) Available(id string) bool {
+	return app.Sources.Get(id) != nil && app.SourceOn(id)
+}
+
+// SourceName is the name of the source id, its ID when it is not loaded.
+func (app *App) SourceName(id string) string {
+	if s := app.Sources.Get(id); s != nil {
+		return s.Info().Name
+	}
+	return id
+}
 
 // openIn opens a drama among seasons already known, which the page keeps
 // until Media returns.
@@ -264,23 +299,26 @@ func (app *App) openIn(sourceID string, s Card, ep int, seasons []Season) {
 		start = min(max(start, 0), len(d.Episodes)-1)
 		w.Play(start, at)
 
-		// Load related section from Media.Sections.
+		// The sections under the details: related dramas and the like,
+		// loaded as they name their collections.
+		w.Related = nil
 		for _, sec := range d.Sections {
+			if len(sec.Items) == 0 && sec.Collection == "" {
+				continue
+			}
+			i := len(w.Related)
+			w.Related = append(w.Related, sec)
 			if len(sec.Items) > 0 {
-				w.Recs = sec.Items
-				break
+				continue
 			}
-			if sec.Collection != "" {
-				colID := sec.Collection
-				async(app, func() (*source.CollectionPage, error) {
-					return src.Collection(ctx, source.CollectionRequest{ID: colID})
-				}, func(p *source.CollectionPage, err error) {
-					if app.Watch == w && ctx.Err() == nil && err == nil && p != nil {
-						w.Recs = p.Items
-					}
-				})
-				break
-			}
+			colID := sec.Collection
+			async(app, func() (*source.CollectionPage, error) {
+				return src.Collection(ctx, source.CollectionRequest{ID: colID})
+			}, func(p *source.CollectionPage, err error) {
+				if app.Watch == w && ctx.Err() == nil && err == nil && p != nil {
+					w.Related[i].Items = p.Items
+				}
+			})
 		}
 	})
 }

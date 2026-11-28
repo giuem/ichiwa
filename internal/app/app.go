@@ -122,6 +122,9 @@ type App struct {
 
 	// Watch is the player page, over the rest while it is open.
 	Watch *Watching
+	// Unavailable is a record of a source not available that the user
+	// opened, to tell about; nil when there is none.
+	Unavailable *Unavailable
 	// Toast is a message to show once.
 	Toast string
 	// unmute is the volume the mute button goes back to.

@@ -896,36 +896,63 @@ func (app *App) episodes(c *ui.Context, w *Watching) {
 
 func (app *App) related(c *ui.Context, w *Watching) {
 	p := app.pal
-	if len(w.Recs) == 0 {
-		return
-	}
-	ui.Column(c).Gap(4).Children(func() {
-		ui.Text(c, "相关推荐").FontSize(15).Bold().TextColor(p.text).Margin(0, 0, 8).Role(ui.RoleHeading).Level(2)
-		for i, s := range w.Recs {
-			if i >= 12 {
-				break
-			}
-			badge := cardBadge(s)
-			row := ui.ButtonBase(c.Key("rec-" + s.ID)).Gap(12).Padding(6).Radius(10).AlignItems(ui.Start).Label(s.Title).
-				Description(joinNonEmpty(badge, s.Subtitle))
-			pressable(row, ui.Transparent, p.hover, 0.98)
-			row.Children(func() {
-				app.poster(c, s.Image, s.Title, 7).Width(56).Shrink(0)
-				ui.Column(c).Grow(1).Gap(4).Padding(2, 0).Children(func() {
-					ui.Text(c, s.Title).FontSize(13).FontWeight(600).MaxLines(2).TextColor(p.text)
-					if badge != "" {
-						ui.Text(c, badge).FontSize(11.5).TextColor(p.muted)
+	if w.Detail != nil && len(w.Detail.People) > 0 {
+		ui.Column(c).Gap(10).Children(func() {
+			ui.Text(c, "演职人员").FontSize(15).Bold().TextColor(p.text).Role(ui.RoleHeading).Level(2)
+			ui.ScrollHorizontal(c.Key("people")).Gap(12).Children(func() {
+				for _, a := range w.Detail.People {
+					b := ui.ButtonBase(c.Key("person-" + a.ID)).Width(64).Gap(6).AlignItems(ui.Center).Label(a.Title).Description(a.Subtitle)
+					b.Children(func() {
+						app.avatar(c, a.Image, a.Title, 52)
+						ui.Text(c, a.Title).FontSize(11.5).TextColor(ternary(b.Hovered(), p.accent, p.text)).SingleLine()
+						if a.Subtitle != "" {
+							ui.Text(c, a.Subtitle).FontSize(10.5).TextColor(p.muted).SingleLine()
+						}
+					})
+					if b.Clicked() {
+						app.openFrom(w.SourceID, a)
 					}
-					if s.Subtitle != "" {
-						ui.Text(c, s.Subtitle).FontSize(11.5).TextColor(p.faint).MaxLines(2)
-					}
-				})
+				}
 			})
-			if row.Clicked() {
-				app.Open(w.Ref().Source, s, -1)
-			}
+		})
+	}
+	for si, sec := range w.Related {
+		if len(sec.Items) == 0 {
+			continue
 		}
-	})
+		title := ternary(sec.Title != "", sec.Title, "相关推荐")
+		ui.Column(c.Key(si)).Gap(4).Children(func() {
+			ui.Text(c, title).FontSize(15).Bold().TextColor(p.text).Margin(0, 0, 8).Role(ui.RoleHeading).Level(2)
+			for i, s := range sec.Items {
+				if i >= 12 {
+					break
+				}
+				badge := cardBadge(s)
+				row := ui.ButtonBase(c.Key("rec-" + s.ID)).Gap(12).Padding(6).Radius(10).AlignItems(ui.Start).Label(s.Title).
+					Description(joinNonEmpty(badge, s.Subtitle))
+				pressable(row, ui.Transparent, p.hover, 0.98)
+				row.Children(func() {
+					if s.Shape == source.ShapeCircle {
+						app.avatar(c, s.Image, s.Title, 56)
+					} else {
+						app.poster(c, s.Image, s.Title, 7).Width(56).Shrink(0)
+					}
+					ui.Column(c).Grow(1).Gap(4).Padding(2, 0).Children(func() {
+						ui.Text(c, s.Title).FontSize(13).FontWeight(600).MaxLines(2).TextColor(p.text)
+						if badge != "" {
+							ui.Text(c, badge).FontSize(11.5).TextColor(p.muted)
+						}
+						if s.Subtitle != "" {
+							ui.Text(c, s.Subtitle).FontSize(11.5).TextColor(p.faint).MaxLines(2)
+						}
+					})
+				})
+				if row.Clicked() {
+					app.openFrom(w.SourceID, s)
+				}
+			}
+		})
+	}
 }
 
 // seasonLine says where a season stands: when it comes out, that it is

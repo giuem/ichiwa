@@ -63,6 +63,10 @@ type App struct {
 	historyFilter int
 	shelf         ui.ScrollState
 	searchField   ui.Handle
+	// unavail is the record whose source is not available that the
+	// dialog tells about, while unavailOpen.
+	unavail     *core.Unavailable
+	unavailOpen bool
 	// menuFor is the source the menu bar was made for.
 	menuFor source.Source
 
@@ -136,8 +140,10 @@ var logoPNG []byte
 var logo, _ = ui.DecodeBitmap(logoPNG)
 
 func (app *App) view(c *ui.Context) {
-	app.syncMini()
-	app.syncNarrow()
+	if app.win != nil { // none in tests
+		app.syncMini()
+		app.syncNarrow()
+	}
 	if app.win != nil && app.Src != app.menuFor { // the menu bar's search follows the source
 		app.menuFor = app.Src
 		app.setMenu()
@@ -160,6 +166,7 @@ func (app *App) view(c *ui.Context) {
 	}
 
 	app.updateDialog(c)
+	app.unavailableDialog(c)
 	if app.Watch != nil {
 		app.watchView(c)
 		return

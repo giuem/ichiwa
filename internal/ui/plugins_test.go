@@ -101,14 +101,18 @@ func TestPluginSource(t *testing.T) {
 	if app.Watch == nil || app.Watch.Detail == nil || len(app.Watch.Detail.Episodes) != 4 || !app.Watch.Has(source.CapDanmaku) {
 		t.Fatalf("watch = %+v", app.Watch)
 	}
+	drain() // the related section
+	if r := app.Watch.Related; len(r) != 1 || r[0].Title != "相关推荐" || len(r[0].Items) == 0 {
+		t.Fatalf("related = %+v", r)
+	}
 	app.Watch = nil
 
 	// A record of a source not loaded says so.
 	app.Open("gone", Card{Kind: source.CardMedia, ID: "x", Title: "x"}, -1)
-	if app.Watch.DetailErr == "" {
-		t.Fatal("a record of a source not loaded opened")
+	if app.Watch != nil || app.Unavailable == nil || app.Unavailable.Installed {
+		t.Fatalf("a record of a source not loaded: watch %v, unavailable %+v", app.Watch, app.Unavailable)
 	}
-	app.Watch = nil
+	app.Unavailable = nil
 
 	// Back to the built-in source.
 	app.UseSource(builtin)

@@ -91,3 +91,26 @@ func TestSourceOff(t *testing.T) {
 		t.Fatalf("page = %q", app.Page)
 	}
 }
+
+// An actor on the page of a drama of another source opens over that
+// source's pages, which then shows.
+func TestOpenCollectionOfAnotherSource(t *testing.T) {
+	a, b := navSource("a", "a1"), navSource("b", "b1")
+	app, run := cancelApp(t, a)
+	app.Sources.Add(b)
+	app.UseSource(a)
+	run(5 * time.Second)
+	app.Go(PageHistory)
+	app.OpenCollectionOf("b", source.Card{Kind: source.CardCollection, ID: "person:1", Title: "人"})
+	run(5 * time.Second)
+	if app.Src != b || len(app.Stack) != 1 || app.Page != "b1" {
+		t.Fatalf("shown %v, stack %d, page %q", app.Src, len(app.Stack), app.Page)
+	}
+	app.Lib.Off["a"] = true
+	app.OpenCollectionOf("a", source.Card{Kind: source.CardCollection, ID: "person:2", Title: "人"})
+	if app.Src != b || app.Unavailable == nil || app.Unavailable.Source != "a" {
+		t.Fatalf("shown %v, unavailable %+v", app.Src, app.Unavailable)
+	}
+	for run(100 * time.Millisecond) {
+	}
+}
