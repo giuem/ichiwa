@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -241,7 +242,7 @@ func TestFilterPaginationAndGenreSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("page 2 failed: %v", err)
 	}
-	if len(p2.Items) != 1 || p2.Items[0].ID != "7100000000000102" || p2.Cursor != "" {
+	if len(p2.Items) != 1 || p2.Items[0].ID != "7100000000000102" || !strings.HasPrefix(p2.Cursor, again) {
 		t.Fatalf("page 2 = %+v", p2)
 	}
 }
@@ -764,5 +765,45 @@ func TestEmojify(t *testing.T) {
 		if got := emojify(in); got != want {
 			t.Errorf("emojify(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A board chosen in another category is left out when the category
+// changes, and a board alone brings its category.
+func TestRankChoice(t *testing.T) {
+	for _, c := range []struct {
+		in             map[string]string
+		content, board string
+	}{
+		{nil, "", ""},
+		{map[string]string{"content": "a"}, "a", ""},
+		{map[string]string{"content": "a", "board": "a:x"}, "a", "x"},
+		{map[string]string{"content": "b", "board": "a:x"}, "b", ""},
+		{map[string]string{"board": "a:x"}, "a", "x"},
+		{map[string]string{"board": "x"}, "", ""},
+	} {
+		if content, board := rankChoice(c.in); content != c.content || board != c.board {
+			t.Errorf("rankChoice(%v) = %q, %q; want %q, %q", c.in, content, board, c.content, c.board)
+		}
+	}
+}
+
+// The pages of the navigation say what they are on their first page only,
+// and a list that ends early asks for itself again.
+func TestNavHeadersAndAgain(t *testing.T) {
+	if h := header(ColRecommend, ""); h == nil || h.Title != "推荐" {
+		t.Errorf("header = %+v", h)
+	}
+	if h := header(ColRecommend, "c1"); h != nil {
+		t.Errorf("a later page has a header %+v", h)
+	}
+	if got := nextCursor(false, "", "c1"); got != again+"c1" {
+		t.Errorf("nextCursor = %q", got)
+	}
+	if got := nextCursor(true, "c2", again+"c1"); got != "c2" {
+		t.Errorf("nextCursor = %q", got)
+	}
+	if got := resume(again + "c1"); got != "c1" {
+		t.Errorf("resume = %q", got)
 	}
 }

@@ -91,6 +91,41 @@ func withTimeout(ctx context.Context, d time.Duration) (context.Context, context
 	return context.WithTimeout(ctx, d)
 }
 
+// again starts the cursor of a list that ended early. Hongguo's lists say
+// they ended now and then while asking again goes on, so a list never
+// ends: its last page asks for itself again, and the host, which stops
+// after a few pages that bring nothing new, decides the end.
+const again = "again:"
+
+// nextCursor is the cursor after a page asked for at cursor, which had
+// more after it at next.
+func nextCursor(hasMore bool, next, cursor string) string {
+	if hasMore && next != "" {
+		return next
+	}
+	return again + resume(cursor)
+}
+
+// resume is the cursor to ask Hongguo for, again's taken off.
+func resume(cursor string) string { return strings.TrimPrefix(cursor, again) }
+
+// The headers of the pages of the navigation, which say what each is.
+var navHeaders = map[string]*source.Header{
+	ColRecommend: {Title: "推荐", Description: "为你精选的热门短剧"},
+	ColLive:      {Title: "真人剧", Description: "真人出演，好戏连台"},
+	ColComic:     {Title: "漫剧", Description: "动态漫剧，脑洞大开"},
+	ColRank:      {Title: "排行榜", Description: "看看大家都在追什么"},
+	ColFilter:    {Title: "筛选", Description: "按题材、设定找到想看的剧"},
+}
+
+// header is the header of a page of the navigation, on its first page.
+func header(id, cursor string) *source.Header {
+	if resume(cursor) != "" {
+		return nil
+	}
+	return navHeaders[id]
+}
+
 func (s *Source) Info() source.Info {
 	return source.Info{
 		ID:      SourceID,
@@ -126,7 +161,7 @@ func (s *Source) Collection(ctx context.Context, r source.CollectionRequest) (*s
 		return s.rank(ctx, r.Filters, r.Cursor)
 	case r.ID == ColFilter:
 		return s.filter(ctx, r.Filters, r.Cursor)
-	case strings.HasPrefix(r.ID, "person:") && r.Cursor != "":
+	case strings.HasPrefix(r.ID, "person:") && resume(r.Cursor) != "":
 		return s.personWorks(ctx, strings.TrimPrefix(r.ID, "person:"), r.Cursor)
 	case strings.HasPrefix(r.ID, "person:"):
 		return s.person(ctx, strings.TrimPrefix(r.ID, "person:"))
@@ -140,7 +175,7 @@ func (s *Source) Collection(ctx context.Context, r source.CollectionRequest) (*s
 func (s *Source) discover(ctx context.Context, channel, cursor string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-	page, err := s.client.Discover(ctx, sdk.DiscoverOptions{Channel: channel, Cursor: cursor})
+	page, err := s.client.Discover(ctx, sdk.DiscoverOptions{Channel: channel, Cursor: resume(cursor)})
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -148,15 +183,12 @@ func (s *Source) discover(ctx context.Context, channel, cursor string) (*source.
 	for _, it := range page.Items {
 		items = append(items, cardOfSummary(it))
 	}
-	next := ""
-	if page.HasMore && page.Cursor != "" {
-		next = page.Cursor
-	}
 	return &source.CollectionPage{
 		Title:  channel,
+		Header: header("channel:"+channel, cursor),
 		Layout: source.LayoutGrid,
 		Items:  items,
-		Cursor: next,
+		Cursor: nextCursor(page.HasMore, page.Cursor, cursor),
 	}, nil
 }
 
@@ -164,11 +196,10 @@ func (s *Source) rank(ctx context.Context, filters map[string]string, cursor str
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var query sdk.ShortRankQuery
-	if cursor == "" {
-		query.Content = strings.TrimSpace(filters["content"])
-		query.Board = strings.TrimSpace(filters["board"])
+	if resume(cursor) == "" {
+		query.Content, query.Board = rankChoice(filters)
 	} else {
-		query.Cursor = cursor
+		query.Cursor = resume(cursor)
 	}
 	r, err := s.client.ShortRank(ctx, query)
 	if err != nil {
@@ -176,16 +207,34 @@ func (s *Source) rank(ctx context.Context, filters map[string]string, cursor str
 	}
 	p := &source.CollectionPage{
 		Title:  "排行榜",
+		Header: header(ColRank, cursor),
 		Layout: source.LayoutRanked,
 		Items:  rankCards(r.Items),
+		Cursor: nextCursor(r.HasMore, r.Cursor, cursor),
 	}
-	if r.HasMore && r.Cursor != "" {
-		p.Cursor = r.Cursor
+	// The actors' rankings end when they say.
+	if len(p.Items) > 0 && p.Items[0].Kind == source.CardCollection && strings.HasPrefix(p.Cursor, again) {
+		p.Cursor = ""
 	}
-	if cursor == "" {
+	if resume(cursor) == "" {
 		p.Filters = rankFilters(r)
 	}
 	return p, nil
+}
+
+// rankChoice is the category and the board chosen. A board's value starts
+// with its category's, so that the board chosen in another category,
+// which the host sends along when the category changes, is left out.
+func rankChoice(filters map[string]string) (content, board string) {
+	content = strings.TrimSpace(filters["content"])
+	cat, b, ok := strings.Cut(strings.TrimSpace(filters["board"]), ":")
+	if !ok || content != "" && cat != content {
+		return content, ""
+	}
+	if content == "" {
+		content = cat
+	}
+	return content, b
 }
 
 func rankFilters(r *model.ShortRanking) []source.FilterRow {
@@ -214,13 +263,17 @@ func rankFilters(r *model.ShortRanking) []source.FilterRow {
 	if len(selectedContent.Boards) > 0 {
 		boardOpts := make([]source.FilterOption, 0, len(selectedContent.Boards))
 		for _, b := range selectedContent.Boards {
-			boardOpts = append(boardOpts, source.FilterOption{Value: b.ID, Title: b.Name})
+			boardOpts = append(boardOpts, source.FilterOption{Value: selectedContent.ID + ":" + b.ID, Title: b.Name})
+		}
+		board := ""
+		if r.Board != "" {
+			board = selectedContent.ID + ":" + r.Board
 		}
 		rows = append(rows, source.FilterRow{
 			Key:     "board",
 			Title:   "榜单",
 			Options: boardOpts,
-			Value:   r.Board,
+			Value:   board,
 		})
 	}
 	return rows
@@ -285,7 +338,8 @@ func (s *Source) filter(ctx context.Context, chosen map[string]string, cursor st
 
 	var filterRows []source.FilterRow
 	var query sdk.ShortFilterQuery
-	if cursor == "" {
+	first := resume(cursor) == ""
+	if first {
 		genre := strings.TrimSpace(chosen[genreKey])
 		rows, err := s.filterPanel(ctx, genre)
 		if err != nil {
@@ -297,21 +351,23 @@ func (s *Source) filter(ctx context.Context, chosen map[string]string, cursor st
 	} else {
 		// Pagination resumes the filter embedded in cursor; sending selections
 		// alongside cursor causes openhongguo to reject mismatched filters.
-		query.Cursor = cursor
+		query.Cursor = resume(cursor)
 	}
 
 	page, err := s.client.ShortFilter(ctx, query)
-	if errors.Is(err, sdk.ErrContentUnavailable) && cursor == "" {
+	if errors.Is(err, sdk.ErrContentUnavailable) && first {
 		return &source.CollectionPage{
 			Title:   "筛选",
+			Header:  header(ColFilter, cursor),
 			Layout:  source.LayoutGrid,
 			Filters: filterRows,
 		}, nil
 	}
 	if err != nil {
-		if cursor == "" && len(filterRows) > 0 {
+		if first && len(filterRows) > 0 {
 			return &source.CollectionPage{
 				Title:   "筛选",
+				Header:  header(ColFilter, cursor),
 				Layout:  source.LayoutGrid,
 				Filters: filterRows,
 			}, wrapErr(err)
@@ -322,16 +378,13 @@ func (s *Source) filter(ctx context.Context, chosen map[string]string, cursor st
 	for _, it := range page.Items {
 		items = append(items, cardOfSummary(it))
 	}
-	next := ""
-	if page.HasMore && page.Cursor != "" {
-		next = page.Cursor
-	}
 	return &source.CollectionPage{
 		Title:   "筛选",
+		Header:  header(ColFilter, cursor),
 		Layout:  source.LayoutGrid,
 		Filters: filterRows,
 		Items:   items,
-		Cursor:  next,
+		Cursor:  nextCursor(page.HasMore, page.Cursor, cursor),
 	}, nil
 }
 
@@ -457,7 +510,7 @@ const defaultProfileWait = time.Second
 func (s *Source) personWorks(ctx context.Context, userID, cursor string) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-	worksPage, err := s.client.PersonWorks(ctx, userID, cursor)
+	worksPage, err := s.client.PersonWorks(ctx, userID, resume(cursor))
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -470,9 +523,7 @@ func (s *Source) personWorks(ctx context.Context, userID, cursor string) (*sourc
 			out.Items = append(out.Items, cardOfWork(w))
 		}
 	}
-	if worksPage.HasMore && worksPage.Cursor != "" {
-		out.Cursor = worksPage.Cursor
-	}
+	out.Cursor = nextCursor(worksPage.HasMore, worksPage.Cursor, cursor)
 	return out, nil
 }
 
@@ -707,7 +758,7 @@ func (s *Source) Play(ctx context.Context, r source.PlayRequest) (*source.Playba
 func (s *Source) Search(ctx context.Context, r source.SearchRequest) (*source.CollectionPage, error) {
 	ctx, cancel := withTimeout(ctx, 30*time.Second)
 	defer cancel()
-	page, err := s.client.Search(ctx, r.Query, sdk.SearchOptions{Cursor: r.Cursor})
+	page, err := s.client.Search(ctx, r.Query, sdk.SearchOptions{Cursor: resume(r.Cursor)})
 	if errors.Is(err, sdk.ErrAnonymousLimited) || errors.Is(err, sdk.ErrEndOfList) {
 		return &source.CollectionPage{Layout: source.LayoutGrid}, nil
 	}
@@ -718,14 +769,10 @@ func (s *Source) Search(ctx context.Context, r source.SearchRequest) (*source.Co
 	for _, it := range page.Items {
 		items = append(items, cardOfSummary(it))
 	}
-	next := ""
-	if page.HasMore && page.Cursor != "" {
-		next = page.Cursor
-	}
 	return &source.CollectionPage{
 		Layout: source.LayoutGrid,
 		Items:  items,
-		Cursor: next,
+		Cursor: nextCursor(page.HasMore, page.Cursor, r.Cursor),
 	}, nil
 }
 
