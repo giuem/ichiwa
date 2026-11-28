@@ -190,3 +190,20 @@ func TestSourcesPageLogs(t *testing.T) {
 	}
 	accessOf(t, tt, ui.RoleHeading, "片源")
 }
+
+// A source's icon is the one it has now: a plugin that stood in for a
+// built-in source leaves its icon with it.
+func TestSourceIconFollowsSource(t *testing.T) {
+	app := viewApp(t, lightPalette())
+	info := source.Info{ID: "hongguo", Name: "红果", Icon: logoPNG}
+	tt := ui.NewTester(func(c *ui.Context) { app.sourceIcon(c, info, 28) }, 100, 100)
+	tt.Frame()
+	if tt.HasText("红") {
+		t.Fatal("an icon that decodes shows the letter")
+	}
+	info.Icon = nil
+	tt.Frame()
+	if !tt.HasText("红") {
+		t.Error("the source without an icon shows the icon of the one before")
+	}
+}

@@ -7,18 +7,22 @@ import (
 	"github.com/giuem/ichiwa/internal/source"
 )
 
-// sourceIcons are the sources' icons as drawn, by ID; nil for a source
-// whose icon does not decode.
+// sourceIcons are the sources' icons as drawn, by their bytes, so that a
+// source that changes its icon, or another of the same ID, shows its own;
+// nil for an icon that does not decode.
 var sourceIcons = map[string]*ui.Bitmap{}
 
 // sourceIcon draws the icon of a source, or the first letter of its name
 // when it has none.
 func (app *App) sourceIcon(c *ui.Context, info source.Info, size float32) {
 	p := app.pal
-	bmp, ok := sourceIcons[info.ID]
-	if !ok && len(info.Icon) > 0 {
-		bmp, _ = ui.DecodeBitmap(info.Icon)
-		sourceIcons[info.ID] = bmp
+	var bmp *ui.Bitmap
+	if len(info.Icon) > 0 {
+		var ok bool
+		if bmp, ok = sourceIcons[string(info.Icon)]; !ok {
+			bmp, _ = ui.DecodeBitmap(info.Icon)
+			sourceIcons[string(info.Icon)] = bmp
+		}
 	}
 	box := ui.Box(c).Size(size, size).Shrink(0).Radius(size * 0.28).Clip().Center().AccessHidden(true)
 	if bmp == nil {
