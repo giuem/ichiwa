@@ -5,8 +5,6 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-
-	"github.com/giuem/ichiwa/internal/plugin"
 )
 
 // userLocale is the language the user reads first, for plugins, which
@@ -36,61 +34,9 @@ func (app *App) pickDevFolder() {
 		app.SaveDevSettings()
 		return
 	}
+	app.SetSourceOn(app.Dev.Plugin.Info().ID, true)
 	app.UseSource(app.Dev.Plugin)
 	app.Toast = "已加载插件 " + app.Dev.Plugin.Info().Name
-}
-
-// sourceMenu is the sidebar's switcher: the sources, and the developer
-// mode.
-func (app *App) sourceMenu(m *ui.Menu) {
-	for _, s := range app.Sources.All() {
-		info := s.Info()
-		label := info.Name
-		if _, ok := s.(*plugin.Plugin); ok {
-			label += "（开发中）"
-		}
-		if m.Item(label).ID("src-"+info.ID).Radio(app.Src == s).Chosen() && app.Src != s {
-			app.UseSource(s)
-		}
-	}
-	m.Separator()
-	m.Submenu("开发者模式", func(m *ui.Menu) {
-		if m.Item("从文件夹加载插件…").Chosen() {
-			app.pickDevFolder()
-		}
-		if app.Dev.Dir != "" {
-			if m.Item("重新加载").Chosen() {
-				app.ReloadDev()
-			}
-			if app.Dev.Plugin != nil && m.Item("插件日志").Chosen() {
-				app.Dev.LogOpen = true
-			}
-			if m.Item("关闭开发者模式").Chosen() {
-				app.UnloadDev()
-				app.SaveDevSettings()
-			}
-		}
-	})
-}
-
-// sourceSwitch draws the switcher at the top of the sidebar.
-func (app *App) sourceSwitch(c *ui.Context) {
-	p := app.pal
-	name := "片源"
-	if app.Src != nil {
-		name = app.Src.Info().Name
-	}
-	b := ui.ButtonBase(c.Key("source")).Height(34).PaddingX(10).Gap(8).Radius(8).AlignItems(ui.Center).Justify(ui.Start).
-		Label("片源：" + name).Description("切换片源")
-	pressable(b, ui.Transparent, p.hover, 0.98)
-	b.Children(func() {
-		ui.Text(c, name).FontSize(13.5).FontWeight(600).TextColor(p.text).Grow(1).SingleLine()
-		ui.Icon(c, iconChevronDown).Size(12, 12).TextColor(p.muted)
-	})
-	b.Menu(app.sourceMenu)
-	if app.Dev.Err != "" {
-		ui.Text(c, "开发插件加载失败："+app.Dev.Err).FontSize(11).TextColor(p.muted).Padding(2, 10).MaxLines(3)
-	}
 }
 
 // logPageLines is how much of the log the page shows: the newest lines.

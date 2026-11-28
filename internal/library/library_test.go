@@ -54,6 +54,7 @@ func TestProgress(t *testing.T) {
 	l.Progress("other", cardOf("a", "别源甲"), "ep0", 0, 10, 1, 60)
 	l.Volume, l.Speed, l.Page, l.OnTop, l.Autoplay, l.Danmaku = 0.5, 1.5, "rank", true, false, false
 	l.DanmakuOpacity, l.DanmakuSpeed, l.DanmakuArea, l.DanmakuSize = 0.4, 0, 3, 4
+	l.Source, l.Off["hongguo"], l.Off["gone"] = "other", true, false
 	l.MarkDirty()
 	l.Close()
 
@@ -65,6 +66,9 @@ func TestProgress(t *testing.T) {
 	if l.Volume != 0.5 || l.Speed != 1.5 || l.Page != "rank" || !l.OnTop || l.Autoplay || l.Danmaku ||
 		l.DanmakuOpacity != 0.4 || l.DanmakuSpeed != 0 || l.DanmakuArea != 3 || l.DanmakuSize != 4 {
 		t.Fatalf("settings = %v %v %q %v", l.Volume, l.Speed, l.Page, l.OnTop)
+	}
+	if l.Source != "other" || !l.Off["hongguo"] || len(l.Off) != 1 {
+		t.Fatalf("sources: shown %q, off %v", l.Source, l.Off)
 	}
 	l.Forget(refA)
 	l.Close()

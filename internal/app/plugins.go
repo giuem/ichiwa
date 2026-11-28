@@ -16,7 +16,6 @@ import (
 	"github.com/giuem/ichiwa/internal/netguard"
 	"github.com/giuem/ichiwa/internal/plugin"
 	"github.com/giuem/ichiwa/internal/source"
-	"github.com/giuem/ichiwa/internal/sources/hongguo"
 )
 
 // The sources the app knows: the built-in Hongguo and a plugin loaded
@@ -141,9 +140,11 @@ type devState struct {
 
 // devSettings is what the developer mode keeps between launches.
 type devSettings struct {
-	Dir     string `json:"dir,omitempty"`
-	Current string `json:"current,omitempty"` // the source shown
-	Env     bool   `json:"-"`                 // Dir comes from ICHIWA_PLUGIN_DIR
+	Dir string `json:"dir,omitempty"`
+	// Current is the source an earlier version showed, which the
+	// library keeps now.
+	Current string `json:"current,omitempty"`
+	Env     bool   `json:"-"` // Dir comes from ICHIWA_PLUGIN_DIR
 }
 
 func (app *App) devSettingsPath() string {
@@ -167,9 +168,6 @@ func (app *App) SaveDevSettings() {
 		return
 	}
 	s := devSettings{Dir: app.Dev.Dir}
-	if app.Src != nil && app.Src == source.Source(app.Dev.Plugin) {
-		s.Current = app.Src.Info().ID
-	}
 	path := app.devSettingsPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	data, _ := json.Marshal(s)
@@ -204,6 +202,7 @@ func (app *App) LoadDev(dir string) error {
 				app.RetryDev()
 			})
 		})
+		app.SaveDevSettings()
 		return err
 	}
 	app.Dev.Plugin, app.Dev.Err = p, ""
@@ -225,6 +224,7 @@ func (app *App) LoadDev(dir string) error {
 	if app.Src != nil && app.Src != source.Source(p) && app.Src.Info().ID == p.Info().ID {
 		app.UseSource(p)
 	}
+	app.SaveDevSettings()
 	return nil
 }
 
@@ -299,33 +299,14 @@ func (app *App) UnloadDev() {
 	}
 	app.Sources.setDev(nil)
 	if app.Src == source.Source(p) {
+		// The built-in source it stood in for, or another.
 		back := app.Sources.Get(p.Info().ID)
-		if back == nil {
-			back = app.Sources.Get(hongguo.SourceID)
+		if back == nil || !app.SourceOn(back.Info().ID) {
+			back = app.firstOn()
 		}
-		if back != nil {
-			app.UseSource(back)
-		}
+		app.UseSource(back)
 	}
-}
-
-// useSource shows s: its navigation, its first page, and nothing of the
-// source shown before.
-func (app *App) UseSource(s source.Source) {
-	if app.Watch != nil {
-		app.CloseWatch()
-	}
-	app.leaveSource()
-	app.Src = s
-	app.Nav, app.NavErr = nil, ""
-	app.cols = map[string]*Collection{}
-	app.Search = searchState{}
-	app.Stack = nil
-	app.warmed = false
-	app.Dev.LogOpen = false
-	app.Page = ""
-	app.LoadNav()
-	app.SaveDevSettings()
+	delete(app.kept, p.Info().ID)
 }
 
 // refreshSource loads the pages of the source shown again, as a plugin
@@ -352,8 +333,7 @@ func (app *App) refreshSource() {
 			return
 		}
 		app.Nav, app.NavErr = nav, ""
-		switch page {
-		case PageSearch, PageHistory, PageFollows:
+		if appPage(page) || page == PageSearch {
 			return
 		}
 		for _, it := range nav {
@@ -361,36 +341,9 @@ func (app *App) refreshSource() {
 				return
 			}
 		}
-		if len(nav) > 0 {
-			app.Page = nav[0].ID
-		}
+		app.Page = startPage(nav, "", false)
+		app.srcPage = app.Page
 	})
-}
-
-// startPage is the page to show of a source with navigation nav: the
-// one saved, if it has it, or its first.
-func (app *App) startPage(nav []source.NavItem) string {
-	saved := ""
-	if app.Lib != nil {
-		saved = normalizeSavedPage(app.Lib.Page)
-	}
-	switch saved {
-	case PageSearch:
-		if app.HasCap(source.CapSearch) {
-			return saved
-		}
-	case PageHistory, PageFollows:
-		return saved
-	}
-	for _, it := range nav {
-		if it.ID == saved {
-			return saved
-		}
-	}
-	if len(nav) > 0 {
-		return nav[0].ID
-	}
-	return ""
 }
 
 // loadNav loads the navigation of the source shown.
@@ -414,7 +367,8 @@ func (app *App) LoadNav() {
 		}
 		app.Nav = nav
 		if app.Page == "" {
-			app.Page = app.startPage(nav)
+			app.Page = startPage(nav, app.srcPage, app.HasCap(source.CapSearch))
+			app.srcPage, app.Lib.Page = app.Page, app.Page
 		}
 	})
 }

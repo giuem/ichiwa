@@ -207,7 +207,9 @@ func (app *App) sidebar(c *ui.Context) {
 	top := max(c.TitleBar().Height, 28) + 10
 	ui.Column(c).Fill().Padding(top, 12, 14).Gap(2).DragWindow().Children(func() {
 		app.sourceSwitch(c)
-		app.navSection(c, "发现")
+		if app.Src != nil {
+			app.navSection(c, "发现")
+		}
 		for _, item := range app.Nav {
 			app.navItem(c, navIcon(item.Icon), item.Title, item.ID, 0)
 		}
@@ -315,6 +317,9 @@ func (app *App) content(c *ui.Context) {
 		return
 	}
 	switch app.Page {
+	case core.PageSources:
+		app.sourcesPage(c)
+		return
 	case core.PageSearch:
 		app.searchPage(c)
 		return
@@ -326,6 +331,8 @@ func (app *App) content(c *ui.Context) {
 		return
 	}
 	switch {
+	case app.Src == nil:
+		app.guidePage(c)
 	case app.Page != "":
 		app.collectionPage(c, app.Col(app.Page), false)
 	case app.NavErr != "":

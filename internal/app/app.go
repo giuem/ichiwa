@@ -105,8 +105,16 @@ type App struct {
 	Lib      *library.Library
 	InitErr  string
 
+	// Page is the page of the sidebar shown: a navigation item of the
+	// source shown, PageSearch, or one of the app's own pages.
 	Page   string
 	Search searchState
+	// srcPage is the page of the source shown last, which it goes back
+	// to from the app's own pages.
+	srcPage string
+	// kept is what the app showed of the sources it left, by ID, so that
+	// each shows again where the user left it.
+	kept map[string]*browse
 
 	// Stack is the collections opened from cards, over the sidebar's
 	// page, the last on top.
@@ -145,12 +153,7 @@ func New(cfg Config) *App {
 		app.InitErr = err.Error()
 		return app
 	}
-	app.Src = src
 	app.Sources.Add(src)
-	if nav, nerr := src.Navigation(context.Background()); nerr == nil {
-		app.Nav = nav
-		app.Page = app.startPage(nav)
-	}
 	mgr, err := media.New(cfg.CacheDir)
 	if err != nil {
 		app.InitErr = err.Error()
@@ -159,12 +162,26 @@ func New(cfg Config) *App {
 	app.Media = mgr
 	mgr.SetPolicy(app.Sources.mediaPolicy)
 	// The developer mode's plugin folder, loaded at the last launch.
+	shown := app.Lib.Source
 	if dev := app.loadDevSettings(); dev.Dir != "" {
 		if err := app.LoadDev(dev.Dir); err != nil {
 			log.Printf("plugins: %s: %v", dev.Dir, err)
-		} else if dev.Env || dev.Current == app.Dev.Plugin.Info().ID {
-			app.UseSource(app.Dev.Plugin)
+		} else if dev.Env || shown == "" && dev.Current != "" {
+			shown = app.Dev.Plugin.Info().ID
+			delete(app.Lib.Off, shown)
 		}
+	}
+	s := app.Sources.Get(shown)
+	if s == nil || !app.SourceOn(shown) {
+		s = app.firstOn()
+	}
+	saved := app.Page
+	app.UseSource(s)
+	if s != nil && s.Info().ID == shown {
+		app.srcPage = saved // where the user left it
+	}
+	if appPage(saved) {
+		app.Page = saved
 	}
 	return app
 }
@@ -265,6 +282,9 @@ func (app *App) Go(page string) {
 		app.leavePage()
 	}
 	app.Page = page
+	if !appPage(page) {
+		app.srcPage = page
+	}
 	for len(app.Stack) > 0 {
 		app.CloseCollection()
 	}

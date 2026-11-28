@@ -99,6 +99,29 @@ func (app *App) tour() {
 			app.win.Update(func() { app.CloseWatch(); app.Dev.LogOpen = true })
 			shot("23-log", 2*time.Second)
 		}
+		app.win.Update(func() { app.CloseWatch(); app.Dev.LogOpen = false; app.Go(core.PageSources) })
+		shot("30-sources", 2*time.Second)
+		app.win.Update(func() {
+			for _, s := range app.SourcesOn() {
+				if s != app.Src {
+					app.SwitchSource(s)
+					return
+				}
+			}
+		})
+		shot("31-switched", 8*time.Second)
+		app.win.Update(func() {
+			for _, s := range app.Sources.All() {
+				app.SetSourceOn(s.Info().ID, false)
+			}
+			app.Go("")
+		})
+		shot("32-no-source", 2*time.Second)
+		app.win.Update(func() {
+			for _, s := range app.Sources.All() {
+				app.SetSourceOn(s.Info().ID, true)
+			}
+		})
 		mygo.RunOnMain(func() { mygo.App.Quit() })
 	}()
 }

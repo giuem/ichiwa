@@ -154,9 +154,9 @@ func TestDevPluginStandsInForBuiltin(t *testing.T) {
 	if all := app.Sources.All(); len(all) != 1 || all[0] != source.Source(p) {
 		t.Fatalf("sources = %v", all)
 	}
-	// What is shown is saved by whether it is the plugin.
-	if s := app.loadDevSettings(); s.Dir != dir || s.Current != "hongguo" {
-		t.Fatalf("saved %+v", s)
+	// The folder is saved, and the source shown.
+	if s := app.loadDevSettings(); s.Dir != dir || app.Lib.Source != "hongguo" {
+		t.Fatalf("saved %+v, shown %q", s, app.Lib.Source)
 	}
 	if pol := app.Sources.mediaPolicy("hongguo"); !pol.Sandboxed {
 		t.Fatal("the plugin's media are not sandboxed")
@@ -170,7 +170,7 @@ func TestDevPluginStandsInForBuiltin(t *testing.T) {
 	if all := app.Sources.All(); len(all) != 1 || all[0] != builtin {
 		t.Fatalf("sources = %v", all)
 	}
-	if s := app.loadDevSettings(); s.Current != "" {
+	if s := app.loadDevSettings(); s.Dir != "" {
 		t.Fatalf("saved %+v", s)
 	}
 	if pol := app.Sources.mediaPolicy("hongguo"); pol.Sandboxed {
@@ -187,8 +187,8 @@ func TestDevPluginStandsInForBuiltin(t *testing.T) {
 	if app.Src != source.Source(other) || len(app.Sources.All()) != 2 {
 		t.Fatalf("shown %v, sources %v", app.Src, app.Sources.All())
 	}
-	if s := app.loadDevSettings(); s.Current != "" {
-		t.Fatalf("saved %+v", s)
+	if app.Lib.Source != "other" {
+		t.Fatalf("saved %q as shown", app.Lib.Source)
 	}
 }
 
