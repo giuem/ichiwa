@@ -687,6 +687,11 @@ func TestPersonPageFetchesProfileAndWorksTogether(t *testing.T) {
 	if p.Header != nil || len(p.Items) != 1 {
 		t.Fatalf("person page without profile = %+v", p)
 	}
+	// Its title is left to the host, which shows the card's: the actor's
+	// name, not the works'.
+	if p.Title != "" {
+		t.Errorf("person page without profile is titled %q", p.Title)
+	}
 
 	// Later pages are works only and do not read the profile again.
 	if p.Cursor == "" {
@@ -742,6 +747,9 @@ func TestPersonWorksDoNotWaitForSlowProfile(t *testing.T) {
 	p, err, took := get()
 	if err != nil || p.Header != nil || len(p.Items) != 1 {
 		t.Fatalf("page with a late profile = %+v, %v", p, err)
+	}
+	if p.Title != "" {
+		t.Errorf("page with a late profile is titled %q", p.Title)
 	}
 	if took > time.Second {
 		t.Fatalf("works waited %v for the profile", took)

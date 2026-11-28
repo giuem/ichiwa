@@ -485,6 +485,7 @@ func (s *Source) person(ctx context.Context, userID string) (*source.CollectionP
 	if err != nil {
 		return nil, err
 	}
+	page.Title = "" // the profile's name, or the card's the host shows
 	wait := s.profileWait
 	if wait <= 0 {
 		wait = defaultProfileWait
