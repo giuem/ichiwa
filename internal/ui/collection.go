@@ -39,13 +39,11 @@ func (app *App) collectionPage(c *ui.Context, cs *Collection, opened bool) {
 			subtitle = cs.Header.Description
 		}
 		app.header(c, cs.PageTitle(), subtitle, func() {
-			switch {
-			case len(cs.Rows) == 0:
-				if iconButton(c, iconRefresh, 16, p.muted, "刷新").Clicked() {
-					cs.Refresh()
-				}
-			case !cs.Ranked() && len(cs.Chosen) > 0:
-				app.secondary(c, iconRefresh, "重置").OnClick(cs.Clear)
+			if !cs.Ranked() && len(cs.Chosen) > 0 {
+				app.secondary(c, nil, "重置").OnClick(cs.Clear)
+			}
+			if iconButton(c, iconRefresh, 16, p.muted, "刷新").Clicked() {
+				cs.Refresh()
 			}
 		})
 	}
@@ -61,6 +59,14 @@ func (app *App) collectionPage(c *ui.Context, cs *Collection, opened bool) {
 	ui.Scroll(c.Key("col-"+cs.ID)).TrackScroll(scrollOf(r)).Grow(1).Padding(4, pagePad, 0).Children(func() {
 		if portrait {
 			app.portraitHeader(c, cs, retry)
+		} else if h := cs.Header; h != nil {
+			facts := *h
+			if !opened {
+				facts.Description = "" // the subtitle
+			}
+			if len(facts.Meta) > 0 || facts.Description != "" {
+				ui.Column(c).Gap(8).Margin(0, 0, 16).Children(func() { app.headerFacts(c, &facts) })
+			}
 		}
 		app.filterRows(c, cs)
 		if f := cs.First; f != nil {
@@ -102,7 +108,7 @@ func (app *App) cards(c *ui.Context, items []Card, layout source.Layout) {
 	if len(items) == 0 {
 		return
 	}
-	if items[0].Shape == source.ShapeCircle {
+	if people(items) {
 		app.actorGrid(c, items, layout == source.LayoutRanked)
 		return
 	}
@@ -114,6 +120,14 @@ func (app *App) cards(c *ui.Context, items []Card, layout source.Layout) {
 	default:
 		app.grid(c, items, episodesExtras)
 	}
+}
+
+// people tells the cards are all round collections, as people are, to
+// draw in rows of their own.
+func people(items []Card) bool {
+	return !slices.ContainsFunc(items, func(a Card) bool {
+		return a.Shape != source.ShapeCircle || a.Kind != source.CardCollection
+	})
 }
 
 // rankExtras puts a card's place under its title, the first three in

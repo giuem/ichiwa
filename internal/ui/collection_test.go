@@ -180,3 +180,90 @@ func TestOpenedCollectionRetries(t *testing.T) {
 	}
 	accessOf(t, tt, ui.RoleButton, "代表作")
 }
+
+// A header shows what it says on every page: an opened collection without
+// images (a list of dramas) and a navigation page, whose description
+// already shows as its subtitle.
+func TestHeaderShowsWithoutImages(t *testing.T) {
+	app := collectionApp(t, &sourcetest.Source{InfoData: source.Info{ID: "a"}}, func(func()) {})
+	loaded := func(cs *Collection, h *source.Header) {
+		cs.First, cs.Header = &source.CollectionPage{Header: h}, h
+		cs.Results.Loaded, cs.Results.More = true, false
+		cs.Results.Items = []Card{{Kind: source.CardMedia, ID: "m1", Title: "好剧"}}
+	}
+	app.OpenCollection(Card{Kind: source.CardCollection, ID: "list:1", Title: "片单"})
+	loaded(app.Stack[0], &source.Header{Title: "夏日片单", Description: "片单的介绍", Meta: []source.Meta{{Value: "12部"}}})
+	tt := ui.NewTester(app.content, 1100, 700)
+	tt.Frame()
+	accessOf(t, tt, ui.RoleHeading, "夏日片单")
+	for _, s := range []string{"片单的介绍", "12部"} {
+		if !tt.HasText(s) {
+			t.Errorf("the opened page leaves out %q", s)
+		}
+	}
+
+	app.CloseCollection()
+	app.Page = "home"
+	loaded(app.Col("home"), &source.Header{Description: "每天的好剧", Meta: []source.Meta{{Value: "每日更新"}}})
+	tt.Frame()
+	if !tt.HasText("每日更新") {
+		t.Error("the navigation page leaves out its meta")
+	}
+	n := 0
+	for _, s := range tt.Texts() {
+		if s == "每天的好剧" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("the description shows %d times", n)
+	}
+}
+
+// What a card opens is up to its kind, round or not: a round drama plays,
+// and a list where only some cards are round draws them all as cards.
+func TestRoundCardsOpenByKind(t *testing.T) {
+	src := &sourcetest.Source{InfoData: source.Info{ID: "a"}}
+	for _, items := range [][]Card{
+		{{Kind: source.CardMedia, ID: "m1", Title: "圆剧", Shape: source.ShapeCircle}},
+		{{Kind: source.CardCollection, ID: "person:1", Title: "人", Shape: source.ShapeCircle}, {Kind: source.CardMedia, ID: "m1", Title: "圆剧"}},
+	} {
+		app := collectionApp(t, src, func(func()) {})
+		app.Page = "home"
+		cs := app.Col("home")
+		cs.First = &source.CollectionPage{}
+		cs.Results.Loaded, cs.Results.More, cs.Results.Items = true, false, items
+		tt := ui.NewTester(app.content, 1100, 700)
+		tt.Frame()
+		if err := tt.Click("圆剧"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		if app.Watch == nil || len(app.Stack) != 0 {
+			t.Errorf("%d cards: the drama opened a collection, not its player", len(items))
+		}
+		app.CloseWatch()
+	}
+}
+
+// A page with filter rows can still load anew, beside going back to no
+// filters.
+func TestFilterPageRefreshes(t *testing.T) {
+	app := collectionApp(t, &sourcetest.Source{InfoData: source.Info{ID: "a"}}, func(func()) {})
+	app.Page = "filter"
+	cs := app.Col("filter")
+	cs.First = &source.CollectionPage{}
+	cs.Rows = []FilterRow{{Key: "genre", Title: "体裁", Value: "comic", Options: []source.FilterOption{{Title: "全部体裁"}, {Value: "comic", Title: "漫剧"}}}}
+	cs.Chosen = map[string]string{"genre": "comic"}
+	cs.Results.Loaded, cs.Results.More = true, false
+	cs.Results.Items = []Card{{Kind: source.CardMedia, ID: "m1", Title: "好剧"}}
+	tt := ui.NewTester(app.content, 1100, 700)
+	tt.Frame()
+	accessOf(t, tt, ui.RoleButton, "重置")
+	if err := tt.Click("刷新"); err != nil {
+		t.Fatal(err)
+	}
+	if cs.Results.Loaded || cs.Chosen["genre"] != "comic" {
+		t.Errorf("refresh: loaded %v, chosen %v", cs.Results.Loaded, cs.Chosen)
+	}
+}

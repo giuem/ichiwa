@@ -92,5 +92,5 @@ func (app *App) actorCard(c *ui.Context, i int, a Card, width float32, ranked bo
 			}
 		})
 	})
-	b.OnClick(func() { app.OpenCollection(a) })
+	b.OnClick(func() { app.openCard(app.SourceID(), a) })
 }
