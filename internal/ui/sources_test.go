@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -131,6 +132,10 @@ func TestRecordsAcrossSources(t *testing.T) {
 	app.Lib.Progress("a", Card{Kind: source.CardMedia, ID: "1", Title: "甲剧"}, "e1", 0, 10, 30, 100)
 	app.Lib.Progress("b", Card{Kind: source.CardMedia, ID: "2", Title: "乙剧"}, "e1", 0, 10, 30, 100)
 	app.Lib.Progress("gone", Card{Kind: source.CardMedia, ID: "3", Title: "丙剧"}, "e1", 0, 10, 30, 100)
+	at := time.Now() // as a coarse clock, as Windows', gives them
+	for _, r := range app.Lib.History {
+		r.Updated = at
+	}
 	app.Go(core.PageHistory)
 	tt := ui.NewTester(app.view, 1100, 700)
 	tt.Frame()

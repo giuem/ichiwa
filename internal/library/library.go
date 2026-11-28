@@ -761,7 +761,18 @@ func (l *Library) Recent() []*Record {
 	for _, w := range l.History {
 		out = append(out, w)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	// Latest first; records of the same moment, as a coarse clock gives,
+	// by source and ID, so that the order holds from one call to the next.
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !a.Updated.Equal(b.Updated) {
+			return a.Updated.After(b.Updated)
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		return a.Card.ID < b.Card.ID
+	})
 	return out
 }
 

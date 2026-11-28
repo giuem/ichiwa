@@ -346,3 +346,23 @@ func TestResolveEpisodesPartial(t *testing.T) {
 		t.Fatalf("legacy rows left after full resolve: %+v", again.legacyEpisodes[ref])
 	}
 }
+
+// Records watched at the same moment, as a coarse clock gives, keep one
+// order: the history doesn't reshuffle as it redraws.
+func TestRecentOrderIsStable(t *testing.T) {
+	l := Load(t.TempDir())
+	defer l.Close()
+	at := time.Now()
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		l.Progress("s", source.Card{Kind: source.CardMedia, ID: id, Title: id}, "e1", 0, 1, 1, 10)
+		l.History[source.Ref{Source: "s", ID: id}].Updated = at
+	}
+	first := l.Recent()
+	for range 50 {
+		for i, r := range l.Recent() {
+			if r != first[i] {
+				t.Fatalf("the order changed at %d: %s, then %s", i, first[i].Card.ID, r.Card.ID)
+			}
+		}
+	}
+}
