@@ -308,15 +308,13 @@ func TestRankLoadsAgainAfterCancel(t *testing.T) {
 	app2.Page = "home"
 	app2.Nav = []source.NavItem{{ID: "home"}, {ID: "live"}, {ID: "comic"}, {ID: "rank"}}
 	app2.warm()
-	for range 4 { // every page of the navigation
-		waitEntered(t, entered2)
-	}
+	waitEntered(t, entered2) // one page at a time
 	app2.Go(PageSearch)
 	if run2(300 * time.Millisecond) {
 		t.Fatal("leaving the page canceled what warm loads")
 	}
-	if l := &app2.Col("rank").Results; l.Err != "" || !l.Loading {
-		t.Fatalf("warm ranking: %+v", l)
+	if l := &app2.Col("home").Results; l.Err != "" || !l.Loading {
+		t.Fatalf("warm home: %+v", l)
 	}
 	app2.leaveSource()
 	for run2(time.Second) {

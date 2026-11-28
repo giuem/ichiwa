@@ -156,13 +156,18 @@ func (app *App) LoadMore(f *Feed) { app.loadMoreIn(app.pageContext(), f) }
 
 // loadMoreIn loads the next page of f until ctx ends. A load canceled
 // leaves f as it was before, to load again when shown.
-func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
+func (app *App) loadMoreIn(ctx context.Context, f *Feed) { app.load(ctx, f, nil) }
+
+// load loads the next page of f until ctx ends, and runs then, if not
+// nil, when it is done. It tells whether it loads: then does not run
+// when it doesn't.
+func (app *App) load(ctx context.Context, f *Feed, then func()) bool {
 	if f.Loading || !f.More || f.fetch == nil || f.Src == nil {
-		return
+		return false
 	}
 	if f.RetryWait() > 0 {
 		f.Err = f.waitErr // a retry clears it: it stays until the wait ends
-		return
+		return false
 	}
 	f.Loading, f.Err = true, ""
 	src, fetch, cursor, gen := f.Src, f.fetch, f.cursor, f.gen
@@ -177,6 +182,9 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 		return fetch(ctx, src, cursor)
 	}, func(p feedPage, err error) {
 		defer done()
+		if then != nil {
+			defer then()
+		}
 		if f.gen != gen {
 			return
 		}
@@ -205,9 +213,14 @@ func (app *App) loadMoreIn(ctx context.Context, f *Feed) {
 		}
 		// Covers come for the source rather than the page, so that
 		// cards shown again have them.
-		app.fill(app.srcContext(), f, added)
+		fillCtx := app.srcContext()
+		if source.IsBackground(ctx) {
+			fillCtx = source.Background(fillCtx)
+		}
+		app.fill(fillCtx, f, added)
 		app.warm()
 	})
+	return true
 }
 
 // retryWait is how many Seconds the feed still waits to ask again.
@@ -496,22 +509,51 @@ func writeFeedCache(path string, c *feedCache) error {
 	return os.Rename(tmp, path)
 }
 
-// warm asks once for the first pages of the source's other pages and its
-// search home, so they show at once when opened.
+// warmPages is how many pages of a source's navigation warm asks for.
+const warmPages = 3
+
+// warm asks once for the first pages of the source's first pages and its
+// search home, so they show at once when opened. It asks one at a time,
+// ahead of need (source.Background): the calls of the user must not wait
+// behind these. A page that fails to warm loads again when shown, with no
+// error.
 func (app *App) warm() {
 	if app.warmed || app.Src == nil {
 		return
 	}
 	app.warmed = true
-	// For the source, not the page: they are for the pages to come.
-	for _, it := range app.Nav {
+	var feeds []*Feed
+	for _, it := range app.Nav[:min(len(app.Nav), warmPages)] {
 		cs := app.Col(it.ID)
 		if cs.Results.Loaded || cs.Results.Loading {
 			continue
 		}
 		cs.Results.setFetch(app.Src, collectionFetch(source.CollectionRequest{ID: cs.ID, Filters: maps.Clone(cs.Chosen)}))
 		cs.Results.onPage = cs.applyPage
-		app.loadMoreIn(app.srcContext(), &cs.Results)
+		feeds = append(feeds, &cs.Results)
 	}
-	app.LoadHot()
+	// For the source, not the page: they are for the pages to come.
+	app.warmNext(source.Background(app.srcContext()), feeds)
+}
+
+// warmNext warms feeds one after the other, then the search home.
+func (app *App) warmNext(ctx context.Context, feeds []*Feed) {
+	for ; len(feeds) > 0; feeds = feeds[1:] {
+		if ctx.Err() != nil {
+			return // the source was left
+		}
+		f, gen := feeds[0], feeds[0].gen
+		rest := feeds[1:]
+		if app.load(ctx, f, func() {
+			if f.gen == gen && f.Err != "" {
+				f.Err, f.Loaded, f.More = "", false, true
+			}
+			app.warmNext(ctx, rest)
+		}) {
+			return
+		}
+	}
+	if ctx.Err() == nil {
+		app.loadHot(false)
+	}
 }

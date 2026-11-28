@@ -48,8 +48,8 @@ type searchState struct {
 	// suggestStop cancels the asking for suggestions under way, waiting
 	// or called.
 	suggestStop context.CancelFunc
-	Focus      bool
-	Told       string // the query screen readers were told the results of
+	Focus       bool
+	Told        string // the query screen readers were told the results of
 }
 
 // runSearch shows the results of q, or the search home when q is empty.
@@ -121,8 +121,12 @@ func (s *searchState) stopSuggest() {
 	s.Suggests, s.SuggestFor = nil, ""
 }
 
-// loadHot loads the search home sections, once.
-func (app *App) LoadHot() {
+// LoadHot loads the search home sections, once.
+func (app *App) LoadHot() { app.loadHot(true) }
+
+// loadHot loads the search home sections, once, keeping an error to show
+// if show: else the search home loads again when shown.
+func (app *App) loadHot(show bool) {
 	if !app.HasCap(source.CapSearchHome) {
 		return
 	}
@@ -133,6 +137,9 @@ func (app *App) LoadHot() {
 	s.hotBusy = true
 	src := app.Src
 	ctx := app.srcContext()
+	if !show {
+		ctx = source.Background(ctx) // warm asks ahead of need
+	}
 	async(app, func() (*source.CollectionPage, error) {
 		return src.SearchHome(ctx)
 	}, func(p *source.CollectionPage, err error) {
@@ -141,7 +148,9 @@ func (app *App) LoadHot() {
 			return // canceled as the source was left: loads again when shown
 		}
 		if err != nil {
-			s.HotErr = errText(err)
+			if show {
+				s.HotErr = errText(err)
+			}
 			return
 		}
 		if p != nil && p.Sections != nil {
