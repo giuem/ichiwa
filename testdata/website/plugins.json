@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-28T16:00:00Z",
+  "plugins": [
+    {
+      "id": "hongguo",
+      "name": "红果短剧",
+      "description": "红果短剧的推荐、排行、筛选、搜索和弹幕。不需要账号。",
+      "kind": "source",
+      "icon": "plugin-icons/hongguo.png",
+      "repo": "giuem/ichiwa-hongguo",
+      "version": "1.0.3",
+      "publishedAt": "2026-11-27T09:12:00Z",
+      "license": "Apache-2.0",
+      "apiVersion": 1,
+      "capabilities": [
+        "search",
+        "search.suggest",
+        "search.home",
+        "danmaku",
+        "refresh"
+      ],
+      "network": [
+        "*.hongguo.example",
+        "api.hongguo.example",
+        "*.cdn.hongguo.example"
+      ],
+      "url": "https://github.com/giuem/ichiwa-hongguo/releases/download/v1.0.3/plugin.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "size": 48213
+    },
+    {
+      "id": "example",
+      "name": "示例视频",
+      "description": "协议的示例插件，覆盖全部函数。",
+      "kind": "source",
+      "icon": "plugin-icons/example.jpg",
+      "repo": "someone/ichiwa-example",
+      "version": "1.2.0",
+      "publishedAt": "2026-10-02T03:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "minAppVersion": "2026.1201.1",
+      "capabilities": [
+        "search"
+      ],
+      "network": [
+        "api.example.com"
+      ],
+      "url": "https://github.com/someone/ichiwa-example/releases/download/v1.2.0/plugin.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+      "size": 1024
+    },
+    {
+      "id": "very-long",
+      "name": "一个名字非常非常长的片源插件用来测试换行和截断的效果",
+      "description": "简介也写得很长很长：这个插件从一个虚构的平台取数据，用来检查卡片里的长文字会不会撑破布局、在手机宽度下能不能正常换行。最多两百个字，所以这里再多写一些内容，看看文字多的时候卡片是否依然整齐，主机列表很长时也要能换行。Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+      "kind": "source",
+      "repo": "a-really-long-organization-name/ichiwa-plugin-with-an-extremely-long-repository-name",
+      "version": "0.1.0-beta.12",
+      "publishedAt": "2026-11-28T15:59:00Z",
+      "apiVersion": 1,
+      "capabilities": [
+        "danmaku"
+      ],
+      "network": [
+        "api.a-very-long-subdomain-name.some-platform.example",
+        "*.images.some-platform.example",
+        "*.video.some-platform.example",
+        "static.some-platform.example",
+        "danmaku.some-platform.example"
+      ],
+      "url": "https://github.com/a-really-long-organization-name/ichiwa-plugin-with-an-extremely-long-repository-name/releases/download/v0.1.0-beta.12/plugin.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000003",
+      "size": 2048
+    },
+    {
+      "id": "theme-test",
+      "name": "Night Theme",
+      "description": "以后可能有的其他种类：测试类型筛选。没有图标、没有许可、不访问网络。",
+      "kind": "theme",
+      "repo": "someone-else/ichiwa-night",
+      "version": "2.0.0",
+      "publishedAt": "2026-09-15T12:00:00Z",
+      "apiVersion": 1,
+      "network": [],
+      "url": "https://github.com/someone-else/ichiwa-night/releases/download/v2.0.0/plugin.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000004",
+      "size": 512
+    },
+    {
+      "id": "xss",
+      "name": "<img src=x onerror=alert(1)>",
+      "description": "<script>alert('desc')</script> 名称、简介、主机都是 HTML，应该原样显示成文字；图标是外部地址，应该被换成首字。",
+      "kind": "<b>source</b>",
+      "icon": "https://evil.example/x.png",
+      "repo": "evil/ichiwa-xss",
+      "version": "<i>1</i>",
+      "publishedAt": "not a date",
+      "license": "<a href=javascript:alert(1)>MIT</a>",
+      "apiVersion": 1,
+      "network": [
+        "<svg onload=alert(1)>"
+      ],
+      "url": "javascript:alert(1)",
+      "sha256": "x",
+      "size": 1
+    },
+    {
+      "id": "douyin-lite",
+      "name": "抖音短剧",
+      "kind": "source",
+      "repo": "giuem/ichiwa-douyin",
+      "version": "0.3.1",
+      "publishedAt": "2026-11-10T08:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": [
+        "*.douyin.example"
+      ],
+      "url": "https://github.com/giuem/ichiwa-douyin/releases/download/v0.3.1/plugin.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000005",
+      "size": 4096,
+      "description": "抖音的短剧频道和排行。"
+    },
+    {
+      "id": "kuaishou",
+      "name": "快手短剧",
+      "kind": "source",
+      "repo": "giuem/ichiwa-kuaishou",
+      "version": "1.0.0",
+      "publishedAt": "2026-11-11T08:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": [
+        "api.kuaishou.example"
+      ],
+      "url": "https://github.com/giuem/ichiwa-kuaishou/releases/download/v1.0.0/plugin.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000006",
+      "size": 4096,
+      "icon": "plugin-icons/missing.png"
+    },
+    {
+      "id": "mini-drama",
+      "name": "Mini Drama",
+      "kind": "source",
+      "repo": "octocat/ichiwa-minidrama",
+      "version": "3.4.5",
+      "publishedAt": "2026-11-12T08:00:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "network": [
+        "api.minidrama.example",
+        "cdn.minidrama.example"
+      ],
+      "url": "https://github.com/octocat/ichiwa-minidrama/releases/download/v3.4.5/plugin.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000007",
+      "size": 4096,
+      "description": "English short dramas, with subtitles."
+    },
+    {
+      "id": "bad-repo",
+      "name": "仓库不合格，不显示",
+      "kind": "source",
+      "repo": "javascript:alert(1)//x",
+      "version": "1.0.0"
+    },
+    {
+      "id": "no-name",
+      "name": "",
+      "kind": "source",
+      "repo": "someone/no-name",
+      "version": "1.0.0"
+    },
+    "not an object"
+  ]
+}

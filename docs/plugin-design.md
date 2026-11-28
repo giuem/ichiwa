@@ -442,6 +442,63 @@ jobs:
 
 - 一集的仓库每天跑一次 workflow：搜索 topic `ichiwa-plugin`，下载并校验每个插件的最新 Release，生成插件索引 `plugins.json`，和官网一起发布。一集读索引，不直接调 GitHub API（未登录时每小时只能调 60 次）。被举报的恶意插件从索引里移除。
 - 也可以直接输入 `owner/repo` 安装不在索引里的插件。
+- 官网的插件页（`website/plugins.html`）读同一份索引，列出插件，“安装”按钮用下面的 URL scheme 打开一集。
+
+索引 `plugins.json` 放在官网根目录，图标放在它旁边的 `plugin-icons/`：
+
+```json
+{
+  "version": 1,
+  "generatedAt": "2026-12-01T16:00:00Z",
+  "plugins": [
+    {
+      "id": "example",
+      "name": "示例视频",
+      "description": "一句话介绍，显示在插件列表里。",
+      "kind": "source",
+      "icon": "plugin-icons/example.png",
+      "repo": "someone/ichiwa-example",
+      "version": "1.2.0",
+      "publishedAt": "2026-11-30T09:12:00Z",
+      "license": "MIT",
+      "apiVersion": 1,
+      "minAppVersion": "2026.1201.1",
+      "capabilities": ["search", "danmaku"],
+      "network": ["api.example.com", "*.cdn-example.com"],
+      "url": "https://github.com/someone/ichiwa-example/releases/download/v1.2.0/plugin.zip",
+      "sha256": "9f2c…（64 位小写十六进制）",
+      "size": 48213
+    }
+  ]
+}
+```
+
+| 字段 | 来源和规则 |
+| --- | --- |
+| `version` | 索引格式的版本，目前是 `1`。只在不兼容时才升；读者不认识的大版本当作读不了 |
+| `generatedAt` | 生成时间，RFC 3339 UTC |
+| `plugins` | 按 `id` 排序；没有插件时是空数组 |
+| `id`、`name`、`description`、`kind`、`license`、`apiVersion`、`minAppVersion`、`capabilities` | 照抄 `plugin.zip` 里的清单。`minAppVersion`、`capabilities` 清单里没有时省略 |
+| `network` | 清单的 `permissions.network`，原样照抄 |
+| `icon` | 清单有图标时，workflow 从 zip 里取出来，写到 `plugin-icons/<id>.<png\|jpg\|webp>`，这里填相对 `plugins.json` 的路径；没有图标时省略，显示的地方改用仓库作者的 GitHub 头像 `https://avatars.githubusercontent.com/<owner>?s=80`。不填插件自己给的外部地址：图标随官网一起发布，不依赖插件仓库，也不让浏览器访问第三方服务器 |
+| `repo` | 发布它的 GitHub 仓库 `owner/repo`。作者就是 `owner` |
+| `version`、`publishedAt` | 最新 Release 的标签去掉 `v`（必须和清单的 `version` 一致）、发布时间 |
+| `url`、`sha256`、`size` | Release 附件 `plugin.zip` 的下载地址、SHA-256 和字节数，由 workflow 下载后计算 |
+
+- 校验没通过的 Release（标签和清单对不上、包不合格、没有 `plugin.zip`）不进索引；屏蔽名单里的仓库和 `id` 不进索引；两个仓库用了同一个 `id` 时只收最早进索引的那个。
+- 读者忽略不认识的字段；`kind`、`apiVersion` 不支持的插件不显示安装。以后要加字段只加不减，不升 `version`。
+- 一集安装时仍然按第 1 步自己检查下载的包，并核对 `sha256` 和清单里的 `id`、`version`：索引只是目录，不是信任的来源。
+- 官网插件页把这些文字都当作第三方内容：只以纯文本显示，链接只指向 `https://github.com/<repo>`，图标只接受 `plugin-icons/` 下的文件。
+
+从网页安装：一集注册 URL scheme `ichiwa`，官网插件页的“安装”按钮链接到
+
+```text
+ichiwa://install-plugin?repo=<owner>/<repo>
+```
+
+- 效果和在“管理片源…”里输入 `owner/repo` 一样：一集打开片源管理，读这个仓库的最新 Release，照下面的第 2 步列出信息，等用户确认。链接本身从不直接安装。
+- `repo` 必须是合法的 `owner/repo`（GitHub 用户名和仓库名的字符），不合格时提示“链接不对”；不认识的参数忽略，不认识的路径提示需要更新一集。
+- 插件已经装了时，显示它的详情；同一 `id` 已经绑定别的仓库时，照常拒绝。
 
 安装：
 
